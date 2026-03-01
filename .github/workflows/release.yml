@@ -1,0 +1,210 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  build-packages:
+    name: Build Package (${{ matrix.os }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Prune dev dependencies
+        run: npm prune --omit=dev
+
+      - name: Assemble archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ASSET_OS="$(echo "${RUNNER_OS}" | tr '[:upper:]' '[:lower:]')"
+          ASSET_ARCH="$(echo "${RUNNER_ARCH}" | tr '[:upper:]' '[:lower:]')"
+          ASSET_NAME="metapi-${GITHUB_REF_NAME}-${ASSET_OS}-${ASSET_ARCH}.tar.gz"
+
+          PACKAGE_DIR="release/metapi"
+          mkdir -p "$PACKAGE_DIR"
+
+          cp -R dist node_modules drizzle "$PACKAGE_DIR"/
+          cp package.json "$PACKAGE_DIR"/
+          [ -f .env.example ] && cp .env.example "$PACKAGE_DIR"/
+          [ -f LICENSE ] && cp LICENSE "$PACKAGE_DIR"/
+          cp scripts/release/start.sh "$PACKAGE_DIR"/start.sh
+          chmod +x "$PACKAGE_DIR"/start.sh
+
+          tar -czf "release/${ASSET_NAME}" -C release metapi
+          echo "ASSET_NAME=${ASSET_NAME}" >> "$GITHUB_ENV"
+
+      - name: Assemble archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $assetOs = $env:RUNNER_OS.ToLower()
+          $assetArch = $env:RUNNER_ARCH.ToLower()
+          $assetName = "metapi-$env:GITHUB_REF_NAME-$assetOs-$assetArch.zip"
+
+          $packageDir = "release\\metapi"
+          New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+
+          Copy-Item -Recurse -Force dist $packageDir
+          Copy-Item -Recurse -Force node_modules $packageDir
+          Copy-Item -Recurse -Force drizzle $packageDir
+          Copy-Item -Force package.json $packageDir
+          if (Test-Path ".env.example") { Copy-Item -Force .env.example $packageDir }
+          if (Test-Path "LICENSE") { Copy-Item -Force LICENSE $packageDir }
+          Copy-Item -Force scripts\\release\\start.bat "$packageDir\\start.bat"
+
+          Compress-Archive -Path $packageDir -DestinationPath "release\\$assetName" -Force
+          "ASSET_NAME=$assetName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload package (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: metapi-${{ github.ref_name }}-${{ runner.os }}-${{ runner.arch }}
+          path: release/*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload package (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: metapi-${{ github.ref_name }}-${{ runner.os }}-${{ runner.arch }}
+          path: release/*.zip
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Show release files
+        run: ls -la release-assets
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release-assets/*
+
+  publish-docker:
+    name: Publish Docker Images
+    needs: build-packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure Docker Hub secrets are configured
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "Missing Docker Hub secrets: DOCKERHUB_USERNAME / DOCKERHUB_TOKEN"
+            exit 1
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            1467078763/metapi
+            ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - name: Build and push multi-arch images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

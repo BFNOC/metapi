@@ -243,6 +243,42 @@ docker run -d --name metapi \
 > 如果是非 Compose 场景且你没有显式设置 `AUTH_TOKEN`，默认值为 `change-me-admin-token`（仅用于本地调试）。  
 > 若你在后台「设置」里修改过管理员令牌，后续登录请使用修改后的新令牌。
 
+### Release 包启动（Linux / macOS / Windows）
+
+如果你不想用 Docker，也可以直接下载预打包的 Release 产物运行：
+
+1. 打开 [Releases](https://github.com/cita-777/metapi/releases) 下载与你系统匹配的压缩包
+2. 解压后进入目录
+3. 设置环境变量并启动
+
+Linux / macOS：
+
+```bash
+export AUTH_TOKEN=your-admin-token
+export PROXY_TOKEN=your-proxy-sk-token
+export PORT=4000
+export DATA_DIR=./data
+./start.sh
+```
+
+Windows（PowerShell）：
+
+```powershell
+$env:AUTH_TOKEN="your-admin-token"
+$env:PROXY_TOKEN="your-proxy-sk-token"
+$env:PORT="4000"
+$env:DATA_DIR="./data"
+.\start.bat
+```
+
+`start.sh` / `start.bat` 的作用是：
+
+- 先执行数据库迁移：`node dist/server/db/migrate.js`
+- 再启动服务：`node dist/server/index.js`
+
+> [!NOTE]
+> Release 包依赖本机安装 Node.js（建议 20+）。
+
 ### 升级
 
 ```bash

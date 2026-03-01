@@ -73,6 +73,21 @@ describe('settings and auth events', () => {
     expect(events[0].message || '').toContain('签到 Cron');
   });
 
+  it('returns current recognized admin IP in runtime settings response', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/settings/runtime',
+      remoteAddress: '10.0.0.8',
+      headers: {
+        'x-forwarded-for': '203.0.113.5, 10.0.0.8',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { currentAdminIp?: string };
+    expect(body.currentAdminIp).toBe('203.0.113.5');
+  });
+
   it('rejects proxy token that does not start with sk-', async () => {
     const response = await app.inject({
       method: 'PUT',
@@ -112,6 +127,43 @@ describe('settings and auth events', () => {
     expect(getResponse.statusCode).toBe(200);
     const runtime = getResponse.json() as { routingFallbackUnitCost?: number };
     expect(runtime.routingFallbackUnitCost).toBe(0.25);
+  });
+
+  it('rejects allowlist update that does not include current request IP', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      remoteAddress: '198.51.100.10',
+      payload: {
+        adminIpAllowlist: ['198.51.100.11'],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { message?: string };
+    expect(body.message).toContain('白名单');
+    expect(body.message).toContain('198.51.100.10');
+
+    const saved = db.select().from(schema.settings).where(eq(schema.settings.key, 'admin_ip_allowlist')).get();
+    expect(saved).toBeFalsy();
+  });
+
+  it('allows allowlist update when current request IP is included', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      remoteAddress: '198.51.100.10',
+      payload: {
+        adminIpAllowlist: ['198.51.100.10', '198.51.100.11'],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { adminIpAllowlist?: string[] };
+    expect(body.adminIpAllowlist).toEqual(['198.51.100.10', '198.51.100.11']);
+
+    const saved = db.select().from(schema.settings).where(eq(schema.settings.key, 'admin_ip_allowlist')).get();
+    expect(saved?.value).toBe(JSON.stringify(['198.51.100.10', '198.51.100.11']));
   });
 
   it('appends event when admin auth token changes', async () => {

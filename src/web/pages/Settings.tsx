@@ -19,6 +19,7 @@ type RuntimeSettings = {
   routingWeights: RoutingWeights;
   proxyTokenMasked?: string;
   adminIpAllowlist?: string[];
+  currentAdminIp?: string;
 };
 
 const defaultWeights: RoutingWeights = {
@@ -88,6 +89,7 @@ export default function Settings() {
         adminIpAllowlist: Array.isArray(runtimeInfo.adminIpAllowlist)
           ? runtimeInfo.adminIpAllowlist.filter((item: unknown) => typeof item === 'string')
           : [],
+        currentAdminIp: typeof runtimeInfo.currentAdminIp === 'string' ? runtimeInfo.currentAdminIp : '',
       });
       setAdminIpAllowlistText(
         Array.isArray(runtimeInfo.adminIpAllowlist)
@@ -176,10 +178,16 @@ export default function Settings() {
         .split(/\r?\n|,/g)
         .map((item) => item.trim())
         .filter((item) => item.length > 0);
-      await api.updateRuntimeSettings({
+      const res = await api.updateRuntimeSettings({
         adminIpAllowlist: allowlist,
       });
-      setRuntime((prev) => ({ ...prev, adminIpAllowlist: allowlist }));
+      setRuntime((prev) => ({
+        ...prev,
+        adminIpAllowlist: allowlist,
+        currentAdminIp: typeof res?.currentAdminIp === 'string'
+          ? res.currentAdminIp
+          : prev.currentAdminIp,
+      }));
       toast.success('安全设置已保存');
     } catch (err: any) {
       toast.error(err?.message || '保存失败');
@@ -446,6 +454,12 @@ export default function Settings() {
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
             登录会话默认 12 小时自动过期。可选配置管理端 IP 白名单（每行一个 IP）。
           </div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+            {tr('当前识别到的管理端 IP（由服务端判定）：')}
+          </div>
+          <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 10 }}>
+            {runtime.currentAdminIp || tr('未知')}
+          </code>
           <textarea
             value={adminIpAllowlistText}
             onChange={(e) => setAdminIpAllowlistText(e.target.value)}

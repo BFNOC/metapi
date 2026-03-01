@@ -6,6 +6,7 @@ import NotificationPanel from './components/NotificationPanel.js';
 import { api } from './api.js';
 import { clearAuthSession, hasValidAuthSession, persistAuthSession } from './authSession.js';
 import { I18nProvider, useI18n } from './i18n.js';
+import { resolveLoginErrorMessage } from './loginError.js';
 const Dashboard = lazy(() => import('./pages/Dashboard.js'));
 const Sites = lazy(() => import('./pages/Sites.js'));
 const Accounts = lazy(() => import('./pages/Accounts.js'));
@@ -131,7 +132,21 @@ function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (text: str
       if (res.ok) {
         onLogin(token);
       } else {
-        setError(t('登录令牌无效'));
+        let reason = '';
+        try {
+          const text = await res.text();
+          if (text) {
+            try {
+              const parsed = JSON.parse(text) as { message?: unknown; error?: unknown };
+              if (typeof parsed.message === 'string') reason = parsed.message;
+              else if (typeof parsed.error === 'string') reason = parsed.error;
+              else reason = text;
+            } catch {
+              reason = text;
+            }
+          }
+        } catch {}
+        setError(t(resolveLoginErrorMessage(res.status, reason)));
         setLoading(false);
       }
     } catch {
@@ -708,5 +723,4 @@ export default function App() {
     </I18nProvider>
   );
 }
-
 

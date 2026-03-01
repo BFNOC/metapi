@@ -7,6 +7,7 @@ import { updateBalanceRefreshCron, updateCheckinCron } from '../../services/chec
 import { sendNotification } from '../../services/notifyService.js';
 import { exportBackup, importBackup, type BackupExportType } from '../../services/backupService.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
+import { extractClientIp, isIpAllowed } from '../../middleware/auth.js';
 
 type RoutingWeights = typeof config.routingWeights;
 
@@ -215,7 +216,7 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
   }
 }
 
-function getRuntimeSettingsResponse() {
+function getRuntimeSettingsResponse(currentAdminIp = '') {
   return {
     checkinCron: config.checkinCron,
     balanceRefreshCron: config.balanceRefreshCron,
@@ -237,18 +238,21 @@ function getRuntimeSettingsResponse() {
     smtpTo: config.smtpTo,
     notifyCooldownSec: config.notifyCooldownSec,
     adminIpAllowlist: config.adminIpAllowlist,
+    currentAdminIp,
     proxyTokenMasked: maskSecret(config.proxyToken),
   };
 }
 
 export async function settingsRoutes(app: FastifyInstance) {
-  app.get('/api/settings/runtime', async () => {
-    return getRuntimeSettingsResponse();
+  app.get('/api/settings/runtime', async (request) => {
+    const currentAdminIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
+    return getRuntimeSettingsResponse(currentAdminIp);
   });
 
   app.put<{ Body: RuntimeSettingsBody }>('/api/settings/runtime', async (request, reply) => {
     const body = request.body || {};
     const changedLabels: string[] = [];
+    const currentRequestIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
 
     if (body.checkinCron !== undefined) {
       if (!cron.validate(body.checkinCron)) {
@@ -418,6 +422,12 @@ export async function settingsRoutes(app: FastifyInstance) {
 
     if (body.adminIpAllowlist !== undefined) {
       const nextAllowlist = toStringList(body.adminIpAllowlist);
+      if (nextAllowlist.length > 0 && !isIpAllowed(currentRequestIp, nextAllowlist)) {
+        return reply.code(400).send({
+          success: false,
+          message: `保存失败：当前请求 IP（${currentRequestIp || 'unknown'}）不在新白名单中。请至少保留当前 IP，避免把自己锁出后台。`,
+        });
+      }
       if (JSON.stringify(nextAllowlist) !== JSON.stringify(config.adminIpAllowlist)) {
         changedLabels.push('管理端 IP 白名单');
       }
@@ -470,7 +480,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     return {
       success: true,
       message: '运行时设置已更新',
-      ...getRuntimeSettingsResponse(),
+      ...getRuntimeSettingsResponse(currentRequestIp),
     };
   });
 

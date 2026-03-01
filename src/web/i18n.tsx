@@ -8,6 +8,8 @@ const LANGUAGE_STORAGE_KEY = 'app_language';
 const zhToEn: Record<string, string> = {
   '管理员': 'Admin',
   '登录令牌无效': 'Invalid admin token',
+  '当前 IP 不在管理白名单中': 'Current IP is not in admin allowlist',
+  '当前识别到的管理端 IP（由服务端判定）：': 'Current recognized admin IP (server-side detected):',
   '无法连接到服务器': 'Unable to connect to server',
   '请输入管理员令牌后继续。': 'Enter admin token to continue.',
   '管理员令牌': 'Admin Token',

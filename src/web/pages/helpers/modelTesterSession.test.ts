@@ -84,6 +84,16 @@ describe('modelTesterSession', () => {
     expect(restored?.parameterEnabled).toEqual(DEFAULT_PARAMETER_ENABLED);
   });
 
+  it('defaults top_p to disabled when parameter switches are missing', () => {
+    const restored = parseModelTesterSession(JSON.stringify({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'hello' }],
+      pendingPayload: null,
+    }));
+
+    expect(restored?.parameterEnabled.top_p).toBe(false);
+  });
+
   it('returns null for malformed or missing session payload', () => {
     expect(parseModelTesterSession(null)).toBeNull();
     expect(parseModelTesterSession('not-json')).toBeNull();

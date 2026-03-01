@@ -183,7 +183,7 @@ Alert scenarios: low balance warning, site/account anomalies, check-in failures,
 ### Lightweight Deployment
 
 - **Single Docker container** with built-in SQLite — no external dependencies
-- Alpine base image, minimal footprint
+- Debian slim base image, balancing compatibility and image size
 - Full data import/export for worry-free migration
 
 ---
@@ -278,11 +278,14 @@ $env:DATA_DIR="./data"
 
 `start.sh` / `start.bat` will:
 
-- Run database migrations: `node dist/server/db/migrate.js`
-- Start the service: `node dist/server/index.js`
+- Check whether `better-sqlite3` matches the current Node.js ABI
+- If ABI mismatch is detected, automatically run `npm rebuild better-sqlite3`
+- If rebuild fails, fall back to `npm ci --omit=dev` to reinstall runtime dependencies
+- Then run database migrations and start the service
 
 > [!NOTE]
-> The Release package requires Node.js installed locally (20+ recommended).
+> The Release package requires Node.js installed locally (supports 20+, recommends 22 LTS).  
+> If your local Node major version differs from the one used during packaging (for example, package built with Node 22 while local is Node 24), first startup may trigger automatic rebuild and requires network access.
 
 ### Upgrade
 
@@ -496,7 +499,7 @@ For detailed integration instructions: [docs/client-integration.md](docs/client-
 | **Database** | SQLite ([better-sqlite3](https://github.com/WiseLibs/better-sqlite3)) + [Drizzle ORM](https://orm.drizzle.team) |
 | **Charts** | [VChart](https://visactor.io/vchart) (@visactor/react-vchart) |
 | **Scheduling** | [node-cron](https://github.com/node-cron/node-cron) |
-| **Containerization** | Docker (Alpine) + Docker Compose |
+| **Containerization** | Docker (Debian slim) + Docker Compose |
 | **Testing** | [Vitest](https://vitest.dev) |
 
 ---

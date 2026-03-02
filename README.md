@@ -156,6 +156,28 @@
 &emsp;↓
 **上游平台**（New API · One API · OneHub · DoneHub · Veloera · AnyRouter · Sub2API …）
 
+```mermaid
+graph LR
+    %% 全局样式设置
+    classDef node rx:10,ry:10,font-size:14px,font-family:sans-serif;
+    classDef client fill:#F4F6F8,stroke:#476582,stroke-width:2px,color:#2C3E50;
+    classDef gateway fill:#FFF7E6,stroke:#FA8C16,stroke-width:2px,color:#873800,text-align:left;
+    classDef upstream fill:#F6FFED,stroke:#52C41A,stroke-width:2px,color:#135200;
+
+    %% 节点定义
+    C["<b>💻 下游客户端</b><br/><br/>Cursor · Claude Code<br/>Codex · Open WebUI<br/>Cherry Studio"]:::client
+    
+    G["<b>🚀 Metapi 网关</b><br/>────────────────────────<br/>✨ <b>统一代理</b>：兼容 OpenAI / Claude 全接口<br/>🧠 <b>智能路由</b>：按成本、余额、可用率加权，失败重试<br/>🔍 <b>模型发现</b>：自动聚合上游全部模型，零配置接入<br/>🔄 <b>格式转换</b>：OpenAI ⇄ Claude 双向透明转换<br/>📊 <b>运维管理</b>：自动签到 · 余额管理 · 告警 · 看板"]:::gateway
+    
+    U["<b>☁️ 上游平台</b><br/><br/>New API · One API<br/>OneHub · DoneHub<br/>Veloera · AnyRouter<br/>Sub2API 等"]:::upstream
+
+    %% 连线
+    C -- "Authorization: Bearer <PROXY_TOKEN>" --> G
+    G ==>|请求分发| U
+```
+
+
+
 ---
 
 ## ✨ 核心功能

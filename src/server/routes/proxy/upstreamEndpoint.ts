@@ -381,13 +381,9 @@ function preferredEndpointOrder(downstreamFormat: EndpointPreference, sitePlatfo
     return ['messages'];
   }
 
-  if (downstreamFormat === 'responses') {
-    return ['responses', 'chat', 'messages'];
-  }
-
-  return downstreamFormat === 'claude'
-    ? ['messages', 'chat']
-    : ['chat', 'messages'];
+  // Unknown/generic upstreams: try the most expressive protocol first,
+  // then degrade to anthropic messages, and finally chat completions.
+  return ['responses', 'messages', 'chat'];
 }
 
 export async function resolveUpstreamEndpointCandidates(

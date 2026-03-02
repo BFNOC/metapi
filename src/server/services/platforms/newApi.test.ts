@@ -411,4 +411,37 @@ describe('NewApiAdapter', () => {
     expect(result.success).toBe(false);
     expect(result.message).toBe('浠婂ぉ宸茬粡绛惧埌杩囧暒');
   });
+
+  it('sends all compatibility user-id headers when userId is known', async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err?: Error) => (err ? reject(err) : resolve()));
+    });
+    const receivedHeaders: Record<string, string> = {};
+    server = createServer((req, res) => {
+      for (const name of ['new-api-user', 'veloera-user', 'voapi-user', 'user-id', 'rix-api-user', 'neo-api-user']) {
+        const val = req.headers[name];
+        if (val) receivedHeaders[name] = String(val);
+      }
+      if (req.url === '/api/user/self') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, data: { id: 42, username: 'test', quota: 500000, used_quota: 0 } }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    const adapter = new NewApiAdapter();
+    const fakeJwt = `header.${Buffer.from(JSON.stringify({ id: 42 })).toString('base64url')}.sig`;
+    await adapter.getBalance(baseUrl, fakeJwt, 42);
+
+    expect(receivedHeaders['new-api-user']).toBe('42');
+    expect(receivedHeaders['veloera-user']).toBe('42');
+    expect(receivedHeaders['voapi-user']).toBe('42');
+    expect(receivedHeaders['user-id']).toBe('42');
+    expect(receivedHeaders['rix-api-user']).toBe('42');
+    expect(receivedHeaders['neo-api-user']).toBe('42');
+  });
 });

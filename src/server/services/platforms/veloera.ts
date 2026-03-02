@@ -15,11 +15,22 @@ export class VeloeraAdapter extends BasePlatformAdapter {
     }
   }
 
-  async checkin(baseUrl: string, accessToken: string): Promise<CheckinResult> {
+  private veloeraHeaders(accessToken: string, userId?: number): Record<string, string> {
+    const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
+    if (userId) {
+      const value = String(userId);
+      headers['Veloera-User'] = value;
+      headers['New-API-User'] = value;
+      headers['User-id'] = value;
+    }
+    return headers;
+  }
+
+  async checkin(baseUrl: string, accessToken: string, platformUserId?: number): Promise<CheckinResult> {
     try {
       const res = await this.fetchJson<any>(`${baseUrl}/api/user/checkin`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: this.veloeraHeaders(accessToken, platformUserId),
       });
       if (res?.success) {
         return { success: true, message: res.message || 'Check-in successful', reward: res.data?.reward?.toString() };
@@ -30,9 +41,9 @@ export class VeloeraAdapter extends BasePlatformAdapter {
     }
   }
 
-  async getBalance(baseUrl: string, accessToken: string): Promise<BalanceInfo> {
+  async getBalance(baseUrl: string, accessToken: string, platformUserId?: number): Promise<BalanceInfo> {
     const res = await this.fetchJson<any>(`${baseUrl}/api/user/self`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: this.veloeraHeaders(accessToken, platformUserId),
     });
     const data = res?.data;
     const quota = (data?.quota || 0) / 1000000;

@@ -1,5 +1,26 @@
 import { describe, expect, it } from 'vitest';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { type AddressInfo } from 'node:net';
 import { detectPlatform, getAdapter } from './index.js';
+
+async function withHttpServer(
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+  run: (baseUrl: string) => Promise<void>,
+) {
+  const server = createServer(handler);
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+  const { port } = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  try {
+    await run(baseUrl);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err?: Error) => (err ? reject(err) : resolve()));
+    });
+  }
+}
 
 describe('getAdapter platform aliases', () => {
   it('returns dedicated anyrouter adapter for anyrouter alias', () => {
@@ -40,5 +61,77 @@ describe('getAdapter platform aliases', () => {
     expect(openai?.platformName).toBe('openai');
     expect(claude?.platformName).toBe('claude');
     expect(gemini?.platformName).toBe('gemini');
+  });
+
+  it('detects one-hub by title under custom domain before generic new-api', async () => {
+    await withHttpServer((req, res) => {
+      if (req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><head><title>One-Hub Console</title></head><body></body></html>');
+        return;
+      }
+      if (req.url === '/api/status') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          data: { system_name: 'New API' },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const adapter = await detectPlatform(baseUrl);
+      expect(adapter?.platformName).toBe('one-hub');
+    });
+  });
+
+  it('detects done-hub by title under custom domain', async () => {
+    await withHttpServer((req, res) => {
+      if (req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><head><title>Done-Hub Panel</title></head><body></body></html>');
+        return;
+      }
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const adapter = await detectPlatform(baseUrl);
+      expect(adapter?.platformName).toBe('done-hub');
+    });
+  });
+
+  it('detects veloera by title under custom domain before generic new-api', async () => {
+    await withHttpServer((req, res) => {
+      if (req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><head><title>Veloera 管理台</title></head><body></body></html>');
+        return;
+      }
+      if (req.url === '/api/status') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          data: { system_name: 'new-api fork' },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const adapter = await detectPlatform(baseUrl);
+      expect(adapter?.platformName).toBe('veloera');
+    });
+  });
+
+  it('falls back to new-api by title when api/status is unavailable', async () => {
+    await withHttpServer((req, res) => {
+      if (req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><head><title>Super-API Dashboard</title></head><body></body></html>');
+        return;
+      }
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const adapter = await detectPlatform(baseUrl);
+      expect(adapter?.platformName).toBe('new-api');
+    });
   });
 });

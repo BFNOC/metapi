@@ -1,8 +1,8 @@
-import { OneApiAdapter } from './oneApi.js';
+import { OneHubAdapter } from './oneHub.js';
 import type { CheckinResult } from './base.js';
 
-export class DoneHubAdapter extends OneApiAdapter {
-  readonly platformName = 'done-hub';
+export class DoneHubAdapter extends OneHubAdapter {
+  readonly platformName: string = 'done-hub';
 
   async detect(url: string): Promise<boolean> {
     const normalized = url.toLowerCase();
@@ -15,25 +15,6 @@ export class DoneHubAdapter extends OneApiAdapter {
     return { success: false, message: 'checkin endpoint not found' };
   }
 
-  override async getModels(baseUrl: string, apiToken: string, _platformUserId?: number): Promise<string[]> {
-    let openAiModels: string[] = [];
-    try {
-      openAiModels = await super.getModels(baseUrl, apiToken, _platformUserId);
-    } catch {}
-    if (openAiModels.length > 0) return openAiModels;
-
-    try {
-      const res = await this.fetchJson<any>(`${baseUrl}/api/available_model`, {
-        headers: { Authorization: `Bearer ${apiToken}` },
-      });
-
-      const payload = (res?.data && typeof res.data === 'object') ? res.data : res;
-      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-        const models = Object.keys(payload).filter(Boolean);
-        if (models.length > 0) return models;
-      }
-    } catch {}
-
-    return [];
-  }
+  // getModels is inherited from OneHubAdapter which already has /api/available_model fallback.
+  // No need to override here — OneHub's implementation handles this correctly.
 }

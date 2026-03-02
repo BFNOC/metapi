@@ -31,7 +31,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
 
   private authHeaders(accessToken: string, userId?: number): Record<string, string> {
     const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
-    if (userId) headers['New-Api-User'] = String(userId);
+    if (userId) {
+      const value = String(userId);
+      headers['New-API-User'] = value;
+      headers['Veloera-User'] = value;
+      headers['voapi-user'] = value;
+      headers['User-id'] = value;
+      headers['Rix-Api-User'] = value;
+      headers['neo-api-user'] = value;
+    }
     return headers;
   }
 

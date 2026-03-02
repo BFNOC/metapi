@@ -33,11 +33,22 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
-  publish-docker:
-    runs-on: ubuntu-latest
+  publish-docker-arch:
+    name: Publish Docker Image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     needs: test-and-build
     if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
-    timeout-minutes: 30
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: Checkout
@@ -49,9 +60,6 @@ jobs:
             echo "Missing Docker Hub secrets: DOCKERHUB_USERNAME / DOCKERHUB_TOKEN"
             exit 1
           fi
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -73,12 +81,80 @@ jobs:
             type=ref,event=tag
             type=sha,format=short
 
-      - name: Build and push multi-arch image
+      - name: Add architecture suffix to tags
+        id: arch-tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f tags.txt
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "${tag}-${{ matrix.arch }}" >> tags.txt
+          done <<< "${{ steps.meta.outputs.tags }}"
+          {
+            echo 'tags<<EOF'
+            cat tags.txt
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push ${{ matrix.platform }} image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.arch-tags.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=ci-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=ci-${{ matrix.arch }}
+
+  publish-docker:
+    name: Publish Docker Manifest
+    runs-on: ubuntu-latest
+    needs: publish-docker-arch
+    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure Docker Hub secrets are configured
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "Missing Docker Hub secrets: DOCKERHUB_USERNAME / DOCKERHUB_TOKEN"
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: 1467078763/metapi
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,format=short
+
+      - name: Create multi-arch manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker buildx imagetools create \
+              --tag "$tag" \
+              "${tag}-amd64" \
+              "${tag}-arm64"
+          done <<< "${{ steps.meta.outputs.tags }}"

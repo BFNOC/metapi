@@ -106,20 +106,41 @@ npm run dev
 
 完成部署后，按以下顺序配置：
 
+> [!TIP] 从 ALL-API-Hub 迁移（可选）
+> 如果你使用过 ALL-API-Hub，Metapi 兼容其导出的备份设置，可直接导入，无需手动逐项配置。
+>
+> ![ALL-API-Hub备份导入](./screenshots/allapi-hub-backup.png)
+
 ### 步骤 1：添加站点
 
 进入 **站点管理**，添加你使用的上游中转站：
 
-- 填写站点名称和 URL
-- 选择平台类型（New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API）
+- 填写站点名称（自己想怎么取就怎么取）和 URL
+- 选择平台类型（New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API），通常可自动检测
 - 填写站点的管理员 API Key（可选，部分功能需要）
+
+![站点管理](./screenshots/site-management.png)
 
 ### 步骤 2：添加账号
 
+首先前往你想添加的公益站，进入下图界面：
+
+![账号管理](./screenshots/account-management.png)
+
 进入 **账号管理**，为每个站点添加已注册的账号：
 
+
+
+![账号余额](./screenshots/account-balance.png)
+
 - 填入用户名和访问凭证
+
+  ![账号凭证](./screenshots/account-credentials.png)
+
 - 系统会自动登录并获取余额信息
+
+![账号余额](./screenshots/account-balance.png)
+
 - 启用自动签到（如站点支持）
 
 ### 步骤 3：同步 Token
@@ -127,7 +148,10 @@ npm run dev
 进入 **Token 管理**：
 
 - 点击「同步」从上游账号拉取 API Key
-- 或手动添加已有的 API Key
+
+- 或手动添加已有的 API Key，如下图所示。
+
+  ![Token管理](./screenshots/token-management.png)
 
 ### 步骤 4：检查路由
 

@@ -4,3 +4,6 @@ data
 .git
 .env
 *.md
+docs
+.github
+*.log

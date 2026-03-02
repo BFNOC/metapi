@@ -11,7 +11,7 @@ export type StreamTransformContext = {
   created: number;
   roleSent: boolean;
   doneSent: boolean;
-  toolCalls: Record<number, { id?: string; name?: string }>;
+  toolCalls: Record<number, { id?: string; name?: string; arguments?: string }>;
 };
 
 export type ClaudeDownstreamContext = {
@@ -167,13 +167,15 @@ export function normalizeStopReason(raw: unknown): string | null {
     || value === 'end'
     || value === 'eos'
     || value === 'finished'
+    || value === 'completed'
     || value === 'stop_sequence'
   ) {
     return 'stop';
   }
 
   if (
-    value === 'max_tokens'
+    value === 'incomplete'
+    || value === 'max_tokens'
     || value === 'length'
     || value === 'max_output_tokens'
     || value === 'max_tokens_exceeded'
@@ -835,11 +837,33 @@ export function normalizeUpstreamStreamEvent(
         : (isNonEmptyString((payload as any).item_id) ? (payload as any).item_id : undefined)
     );
     const toolName = isNonEmptyString((payload as any).name) ? (payload as any).name : undefined;
-    const argumentsDelta = (
-      typeof payload.delta === 'string'
-        ? payload.delta
-        : (typeof (payload as any).arguments === 'string' ? (payload as any).arguments : undefined)
+    const rawArguments = (
+      type === 'response.function_call_arguments.done'
+        ? (typeof (payload as any).arguments === 'string' ? (payload as any).arguments : undefined)
+        : (
+          typeof payload.delta === 'string'
+            ? payload.delta
+            : (typeof (payload as any).arguments === 'string' ? (payload as any).arguments : undefined)
+        )
     );
+    let argumentsDelta = rawArguments;
+    if (type === 'response.function_call_arguments.done' && typeof rawArguments === 'string') {
+      const existingArguments = context.toolCalls[outputIndex]?.arguments || '';
+      if (existingArguments && rawArguments.startsWith(existingArguments)) {
+        const missingSuffix = rawArguments.slice(existingArguments.length);
+        argumentsDelta = missingSuffix.length > 0 ? missingSuffix : undefined;
+      } else if (existingArguments === rawArguments) {
+        argumentsDelta = undefined;
+      }
+    }
+
+    const knownTool = context.toolCalls[outputIndex] || {};
+    const shouldBackfillId = !!toolCallId && !knownTool.id;
+    const shouldBackfillName = !!toolName && !knownTool.name;
+    if (argumentsDelta === undefined && !shouldBackfillId && !shouldBackfillName) {
+      return {};
+    }
+
     return {
       toolCallDeltas: [{
         index: outputIndex,
@@ -1019,9 +1043,11 @@ function buildOpenAiStreamChunk(
       const existing = context.toolCalls[index] || {};
       const id = toolDelta.id || existing.id || `call_meta_${index}`;
       const name = toolDelta.name || existing.name || '';
+      const nextArguments = `${existing.arguments || ''}${toolDelta.argumentsDelta ?? ''}`;
       context.toolCalls[index] = {
         id,
         name: name || existing.name,
+        arguments: nextArguments,
       };
 
       const fn: Record<string, unknown> = {};

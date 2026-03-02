@@ -796,6 +796,171 @@ describe('chat proxy stream behavior', () => {
     expect(options.headers.accept).toBe('text/event-stream');
   });
 
+  it('preserves function_call/function_call_output when /v1/responses falls back to /v1/chat/completions', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/chat/completions'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl_responses_fallback_chat',
+      object: 'chat.completion',
+      created: 1_706_000_111,
+      model: 'upstream-gpt',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: 'ok' },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 9, completion_tokens: 3, total_tokens: 12 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2',
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'find readme' }],
+          },
+          {
+            type: 'function_call',
+            call_id: 'call_abc',
+            name: 'Glob',
+            arguments: '{"pattern":"README*"}',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_abc',
+            output: '{"matches":1}',
+          },
+        ],
+        tools: [{
+          type: 'function',
+          name: 'Glob',
+          description: 'Search files',
+          parameters: {
+            type: 'object',
+            properties: { pattern: { type: 'string' } },
+            required: ['pattern'],
+          },
+          strict: true,
+        }],
+        tool_choice: {
+          type: 'function',
+          name: 'Glob',
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
+    expect(targetUrl).toContain('/v1/chat/completions');
+
+    const forwarded = JSON.parse(options.body);
+    expect(Array.isArray(forwarded.messages)).toBe(true);
+
+    const assistantWithToolCall = forwarded.messages.find((item: any) =>
+      item?.role === 'assistant'
+      && Array.isArray(item?.tool_calls)
+      && item.tool_calls.length > 0,
+    );
+    expect(assistantWithToolCall).toBeTruthy();
+    expect(assistantWithToolCall.tool_calls[0].id).toBe('call_abc');
+    expect(assistantWithToolCall.tool_calls[0].function?.name).toBe('Glob');
+    expect(assistantWithToolCall.tool_calls[0].function?.arguments).toContain('README*');
+
+    const toolMessage = forwarded.messages.find((item: any) => item?.role === 'tool');
+    expect(toolMessage).toBeTruthy();
+    expect(toolMessage.tool_call_id).toBe('call_abc');
+    expect(toolMessage.content).toContain('matches');
+
+    expect(forwarded.tools?.[0]?.function?.name).toBe('Glob');
+    expect(forwarded.tool_choice?.function?.name).toBe('Glob');
+  });
+
+  it('preserves function_call/function_call_output when /v1/responses falls back to /v1/messages', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['anthropic'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'msg_responses_fallback_messages',
+      type: 'message',
+      model: 'upstream-gpt',
+      content: [{ type: 'text', text: 'ok' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 8, output_tokens: 2, total_tokens: 10 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2',
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'find readme' }],
+          },
+          {
+            type: 'function_call',
+            call_id: 'call_abc',
+            name: 'Glob',
+            arguments: '{"pattern":"README*"}',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_abc',
+            output: '{"matches":1}',
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
+    expect(targetUrl).toContain('/v1/messages');
+
+    const forwarded = JSON.parse(options.body);
+    expect(Array.isArray(forwarded.messages)).toBe(true);
+
+    const assistantMessage = forwarded.messages.find((item: any) => item?.role === 'assistant');
+    expect(Array.isArray(assistantMessage?.content)).toBe(true);
+    expect(assistantMessage.content.some((part: any) => part?.type === 'tool_use')).toBe(true);
+
+    const userToolResultMessage = forwarded.messages.find((item: any) =>
+      item?.role === 'user'
+      && Array.isArray(item?.content)
+      && item.content.some((part: any) => part?.type === 'tool_result'),
+    );
+    expect(userToolResultMessage).toBeTruthy();
+    expect(userToolResultMessage.content[0].tool_use_id).toBe('call_abc');
+  });
+
   it('routes /v1/responses to /v1/messages when upstream catalog is anthropic-only', async () => {
     fetchModelPricingCatalogMock.mockResolvedValue({
       models: [
@@ -1194,6 +1359,95 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('"id":"call_abc"');
     expect(response.body).toContain('"name":"Glob"');
     expect(response.body).toContain('\\"pattern\\":\\"README*\\"');
+  });
+
+  it('uses response.function_call_arguments.done when upstream omits delta on /v1/chat/completions', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/responses'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: response.created\ndata: {"type":"response.created","response":{"id":"resp_done_only","model":"upstream-gpt","created_at":1706000000,"status":"in_progress","output":[]}}\n\n'));
+        controller.enqueue(encoder.encode('event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_done_only","name":"Glob"}}\n\n'));
+        controller.enqueue(encoder.encode('event: response.function_call_arguments.done\ndata: {"type":"response.function_call_arguments.done","output_index":0,"call_id":"call_done_only","arguments":"{\\"pattern\\":\\"README*\\"}"}\n\n'));
+        controller.enqueue(encoder.encode('event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_done_only","model":"upstream-gpt","status":"completed","usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}}}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'claude-haiku-4-5-20251001',
+        stream: true,
+        messages: [{ role: 'user', content: 'find readme' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('"tool_calls"');
+    expect(response.body).toContain('"id":"call_done_only"');
+    expect(response.body).toContain('"name":"Glob"');
+    expect(response.body).toContain('\\"pattern\\":\\"README*\\"');
+  });
+
+  it('does not duplicate tool arguments when upstream sends both delta and done on /v1/chat/completions', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/responses'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: response.created\ndata: {"type":"response.created","response":{"id":"resp_delta_done","model":"upstream-gpt","created_at":1706000000,"status":"in_progress","output":[]}}\n\n'));
+        controller.enqueue(encoder.encode('event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_delta_done","name":"Glob"}}\n\n'));
+        controller.enqueue(encoder.encode('event: response.function_call_arguments.delta\ndata: {"type":"response.function_call_arguments.delta","output_index":0,"call_id":"call_delta_done","delta":"{\\"pattern\\":\\"README*\\"}"}\n\n'));
+        controller.enqueue(encoder.encode('event: response.function_call_arguments.done\ndata: {"type":"response.function_call_arguments.done","output_index":0,"call_id":"call_delta_done","arguments":"{\\"pattern\\":\\"README*\\"}"}\n\n'));
+        controller.enqueue(encoder.encode('event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_delta_done","model":"upstream-gpt","status":"completed","usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}}}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'claude-haiku-4-5-20251001',
+        stream: true,
+        messages: [{ role: 'user', content: 'find readme' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const matches = response.body.match(/\\"pattern\\":\\"README\*\\"/g) || [];
+    expect(matches.length).toBe(1);
   });
 
   it('preserves non-stream function_call output when /v1/chat/completions falls back to /v1/responses', async () => {

@@ -9,7 +9,7 @@ import {
 } from './notificationThrottle.js';
 import { formatLocalDateTime, getResolvedTimeZone } from './localTimeService.js';
 
-type NotificationChannel = 'webhook' | 'bark' | 'serverchan' | 'smtp';
+type NotificationChannel = 'webhook' | 'bark' | 'serverchan' | 'telegram' | 'smtp';
 
 export type SendNotificationOptions = {
   bypassThrottle?: boolean;
@@ -68,6 +68,18 @@ function buildTimeFootnote(now: Date): string {
     `Local Time: ${formatLocalDateTime(now)} (${timeZone})`,
     `UTC Time: ${now.toISOString()}`,
   ].join('\n');
+}
+
+function buildTelegramText(
+  title: string,
+  message: string,
+  level: 'info' | 'warning' | 'error',
+  timeFootnote: string,
+): string {
+  const maxTextLength = 3900;
+  const raw = `[metapi][${level.toUpperCase()}] ${title}\n\n${message}\n\nLevel: ${level}\n${timeFootnote}`;
+  if (raw.length <= maxTextLength) return raw;
+  return `${raw.slice(0, maxTextLength)}\n\n...(truncated)`;
 }
 
 export async function sendNotification(
@@ -161,6 +173,35 @@ export async function sendNotification(
         },
       },
     );
+  }
+
+  if (config.telegramEnabled && config.telegramBotToken && config.telegramChatId) {
+    const telegramApiUrl = `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`;
+    const text = buildTelegramText(title, resolvedMessage, level, timeFootnote);
+    tasks.push({
+      channel: 'telegram',
+      run: async () => {
+        const response = await fetch(telegramApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: config.telegramChatId,
+            text,
+            disable_web_page_preview: true,
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(`Telegram 响应状态 ${response.status}`);
+        }
+        let payload: { ok?: boolean; description?: string } | null = null;
+        try {
+          payload = await response.json() as { ok?: boolean; description?: string };
+        } catch {}
+        if (payload?.ok === false) {
+          throw new Error(payload.description || 'Telegram 返回失败');
+        }
+      },
+    });
   }
 
   if (

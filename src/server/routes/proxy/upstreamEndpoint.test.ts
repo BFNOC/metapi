@@ -187,4 +187,16 @@ describe('resolveUpstreamEndpointCandidates', () => {
     expect(isEndpointDowngradeError(405, '{"error":{"message":"Method Not Allowed"}}')).toBe(true);
     expect(isEndpointDowngradeError(400, '{"error":{"message":"unsupported endpoint","type":"invalid_request_error"}}')).toBe(true);
   });
+
+  it('treats Claude Code CLI-only restriction on responses as downgrade candidate', () => {
+    const upstreamError = JSON.stringify({
+      error: {
+        code: 'invalid_request',
+        type: 'new_api_error',
+        message: '请勿在 Claude Code CLI 之外使用接口 (request id: abc123)',
+      },
+    });
+
+    expect(isEndpointDowngradeError(400, upstreamError)).toBe(true);
+  });
 });

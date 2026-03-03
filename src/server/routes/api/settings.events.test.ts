@@ -132,6 +132,38 @@ describe('settings and auth events', () => {
     expect(body.message).toContain('Webhook URL');
   });
 
+  it('rejects telegram config when bot token is missing but telegram is enabled', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        telegramEnabled: true,
+        telegramChatId: '-1001234567890',
+        telegramBotToken: '',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { message?: string };
+    expect(body.message).toContain('Telegram Bot Token');
+  });
+
+  it('rejects telegram config when chat id is missing but telegram is enabled', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        telegramEnabled: true,
+        telegramBotToken: '123456:telegram-token',
+        telegramChatId: '',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { message?: string };
+    expect(body.message).toContain('Telegram Chat ID');
+  });
+
   it('persists and returns routing fallback unit cost from runtime settings', async () => {
     const updateResponse = await app.inject({
       method: 'PUT',

@@ -88,6 +88,15 @@ try {
   const serverChanKey = parseSetting<string>('serverchan_key');
   if (typeof serverChanKey === 'string') config.serverChanKey = serverChanKey;
 
+  const telegramEnabled = parseSetting<boolean>('telegram_enabled');
+  if (typeof telegramEnabled === 'boolean') config.telegramEnabled = telegramEnabled;
+
+  const telegramBotToken = parseSetting<string>('telegram_bot_token');
+  if (typeof telegramBotToken === 'string') config.telegramBotToken = telegramBotToken;
+
+  const telegramChatId = parseSetting<string>('telegram_chat_id');
+  if (typeof telegramChatId === 'string') config.telegramChatId = telegramChatId;
+
   const smtpEnabled = parseSetting<boolean>('smtp_enabled');
   if (typeof smtpEnabled === 'boolean') config.smtpEnabled = smtpEnabled;
 

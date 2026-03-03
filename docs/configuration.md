@@ -123,6 +123,24 @@ Metapi 的路由引擎按多因子加权选择最优通道。
 | `SERVERCHAN_ENABLED` | 启用 Server酱 通知 | `true` |
 | `SERVERCHAN_KEY` | Server酱 SendKey | 空 |
 
+### Telegram Bot
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `TELEGRAM_ENABLED` | 启用 Telegram 通知 | `false` |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token（形如 `123456:abc`） | 空 |
+| `TELEGRAM_CHAT_ID` | 接收消息的 Chat ID（如 `-100xxxx` 或 `@channel`） | 空 |
+
+**配置步骤：**
+
+1. **创建 Bot**：在 Telegram 中搜索 [@BotFather](https://t.me/BotFather)，发送 `/newbot`，按提示设置名称后获取 Bot Token（格式如 `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`）
+2. **获取 Chat ID**：
+   - **个人聊天**：向你的 Bot 发送任意消息，然后访问 `https://api.telegram.org/bot<你的Token>/getUpdates`，在返回的 JSON 中找到 `chat.id`，或者在 Telegram 搜索 @userinfobot 或是 @getmyid_bot。点击 Start，它会立刻回复一串数字（通常是 9 到 10 位）。
+   - **群组**：将 Bot 邀请进群组，在群内发送消息后同样通过 `getUpdates` 接口获取群组 Chat ID（通常为负数，如 `-1001234567890`）
+   - **频道**：使用频道用户名，如 `@your_channel`（需先将 Bot 添加为频道管理员）
+3. **填入配置**：将获取的 Token 和 Chat ID 填入环境变量或在管理后台「通知设置」页面中配置
+4. **测试**：保存后点击页面上的「测试通知」按钮验证是否收到消息
+
 ### SMTP 邮件
 
 | 变量名 | 说明 | 默认值 |

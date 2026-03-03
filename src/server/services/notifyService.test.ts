@@ -32,6 +32,9 @@ describe('notifyService', () => {
     config.barkUrl = '';
     config.serverChanEnabled = false;
     config.serverChanKey = '';
+    (config as any).telegramEnabled = false;
+    (config as any).telegramBotToken = '';
+    (config as any).telegramChatId = '';
     config.smtpEnabled = true;
     config.smtpHost = 'smtp.example.com';
     config.smtpPort = 465;
@@ -115,5 +118,37 @@ describe('notifyService', () => {
     const payload = sendMailMock.mock.calls[0]?.[0] as { text?: string };
     expect(payload?.text || '').toContain('Local Time:');
     expect(payload?.text || '').toContain('UTC Time:');
+  });
+
+  it('sends telegram message when telegram channel is enabled', async () => {
+    const { config } = await import('../config.js');
+    (config as any).telegramEnabled = true;
+    (config as any).telegramBotToken = '123456:telegram-token';
+    (config as any).telegramChatId = '-1001234567890';
+    config.smtpEnabled = false;
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+    });
+
+    const { sendNotification } = await import('./notifyService.js');
+    await sendNotification('测试通知', 'message', 'warning', { bypassThrottle: true, throwOnFailure: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.telegram.org/bot123456:telegram-token/sendMessage',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const rawBody = fetchMock.mock.calls[0]?.[1] as { body?: string };
+    const payload = JSON.parse(rawBody?.body || '{}') as { chat_id?: string; text?: string };
+    expect(payload.chat_id).toBe('-1001234567890');
+    expect(payload.text || '').toContain('Level: warning');
+    expect(payload.text || '').toContain('Local Time:');
+    expect(payload.text || '').toContain('UTC Time:');
   });
 });

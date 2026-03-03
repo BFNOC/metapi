@@ -9,6 +9,8 @@ type RuntimeSettings = {
     webhookEnabled: boolean;
     barkEnabled: boolean;
     serverChanEnabled: boolean;
+    telegramEnabled: boolean;
+    telegramChatId: string;
     smtpEnabled: boolean;
     smtpHost: string;
     smtpPort: number;
@@ -18,6 +20,7 @@ type RuntimeSettings = {
     smtpFrom: string;
     smtpTo: string;
     serverChanKeyMasked?: string;
+    telegramBotTokenMasked?: string;
     notifyCooldownSec: number;
 };
 
@@ -28,6 +31,8 @@ export default function NotificationSettings() {
         webhookEnabled: true,
         barkEnabled: true,
         serverChanEnabled: false,
+        telegramEnabled: false,
+        telegramChatId: '',
         smtpEnabled: false,
         smtpHost: '',
         smtpPort: 587,
@@ -39,6 +44,7 @@ export default function NotificationSettings() {
     });
 
     const [serverChanKey, setServerChanKey] = useState('');
+    const [telegramBotToken, setTelegramBotToken] = useState('');
     const [smtpPass, setSmtpPass] = useState('');
     const [loading, setLoading] = useState(true);
     const [savingNotify, setSavingNotify] = useState(false);
@@ -67,6 +73,8 @@ export default function NotificationSettings() {
                 webhookEnabled: runtimeInfo.webhookEnabled ?? true,
                 barkEnabled: runtimeInfo.barkEnabled ?? true,
                 serverChanEnabled: !!runtimeInfo.serverChanEnabled,
+                telegramEnabled: !!runtimeInfo.telegramEnabled,
+                telegramChatId: runtimeInfo.telegramChatId || '',
                 smtpEnabled: !!runtimeInfo.smtpEnabled,
                 smtpHost: runtimeInfo.smtpHost || '',
                 smtpPort: Number(runtimeInfo.smtpPort) || 587,
@@ -76,6 +84,7 @@ export default function NotificationSettings() {
                 smtpFrom: runtimeInfo.smtpFrom || '',
                 smtpTo: runtimeInfo.smtpTo || '',
                 serverChanKeyMasked: runtimeInfo.serverChanKeyMasked || '',
+                telegramBotTokenMasked: runtimeInfo.telegramBotTokenMasked || '',
                 notifyCooldownSec: Number.isFinite(Number(runtimeInfo.notifyCooldownSec))
                     ? Math.max(0, Math.trunc(Number(runtimeInfo.notifyCooldownSec)))
                     : 300,
@@ -100,6 +109,8 @@ export default function NotificationSettings() {
                 webhookEnabled: runtime.webhookEnabled,
                 barkEnabled: runtime.barkEnabled,
                 serverChanEnabled: runtime.serverChanEnabled,
+                telegramEnabled: runtime.telegramEnabled,
+                telegramChatId: runtime.telegramChatId,
                 smtpEnabled: runtime.smtpEnabled,
                 smtpHost: runtime.smtpHost,
                 smtpPort: runtime.smtpPort,
@@ -110,15 +121,18 @@ export default function NotificationSettings() {
                 notifyCooldownSec: Math.max(0, Math.trunc(Number(runtime.notifyCooldownSec) || 0)),
             };
             if (serverChanKey.trim()) payload.serverChanKey = serverChanKey.trim();
+            if (telegramBotToken.trim()) payload.telegramBotToken = telegramBotToken.trim();
             if (smtpPass.trim()) payload.smtpPass = smtpPass.trim();
 
             const res = await api.updateRuntimeSettings(payload);
             setRuntime((prev) => ({
                 ...prev,
                 serverChanKeyMasked: res.serverChanKeyMasked || prev.serverChanKeyMasked,
+                telegramBotTokenMasked: res.telegramBotTokenMasked || prev.telegramBotTokenMasked,
                 smtpPassMasked: res.smtpPassMasked || prev.smtpPassMasked,
             }));
             setServerChanKey('');
+            setTelegramBotToken('');
             setSmtpPass('');
             toast.success('通知设置已保存');
         } catch (err: any) {
@@ -283,6 +297,58 @@ export default function NotificationSettings() {
                             style={inputStyle}
                             disabled={!runtime.serverChanEnabled}
                         />
+                    </div>
+                </div>
+
+                {/* 卡片：Telegram */} 
+                <div className="card animate-slide-up stagger-4" style={{ padding: 24, border: runtime.telegramEnabled ? '1px solid var(--color-primary)' : '1px solid var(--color-border-light)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--color-primary-light)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 11l18-8-6 18-3-7-9-3z" /></svg>
+                            </div>
+                            <div>
+                                <div style={{ fontWeight: 600, fontSize: 15 }}>Telegram Bot</div>
+                                <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>通过 Telegram 机器人推送消息通知</div>
+                            </div>
+                        </div>
+
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                            <span style={{ fontSize: 13, fontWeight: 500, color: runtime.telegramEnabled ? 'var(--color-primary)' : 'var(--color-text-muted)' }}>启用 Telegram</span>
+                            <input
+                                type="checkbox"
+                                style={{ width: 16, height: 16, cursor: 'pointer' }}
+                                checked={runtime.telegramEnabled}
+                                onChange={(e) => setRuntime((prev) => ({ ...prev, telegramEnabled: e.target.checked }))}
+                            />
+                        </label>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '16px 20px', opacity: runtime.telegramEnabled ? 1 : 0.6, transition: 'opacity 0.2s' }}>
+                        <div>
+                            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>Telegram Chat ID</div>
+                            <input
+                                value={runtime.telegramChatId}
+                                onChange={(e) => setRuntime((prev) => ({ ...prev, telegramChatId: e.target.value }))}
+                                placeholder="例如: -1001234567890 或 @your_channel"
+                                style={inputStyle}
+                                disabled={!runtime.telegramEnabled}
+                            />
+                        </div>
+                        <div>
+                            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--color-text-secondary)' }}>
+                                Telegram Bot Token
+                                {runtime.telegramBotTokenMasked && <span style={{ color: 'var(--color-primary)', marginLeft: 8, fontSize: 12 }}>(当前已设置)</span>}
+                            </div>
+                            <input
+                                type="password"
+                                value={telegramBotToken}
+                                onChange={(e) => setTelegramBotToken(e.target.value)}
+                                placeholder="输入新的 Bot Token（留空则不改）"
+                                style={inputStyle}
+                                disabled={!runtime.telegramEnabled}
+                            />
+                        </div>
                     </div>
                 </div>
 

@@ -21,6 +21,9 @@ interface RuntimeSettingsBody {
   barkEnabled?: boolean;
   serverChanEnabled?: boolean;
   serverChanKey?: string;
+  telegramEnabled?: boolean;
+  telegramBotToken?: string;
+  telegramChatId?: string;
   smtpEnabled?: boolean;
   smtpHost?: string;
   smtpPort?: number;
@@ -155,6 +158,20 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.serverChanKey = value.trim();
       return;
     }
+    case 'telegram_enabled': {
+      config.telegramEnabled = !!value;
+      return;
+    }
+    case 'telegram_bot_token': {
+      if (typeof value !== 'string') return;
+      config.telegramBotToken = value.trim();
+      return;
+    }
+    case 'telegram_chat_id': {
+      if (typeof value !== 'string') return;
+      config.telegramChatId = value.trim();
+      return;
+    }
     case 'smtp_enabled': {
       config.smtpEnabled = !!value;
       return;
@@ -239,6 +256,9 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     barkEnabled: config.barkEnabled,
     serverChanEnabled: config.serverChanEnabled,
     serverChanKeyMasked: maskSecret(config.serverChanKey),
+    telegramEnabled: config.telegramEnabled,
+    telegramBotTokenMasked: maskSecret(config.telegramBotToken),
+    telegramChatId: config.telegramChatId,
     smtpEnabled: config.smtpEnabled,
     smtpHost: config.smtpHost,
     smtpPort: config.smtpPort,
@@ -294,6 +314,30 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       if (!isValidHttpUrl(nextBarkUrl)) {
         return reply.code(400).send({ success: false, message: 'Bark URL 无效，请填写 http/https 地址' });
+      }
+    }
+
+    const telegramTouched = body.telegramEnabled !== undefined
+      || body.telegramBotToken !== undefined
+      || body.telegramChatId !== undefined;
+    const nextTelegramEnabled = body.telegramEnabled !== undefined
+      ? !!body.telegramEnabled
+      : config.telegramEnabled;
+    const nextTelegramBotToken = body.telegramBotToken !== undefined
+      ? String(body.telegramBotToken || '').trim()
+      : config.telegramBotToken;
+    const nextTelegramChatId = body.telegramChatId !== undefined
+      ? String(body.telegramChatId || '').trim()
+      : config.telegramChatId;
+    if (telegramTouched && nextTelegramEnabled) {
+      if (!nextTelegramBotToken) {
+        return reply.code(400).send({ success: false, message: 'Telegram Bot Token 不能为空（启用 Telegram 时）' });
+      }
+      if (!nextTelegramBotToken.includes(':')) {
+        return reply.code(400).send({ success: false, message: 'Telegram Bot Token 格式无效（示例：123456:abcDEF）' });
+      }
+      if (!nextTelegramChatId) {
+        return reply.code(400).send({ success: false, message: 'Telegram Chat ID 不能为空（启用 Telegram 时）' });
       }
     }
 
@@ -380,6 +424,30 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.serverChanKey = String(body.serverChanKey || '').trim();
       upsertSetting('serverchan_key', config.serverChanKey);
+    }
+
+    if (body.telegramEnabled !== undefined) {
+      if (!!body.telegramEnabled !== config.telegramEnabled) {
+        changedLabels.push('Telegram 开关');
+      }
+      config.telegramEnabled = !!body.telegramEnabled;
+      upsertSetting('telegram_enabled', config.telegramEnabled);
+    }
+
+    if (body.telegramBotToken !== undefined) {
+      if (String(body.telegramBotToken || '').trim() !== config.telegramBotToken) {
+        changedLabels.push('Telegram Bot Token');
+      }
+      config.telegramBotToken = String(body.telegramBotToken || '').trim();
+      upsertSetting('telegram_bot_token', config.telegramBotToken);
+    }
+
+    if (body.telegramChatId !== undefined) {
+      if (String(body.telegramChatId || '').trim() !== config.telegramChatId) {
+        changedLabels.push('Telegram Chat ID');
+      }
+      config.telegramChatId = String(body.telegramChatId || '').trim();
+      upsertSetting('telegram_chat_id', config.telegramChatId);
     }
 
     if (body.smtpEnabled !== undefined) {

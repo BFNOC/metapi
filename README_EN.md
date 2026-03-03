@@ -228,13 +228,14 @@ Each adapter supports: account login, balance queries, model enumeration, token 
 
 ### Alerts & Notifications
 
-Four notification channels supported:
+Five notification channels supported:
 
 | Channel | Description |
 | --- | --- |
 | **Webhook** | Custom HTTP push |
 | **Bark** | iOS push notifications |
-| **ServerChan** | WeChat / Telegram notifications |
+| **ServerChan** | WeChat notifications |
+| **Telegram Bot** | Telegram message notifications |
 | **SMTP Email** | Standard email notifications |
 
 Alert scenarios: low balance warning, site/account anomalies, check-in failures, proxy request failures, token expiry reminders, daily summary reports. Alert cooldown mechanism (default: 300 seconds) prevents duplicate notifications.

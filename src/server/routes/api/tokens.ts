@@ -2,7 +2,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import { rebuildTokenRoutesFromAvailability, refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
-import { matchesModelPattern, tokenRouter } from '../../services/tokenRouter.js';
+import { invalidateTokenRouterCache, matchesModelPattern, tokenRouter } from '../../services/tokenRouter.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 
 function isExactModelPattern(modelPattern: string): boolean {
@@ -432,6 +432,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     }).returning().get();
 
     populateRouteChannelsByModelPattern(route.id, body.modelPattern);
+    invalidateTokenRouterCache();
     return route;
   });
 
@@ -449,6 +450,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     updates.updatedAt = new Date().toISOString();
 
     db.update(schema.tokenRoutes).set(updates).where(eq(schema.tokenRoutes.id, id)).run();
+    invalidateTokenRouterCache();
     return db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, id)).get();
   });
 
@@ -456,6 +458,7 @@ export async function tokensRoutes(app: FastifyInstance) {
   app.delete<{ Params: { id: string } }>('/api/routes/:id', async (request) => {
     const id = parseInt(request.params.id, 10);
     db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, id)).run();
+    invalidateTokenRouterCache();
     return { success: true };
   });
 
@@ -494,7 +497,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: '该来源模型的通道已存在' });
     }
 
-    return db.insert(schema.routeChannels).values({
+    const created = db.insert(schema.routeChannels).values({
       routeId,
       accountId: body.accountId,
       tokenId: body.tokenId,
@@ -502,6 +505,8 @@ export async function tokensRoutes(app: FastifyInstance) {
       priority: body.priority ?? 0,
       weight: body.weight ?? 10,
     }).returning().get();
+    invalidateTokenRouterCache();
+    return created;
   });
 
   // Batch update channel priorities
@@ -531,6 +536,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     const updatedChannels = db.select().from(schema.routeChannels)
       .where(inArray(schema.routeChannels.id, channelIds))
       .all();
+    invalidateTokenRouterCache();
     return { success: true, channels: updatedChannels };
   });
 
@@ -575,6 +581,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
 
     db.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, channelId)).run();
+    invalidateTokenRouterCache();
     return db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
   });
 
@@ -582,6 +589,7 @@ export async function tokensRoutes(app: FastifyInstance) {
   app.delete<{ Params: { channelId: string } }>('/api/channels/:channelId', async (request) => {
     const channelId = parseInt(request.params.channelId, 10);
     db.delete(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).run();
+    invalidateTokenRouterCache();
     return { success: true };
   });
 

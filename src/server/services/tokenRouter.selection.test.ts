@@ -23,6 +23,7 @@ describe('TokenRouter selection scoring', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let TokenRouter: TokenRouterModule['TokenRouter'];
+  let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let config: ConfigModule['config'];
   let dataDir = '';
   let idSeed = 0;
@@ -45,6 +46,7 @@ describe('TokenRouter selection scoring', () => {
     db = dbModule.db;
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
+    invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     config = configModule.config;
     originalRoutingWeights = { ...config.routingWeights };
     originalRoutingFallbackUnitCost = config.routingFallbackUnitCost;
@@ -59,11 +61,13 @@ describe('TokenRouter selection scoring', () => {
     db.delete(schema.accountTokens).run();
     db.delete(schema.accounts).run();
     db.delete(schema.sites).run();
+    invalidateTokenRouterCache();
   });
 
   afterAll(() => {
     config.routingWeights = { ...originalRoutingWeights };
     config.routingFallbackUnitCost = originalRoutingFallbackUnitCost;
+    invalidateTokenRouterCache();
     delete process.env.DATA_DIR;
   });
 

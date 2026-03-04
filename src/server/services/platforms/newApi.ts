@@ -211,6 +211,24 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return { balance: quota, used, quota: total, todayIncome, todayQuotaConsumption };
   }
 
+  private extractLoginAccessToken(payload: any): string | null {
+    const candidates: unknown[] = [
+      payload?.data,
+      payload?.token,
+      payload?.accessToken,
+      payload?.access_token,
+      payload?.data?.token,
+      payload?.data?.accessToken,
+      payload?.data?.access_token,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') continue;
+      const token = candidate.trim();
+      if (token) return token;
+    }
+    return null;
+  }
+
   private buildDefaultTokenPayload(options?: CreateApiTokenOptions): Record<string, unknown> {
     const normalizedName = (options?.name || '').trim() || 'metapi';
     const unlimitedQuota = options?.unlimitedQuota ?? true;
@@ -429,6 +447,32 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return output;
   }
 
+  private hasUsableSessionCookie(cookieHeader: string): boolean {
+    if (!cookieHeader) return false;
+    const ignored = new Set(['acw_tc', 'acw_sc__v2', 'cdn_sec_tc']);
+    const pairs = cookieHeader.split(';').map((part) => part.trim()).filter(Boolean);
+    for (const pair of pairs) {
+      const eq = pair.indexOf('=');
+      if (eq <= 0) continue;
+      const name = pair.slice(0, eq).trim().toLowerCase();
+      if (!name || ignored.has(name)) continue;
+      if (
+        name === 'session'
+        || name === 'token'
+        || name === 'auth_token'
+        || name === 'access_token'
+        || name === 'jwt'
+        || name === 'jwt_token'
+        || name.includes('session')
+        || name.includes('token')
+        || name.includes('auth')
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private shouldFallbackToCookieCheckin(message?: string | null): boolean {
     if (!message) return true;
     const text = message.toLowerCase();
@@ -449,7 +493,10 @@ export class NewApiAdapter extends BasePlatformAdapter {
     );
   }
 
-  private async fetchJsonRaw<T>(url: string, options?: UndiciRequestInit): Promise<T | null> {
+  private async fetchJsonRawWithCookie<T>(
+    url: string,
+    options?: UndiciRequestInit,
+  ): Promise<{ data: T | null; cookieHeader: string }> {
     const { fetch } = await import('undici');
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -472,30 +519,34 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const proxiedRequestOptions = withSiteProxyRequestInit(url, requestOptions);
       const res = await fetch(url, proxiedRequestOptions);
       const text = await res.text();
-      const parsed = this.parseJsonSafe<T>(text);
-      if (parsed) return parsed;
-
-      if (!this.isShieldChallenge(res.headers.get('content-type') || '', text)) {
-        return null;
-      }
-      if (!cookieHeader) {
-        return null;
-      }
-
       const getSetCookie = (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
       if (typeof getSetCookie === 'function') {
         cookieHeader = this.mergeSetCookiePairs(cookieHeader, getSetCookie.call(res.headers) || []);
       }
+      const parsed = this.parseJsonSafe<T>(text);
+      if (parsed) return { data: parsed, cookieHeader };
+
+      if (!this.isShieldChallenge(res.headers.get('content-type') || '', text)) {
+        return { data: null, cookieHeader };
+      }
+      if (!cookieHeader) {
+        return { data: null, cookieHeader };
+      }
 
       const acwScV2 = this.solveAcwScV2(text);
       if (!acwScV2) {
-        return null;
+        return { data: null, cookieHeader };
       }
       cookieHeader = this.upsertCookie(cookieHeader, 'acw_sc__v2', acwScV2);
       headers['Cookie'] = cookieHeader;
     }
 
-    return null;
+    return { data: null, cookieHeader };
+  }
+
+  private async fetchJsonRaw<T>(url: string, options?: UndiciRequestInit): Promise<T | null> {
+    const result = await this.fetchJsonRawWithCookie<T>(url, options);
+    return result.data;
   }
 
   private async fetchUserSelfByCookie(
@@ -620,6 +671,51 @@ export class NewApiAdapter extends BasePlatformAdapter {
     } catch {}
 
     return null;
+  }
+
+  override async login(
+    baseUrl: string,
+    username: string,
+    password: string,
+  ): Promise<{ success: boolean; accessToken?: string; username?: string; message?: string }> {
+    try {
+      const { data: res, cookieHeader } = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/user/login`, {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      });
+      if (!res) {
+        return { success: false, message: 'shield challenge blocked login' };
+      }
+
+      const accessToken = this.extractLoginAccessToken(res);
+      if (res?.success && accessToken) {
+        return {
+          success: true,
+          accessToken,
+          username,
+        };
+      }
+      if (res?.success && this.hasUsableSessionCookie(cookieHeader)) {
+        return {
+          success: true,
+          accessToken: cookieHeader,
+          username,
+        };
+      }
+
+      return {
+        success: false,
+        message: this.extractResponseMessage(res) || '登录失败：未获取到可用会话凭据，请改用 Cookie/Token 导入',
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: this.formatRequestErrorMessage(err) || err?.message || '登录请求失败',
+      };
+    }
   }
 
   override async verifyToken(baseUrl: string, token: string, platformUserId?: number): Promise<TokenVerifyResult> {

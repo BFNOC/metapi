@@ -1,6 +1,6 @@
 ﻿import { FastifyInstance } from 'fastify';
 import { db, schema } from '../../db/index.js';
-import { and, desc, gte, eq, lt } from 'drizzle-orm';
+import { and, desc, gte, eq, lt, sql } from 'drizzle-orm';
 import {
   refreshModelsForAccount,
   refreshModelsAndRebuildRoutes,
@@ -13,9 +13,9 @@ import { getRunningTaskByDedupeKey, startBackgroundTask } from '../../services/b
 import { parseCheckinRewardAmount } from '../../services/checkinRewardParser.js';
 import { estimateRewardWithTodayIncomeFallback } from '../../services/todayIncomeRewardService.js';
 import {
+  formatUtcSqlDateTime,
   getLocalDayRangeUtc,
   getLocalRangeStartUtc,
-  parseStoredUtcDateTime,
   toLocalDayKeyFromStoredUtc,
 } from '../../services/localTimeService.js';
 
@@ -53,6 +53,19 @@ function writeModelsMarketplaceCache(includePricing: boolean, models: any[]): vo
     expiresAt: Date.now() + ttl,
     models,
   });
+}
+
+function proxyCostSqlExpression() {
+  return sql<number>`
+    coalesce(
+      ${schema.proxyLogs.estimatedCost},
+      case
+        when lower(coalesce(${schema.sites.platform}, 'new-api')) = 'veloera'
+          then coalesce(${schema.proxyLogs.totalTokens}, 0) / 1000000.0
+        else coalesce(${schema.proxyLogs.totalTokens}, 0) / 500000.0
+      end
+    )
+  `;
 }
 
 export async function statsRoutes(app: FastifyInstance) {
@@ -94,7 +107,7 @@ export async function statsRoutes(app: FastifyInstance) {
     }
 
     const nowTs = Date.now();
-    const last24hTs = nowTs - 86400000;
+    const last24hDate = formatUtcSqlDateTime(new Date(nowTs - 86400000));
     const last7dDate = getLocalRangeStartUtc(7);
     const recentProxyLogs = db.select().from(schema.proxyLogs)
       .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
@@ -102,36 +115,44 @@ export async function statsRoutes(app: FastifyInstance) {
       .where(and(gte(schema.proxyLogs.createdAt, last7dDate), eq(schema.sites.status, 'active')))
       .all()
       .map((row) => row.proxy_logs);
-    const allProxyLogs = db.select()
+    const totalUsedRow = db.select({
+      totalUsed: sql<number>`coalesce(sum(${proxyCostSqlExpression()}), 0)`,
+    })
       .from(schema.proxyLogs)
       .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
       .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(eq(schema.sites.status, 'active'))
-      .all();
+      .get();
+    const proxy24hRow = db.select({
+      total: sql<number>`count(*)`,
+      success: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
+      failed: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'failed' then 1 else 0 end), 0)`,
+      totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
+    })
+      .from(schema.proxyLogs)
+      .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
+      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(and(gte(schema.proxyLogs.createdAt, last24hDate), eq(schema.sites.status, 'active')))
+      .get();
+    const todaySpendRow = db.select({
+      todaySpend: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.estimatedCost}, 0)), 0)`,
+    })
+      .from(schema.proxyLogs)
+      .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
+      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(and(
+        gte(schema.proxyLogs.createdAt, todayStartUtc),
+        lt(schema.proxyLogs.createdAt, todayEndUtc),
+        eq(schema.sites.status, 'active'),
+      ))
+      .get();
 
-    const proxy24hLogs = recentProxyLogs.filter((log) => {
-      if (!log.createdAt) return false;
-      const ts = parseStoredUtcDateTime(log.createdAt)?.getTime() ?? Number.NaN;
-      return Number.isFinite(ts) && ts >= last24hTs;
-    });
-    const proxySuccess = proxy24hLogs.filter((l) => l.status === 'success').length;
-    const proxyFailed = proxy24hLogs.filter((l) => l.status === 'failed').length;
-    const totalTokens = proxy24hLogs.reduce((sum, l) => sum + (l.totalTokens || 0), 0);
-    const totalUsed = allProxyLogs.reduce((sum, row) => {
-      const log = row.proxy_logs;
-      const platform = row.sites?.platform || 'new-api';
-      const explicitCost = typeof log.estimatedCost === 'number' ? log.estimatedCost : 0;
-      if (explicitCost > 0) return sum + explicitCost;
-      return sum + fallbackTokenCost(log.totalTokens || 0, platform);
-    }, 0);
-    const todayProxyLogs = recentProxyLogs.filter((log) => {
-      if (!log.createdAt) return false;
-      return log.createdAt >= todayStartUtc && log.createdAt < todayEndUtc;
-    });
-    const todaySpend = todayProxyLogs.reduce((sum, log) => {
-      const cost = typeof log.estimatedCost === 'number' ? log.estimatedCost : 0;
-      return sum + cost;
-    }, 0);
+    const proxySuccess = Number(proxy24hRow?.success || 0);
+    const proxyFailed = Number(proxy24hRow?.failed || 0);
+    const proxyTotal = Number(proxy24hRow?.total || 0);
+    const totalTokens = Number(proxy24hRow?.totalTokens || 0);
+    const totalUsed = Number(totalUsedRow?.totalUsed || 0);
+    const todaySpend = Number(todaySpendRow?.todaySpend || 0);
     const todayReward = accounts.reduce((sum, account) => sum + estimateRewardWithTodayIncomeFallback({
       day: today,
       successCount: successCountByAccount[account.id] || 0,
@@ -149,7 +170,7 @@ export async function statsRoutes(app: FastifyInstance) {
       activeAccounts: activeCount,
       totalAccounts: accounts.length,
       todayCheckin: { success: checkinSuccess, failed: checkinFailed, total: todayCheckins.length },
-      proxy24h: { success: proxySuccess, failed: proxyFailed, total: proxy24hLogs.length, totalTokens },
+      proxy24h: { success: proxySuccess, failed: proxyFailed, total: proxyTotal, totalTokens },
       modelAnalysis,
     };
   });
@@ -728,54 +749,43 @@ export async function statsRoutes(app: FastifyInstance) {
 
   // Site distribution – per-site aggregate data
   app.get('/api/stats/site-distribution', async () => {
-    const accounts = db.select().from(schema.accounts)
+    const accountRows = db.select({
+      siteId: schema.sites.id,
+      siteName: schema.sites.name,
+      platform: schema.sites.platform,
+      totalBalance: sql<number>`coalesce(sum(coalesce(${schema.accounts.balance}, 0)), 0)`,
+      accountCount: sql<number>`count(*)`,
+    })
+      .from(schema.accounts)
       .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(eq(schema.sites.status, 'active'))
+      .groupBy(schema.sites.id, schema.sites.name, schema.sites.platform)
       .all();
 
-    const proxyLogs = db.select().from(schema.proxyLogs)
+    const spendRows = db.select({
+      siteId: schema.sites.id,
+      totalSpend: sql<number>`coalesce(sum(${proxyCostSqlExpression()}), 0)`,
+    })
+      .from(schema.proxyLogs)
       .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
       .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(eq(schema.sites.status, 'active'))
+      .groupBy(schema.sites.id)
       .all();
 
-    // Build spend per site from proxy logs
-    const spendBySiteId: Record<number, number> = {};
-    for (const row of proxyLogs) {
-      const siteId = row.sites?.id;
-      if (siteId == null) continue;
-      const log = row.proxy_logs;
-      const platform = row.sites?.platform || 'new-api';
-      const explicitCost = typeof log.estimatedCost === 'number' ? log.estimatedCost : 0;
-      const cost = explicitCost > 0 ? explicitCost : fallbackTokenCost(log.totalTokens || 0, platform);
-      spendBySiteId[siteId] = (spendBySiteId[siteId] || 0) + cost;
+    const spendBySiteId = new Map<number, number>();
+    for (const row of spendRows) {
+      if (row.siteId == null) continue;
+      spendBySiteId.set(row.siteId, Number(row.totalSpend || 0));
     }
 
-    // Aggregate accounts by site
-    const siteMap: Record<number, {
-      siteName: string;
-      platform: string;
-      totalBalance: number;
-      accountCount: number;
-    }> = {};
-
-    for (const row of accounts) {
-      const site = row.sites;
-      const acct = row.accounts;
-      if (!siteMap[site.id]) {
-        siteMap[site.id] = { siteName: site.name, platform: site.platform, totalBalance: 0, accountCount: 0 };
-      }
-      siteMap[site.id].totalBalance += acct.balance || 0;
-      siteMap[site.id].accountCount++;
-    }
-
-    const distribution = Object.entries(siteMap).map(([id, info]) => ({
-      siteId: Number(id),
-      siteName: info.siteName,
-      platform: info.platform,
-      totalBalance: Math.round(info.totalBalance * 1_000_000) / 1_000_000,
-      totalSpend: Math.round((spendBySiteId[Number(id)] || 0) * 1_000_000) / 1_000_000,
-      accountCount: info.accountCount,
+    const distribution = accountRows.map((row) => ({
+      siteId: row.siteId,
+      siteName: row.siteName,
+      platform: row.platform,
+      totalBalance: Math.round(Number(row.totalBalance || 0) * 1_000_000) / 1_000_000,
+      totalSpend: Math.round((spendBySiteId.get(row.siteId) || 0) * 1_000_000) / 1_000_000,
+      accountCount: Number(row.accountCount || 0),
     }));
 
     return { distribution };

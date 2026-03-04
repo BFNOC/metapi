@@ -19,6 +19,7 @@ import { monitorRoutes } from './routes/api/monitor.js';
 import { downstreamApiKeysRoutes } from './routes/api/downstreamApiKeys.js';
 import { proxyRoutes } from './routes/proxy/router.js';
 import { startScheduler } from './services/checkinScheduler.js';
+import { startProxyLogRetentionService, stopProxyLogRetentionService } from './services/proxyLogRetentionService.js';
 import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { existsSync } from 'fs';
 import { normalize, resolve, sep } from 'path';
@@ -195,6 +196,10 @@ if (existsSync(webDir)) {
 
 // Start scheduler
 startScheduler();
+startProxyLogRetentionService();
+app.addHook('onClose', async () => {
+  stopProxyLogRetentionService();
+});
 
 // Start server
 try {

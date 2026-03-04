@@ -35,6 +35,97 @@ type FailureAwareChannel = {
 const RECENT_FAILURE_AVOID_SEC = 10 * 60;
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 
+type RouteRow = typeof schema.tokenRoutes.$inferSelect;
+type ChannelRow = typeof schema.routeChannels.$inferSelect;
+
+type RouteCacheSnapshot = {
+  loadedAt: number;
+  routes: RouteRow[];
+};
+
+type RouteMatchCacheSnapshot = {
+  loadedAt: number;
+  match: RouteMatch;
+};
+
+let routeCacheSnapshot: RouteCacheSnapshot = {
+  loadedAt: 0,
+  routes: [],
+};
+
+const routeMatchCache = new Map<number, RouteMatchCacheSnapshot>();
+
+function resolveTokenRouterCacheTtlMs(): number {
+  const raw = Math.trunc(config.tokenRouterCacheTtlMs || 0);
+  return Math.max(100, raw);
+}
+
+function isCacheFresh(loadedAt: number, nowMs: number): boolean {
+  return nowMs - loadedAt < resolveTokenRouterCacheTtlMs();
+}
+
+function loadEnabledRoutes(nowMs = Date.now()): RouteRow[] {
+  if (isCacheFresh(routeCacheSnapshot.loadedAt, nowMs)) {
+    return routeCacheSnapshot.routes;
+  }
+
+  const routes = db.select().from(schema.tokenRoutes)
+    .where(eq(schema.tokenRoutes.enabled, true))
+    .all();
+  routeCacheSnapshot = {
+    loadedAt: nowMs,
+    routes,
+  };
+  return routes;
+}
+
+function loadRouteMatch(route: RouteRow, nowMs = Date.now()): RouteMatch {
+  const cached = routeMatchCache.get(route.id);
+  if (cached && isCacheFresh(cached.loadedAt, nowMs)) {
+    return cached.match;
+  }
+
+  const channels = db
+    .select()
+    .from(schema.routeChannels)
+    .innerJoin(schema.accounts, eq(schema.routeChannels.accountId, schema.accounts.id))
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .leftJoin(schema.accountTokens, eq(schema.routeChannels.tokenId, schema.accountTokens.id))
+    .where(eq(schema.routeChannels.routeId, route.id))
+    .all();
+
+  const mapped = channels.map((row) => ({
+    channel: row.route_channels,
+    account: row.accounts,
+    site: row.sites,
+    token: row.account_tokens,
+  }));
+
+  const match = { route, channels: mapped };
+  routeMatchCache.set(route.id, {
+    loadedAt: nowMs,
+    match,
+  });
+  return match;
+}
+
+function patchCachedChannel(channelId: number, apply: (channel: ChannelRow) => void): void {
+  for (const entry of routeMatchCache.values()) {
+    const target = entry.match.channels.find((item) => item.channel.id === channelId);
+    if (!target) continue;
+    apply(target.channel);
+    break;
+  }
+}
+
+export function invalidateTokenRouterCache(): void {
+  routeCacheSnapshot = {
+    loadedAt: 0,
+    routes: [],
+  };
+  routeMatchCache.clear();
+}
+
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
 }
@@ -632,14 +723,27 @@ export class TokenRouter {
   recordSuccess(channelId: number, latencyMs: number, cost: number) {
     const ch = db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
     if (!ch) return;
+    const nowIso = new Date().toISOString();
+    const nextSuccessCount = (ch.successCount ?? 0) + 1;
+    const nextTotalLatencyMs = (ch.totalLatencyMs ?? 0) + latencyMs;
+    const nextTotalCost = (ch.totalCost ?? 0) + cost;
     db.update(schema.routeChannels).set({
-      successCount: (ch.successCount ?? 0) + 1,
-      totalLatencyMs: (ch.totalLatencyMs ?? 0) + latencyMs,
-      totalCost: (ch.totalCost ?? 0) + cost,
-      lastUsedAt: new Date().toISOString(),
+      successCount: nextSuccessCount,
+      totalLatencyMs: nextTotalLatencyMs,
+      totalCost: nextTotalCost,
+      lastUsedAt: nowIso,
       cooldownUntil: null,
       lastFailAt: null,
     }).where(eq(schema.routeChannels.id, channelId)).run();
+
+    patchCachedChannel(channelId, (channel) => {
+      channel.successCount = nextSuccessCount;
+      channel.totalLatencyMs = nextTotalLatencyMs;
+      channel.totalCost = nextTotalCost;
+      channel.lastUsedAt = nowIso;
+      channel.cooldownUntil = null;
+      channel.lastFailAt = null;
+    });
   }
 
   /**
@@ -652,19 +756,25 @@ export class TokenRouter {
     // Exponential backoff cooldown: 30s, 60s, 120s, 240s, max 5min
     const cooldownSec = Math.min(30 * Math.pow(2, failCount - 1), 300);
     const cooldownUntil = new Date(Date.now() + cooldownSec * 1000).toISOString();
+    const nowIso = new Date().toISOString();
     db.update(schema.routeChannels).set({
       failCount,
-      lastFailAt: new Date().toISOString(),
+      lastFailAt: nowIso,
       cooldownUntil,
     }).where(eq(schema.routeChannels.id, channelId)).run();
+
+    patchCachedChannel(channelId, (channel) => {
+      channel.failCount = failCount;
+      channel.lastFailAt = nowIso;
+      channel.cooldownUntil = cooldownUntil;
+    });
   }
 
   /**
    * Get all available models (aggregated from all routes).
    */
   getAvailableModels(): string[] {
-    const routes = db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.enabled, true)).all();
+    const routes = loadEnabledRoutes();
     const exposed = routes
       .map((route) => getExposedModelNameForRoute(route).trim())
       .filter((name) => name.length > 0);
@@ -674,8 +784,7 @@ export class TokenRouter {
   // --- Private methods ---
 
   private findRoute(model: string, downstreamPolicy: DownstreamRoutingPolicy): RouteMatch | null {
-    let routes = db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.enabled, true)).all();
+    let routes = loadEnabledRoutes();
 
     const supportedPatterns = Array.isArray(downstreamPolicy.supportedModels)
       ? downstreamPolicy.supportedModels
@@ -702,33 +811,14 @@ export class TokenRouter {
       return null;
     }
 
-    const route = db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.id, routeId))
-      .get();
-    if (!route || !route.enabled) return null;
+    const route = loadEnabledRoutes().find((item) => item.id === routeId);
+    if (!route) return null;
 
     return this.loadRouteMatch(route);
   }
 
   private loadRouteMatch(route: typeof schema.tokenRoutes.$inferSelect): RouteMatch {
-    // Get channels with account, site and token info
-    const channels = db
-      .select()
-      .from(schema.routeChannels)
-      .innerJoin(schema.accounts, eq(schema.routeChannels.accountId, schema.accounts.id))
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .leftJoin(schema.accountTokens, eq(schema.routeChannels.tokenId, schema.accountTokens.id))
-      .where(eq(schema.routeChannels.routeId, route.id))
-      .all();
-
-    const mapped = channels.map((row) => ({
-      channel: row.route_channels,
-      account: row.accounts,
-      site: row.sites,
-      token: row.account_tokens,
-    }));
-
-    return { route, channels: mapped };
+    return loadRouteMatch(route);
   }
 
   private resolveChannelTokenValue(candidate: {

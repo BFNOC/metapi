@@ -5,11 +5,13 @@ import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
 
 type DbModule = typeof import('../../db/index.js');
+type TokenRouterModule = typeof import('../../services/tokenRouter.js');
 
 describe('POST /api/routes/decision/batch', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let dataDir = '';
   let seedId = 0;
 
@@ -56,8 +58,10 @@ describe('POST /api/routes/decision/batch', () => {
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./tokens.js');
+    const tokenRouterModule = await import('../../services/tokenRouter.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
 
     app = Fastify();
     await app.register(routesModule.tokensRoutes);
@@ -69,10 +73,12 @@ describe('POST /api/routes/decision/batch', () => {
     db.delete(schema.tokenRoutes).run();
     db.delete(schema.accounts).run();
     db.delete(schema.sites).run();
+    invalidateTokenRouterCache();
   });
 
   afterAll(async () => {
     await app.close();
+    invalidateTokenRouterCache();
     delete process.env.DATA_DIR;
   });
 

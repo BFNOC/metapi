@@ -49,6 +49,9 @@ export const config = {
   port: Math.trunc(parseNumber(process.env.PORT, 4000)),
   dataDir: process.env.DATA_DIR || './data',
   routingFallbackUnitCost: Math.max(1e-6, parseNumber(process.env.ROUTING_FALLBACK_UNIT_COST, 1)),
+  tokenRouterCacheTtlMs: Math.max(100, Math.trunc(parseNumber(process.env.TOKEN_ROUTER_CACHE_TTL_MS, 1_500))),
+  proxyLogRetentionDays: Math.max(0, Math.trunc(parseNumber(process.env.PROXY_LOG_RETENTION_DAYS, 30))),
+  proxyLogRetentionPruneIntervalMinutes: Math.max(1, Math.trunc(parseNumber(process.env.PROXY_LOG_RETENTION_PRUNE_INTERVAL_MINUTES, 30))),
   routingWeights: {
     baseWeightFactor: parseNumber(process.env.BASE_WEIGHT_FACTOR, 0.5),
     valueScoreFactor: parseNumber(process.env.VALUE_SCORE_FACTOR, 0.5),

@@ -3,6 +3,7 @@ import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
 import { ensureDefaultTokenForAccount, getPreferredAccountToken } from './accountTokenService.js';
 import { resolvePlatformUserId } from './accountExtraConfig.js';
+import { invalidateTokenRouterCache } from './tokenRouter.js';
 
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
@@ -333,6 +334,8 @@ export function rebuildTokenRoutesFromAvailability() {
       removedRoutes += deleted;
     }
   }
+
+  invalidateTokenRouterCache();
 
   return {
     models: modelTokens.size,

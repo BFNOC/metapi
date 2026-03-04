@@ -10,6 +10,7 @@ describe('TokenRouter downstream policy', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let TokenRouter: TokenRouterModule['TokenRouter'];
+  let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -22,6 +23,7 @@ describe('TokenRouter downstream policy', () => {
     db = dbModule.db;
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
+    invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
   });
 
   beforeEach(() => {
@@ -30,9 +32,11 @@ describe('TokenRouter downstream policy', () => {
     db.delete(schema.accountTokens).run();
     db.delete(schema.accounts).run();
     db.delete(schema.sites).run();
+    invalidateTokenRouterCache();
   });
 
   afterAll(() => {
+    invalidateTokenRouterCache();
     delete process.env.DATA_DIR;
   });
 

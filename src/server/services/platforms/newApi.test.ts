@@ -16,6 +16,13 @@ const CHECKIN_ALREADY_TOKEN = 'checkin-already-token';
 const CHECKIN_INVALID_URL_TOKEN = 'checkin-invalid-url-token';
 const CHECKIN_CLOUDFLARE_530_TOKEN = 'checkin-cloudflare-530-token';
 const BALANCE_FAIL_TOKEN = 'balance-fail-token';
+const SHIELD_LOGIN_USERNAME = 'shield-user';
+const SHIELD_LOGIN_PASSWORD = 'shield-pass';
+const SHIELD_LOGIN_TOKEN = 'login-session-token';
+const SHIELD_LOGIN_COOKIE = 'challenge-seed';
+const COOKIE_ONLY_LOGIN_USERNAME = 'cookie-only-user';
+const COOKIE_ONLY_LOGIN_PASSWORD = 'cookie-only-pass';
+const COOKIE_ONLY_LOGIN_SESSION = 'cookie-only-session';
 const COOKIE_SHIELDED_TOKEN = Buffer.from(
   `1771864970|${Buffer.from('username=linuxdo_131936').toString('base64')}|sig`,
 ).toString('base64');
@@ -54,6 +61,66 @@ describe('NewApiAdapter', () => {
       if (req.url === '/v1/models') {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: 'invalid token' } }));
+        return;
+      }
+
+      if (req.url === '/api/user/login' && req.method === 'POST') {
+        let bodyRaw = '';
+        req.on('data', (chunk) => {
+          bodyRaw += chunk.toString();
+        });
+        req.on('end', () => {
+          let payload: Record<string, unknown> = {};
+          try {
+            payload = JSON.parse(bodyRaw || '{}');
+          } catch {}
+
+          const isShieldLogin =
+            payload.username === SHIELD_LOGIN_USERNAME &&
+            payload.password === SHIELD_LOGIN_PASSWORD;
+          const isCookieOnlyLogin =
+            payload.username === COOKIE_ONLY_LOGIN_USERNAME &&
+            payload.password === COOKIE_ONLY_LOGIN_PASSWORD;
+          if (!isShieldLogin && !isCookieOnlyLogin) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: 'invalid credentials' }));
+            return;
+          }
+
+          const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
+          if (!cookieHeader.includes(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`)) {
+            res.writeHead(200, {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Set-Cookie': `cdn_sec_tc=${SHIELD_LOGIN_COOKIE}; Path=/; HttpOnly`,
+            });
+            res.end(ANYROUTER_CHALLENGE_HTML);
+            return;
+          }
+
+          if (!cookieHeader.includes(`cdn_sec_tc=${SHIELD_LOGIN_COOKIE}`)) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: 'missing shield cookie' }));
+            return;
+          }
+
+          if (isCookieOnlyLogin) {
+            res.writeHead(200, {
+              'Content-Type': 'application/json',
+              'Set-Cookie': `session=${COOKIE_ONLY_LOGIN_SESSION}; Path=/; HttpOnly`,
+            });
+            res.end(JSON.stringify({
+              success: true,
+              data: {},
+            }));
+            return;
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: { token: SHIELD_LOGIN_TOKEN },
+          }));
+        });
         return;
       }
 
@@ -320,6 +387,40 @@ describe('NewApiAdapter', () => {
     const token = await adapter.getApiToken(baseUrl, 'session-token', 11494);
 
     expect(token).toBe('api-key-from-token-list');
+  });
+
+  it('solves anyrouter acw challenge for account-password login', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.login(baseUrl, SHIELD_LOGIN_USERNAME, SHIELD_LOGIN_PASSWORD);
+
+    expect(result.success).toBe(true);
+    expect(result.accessToken).toBe(SHIELD_LOGIN_TOKEN);
+    expect(
+      requests.some(
+        (r) =>
+          r.url === '/api/user/login' &&
+          typeof r.headers.cookie === 'string' &&
+          r.headers.cookie.includes(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`),
+      ),
+    ).toBe(true);
+    expect(
+      requests.some(
+        (r) =>
+          r.url === '/api/user/login' &&
+          typeof r.headers.cookie === 'string' &&
+          r.headers.cookie.includes(`cdn_sec_tc=${SHIELD_LOGIN_COOKIE}`),
+      ),
+    ).toBe(true);
+  });
+
+  it('uses session cookie as access credential when login success has no token payload', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.login(baseUrl, COOKIE_ONLY_LOGIN_USERNAME, COOKIE_ONLY_LOGIN_PASSWORD);
+
+    expect(result.success).toBe(true);
+    expect(result.accessToken || '').toContain(`session=${COOKIE_ONLY_LOGIN_SESSION}`);
+    expect(result.accessToken || '').toContain(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`);
+    expect(result.accessToken || '').toContain(`cdn_sec_tc=${SHIELD_LOGIN_COOKIE}`);
   });
 
   it('detects cookie session values as session cookies for anyrouter-like deployments', async () => {

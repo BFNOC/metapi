@@ -120,6 +120,40 @@ function getNextAccountSortOrder(): number {
   return max + 1;
 }
 
+type LoginFailureInfo = {
+  message: string;
+  shieldBlocked: boolean;
+};
+
+function normalizeLoginFailure(message: string | null | undefined): LoginFailureInfo {
+  const raw = (message || '').trim();
+  const lowered = raw.toLowerCase();
+  const looksLikeHtmlJsonParseError = (
+    lowered.includes('unexpected token')
+    && lowered.includes('not valid json')
+    && (lowered.includes('<html') || lowered.includes('<script'))
+  );
+  const looksLikeShieldChallenge = (
+    lowered.includes('acw_sc__v2')
+    || lowered.includes('var arg1')
+    || lowered.includes('captcha')
+    || lowered.includes('challenge')
+    || lowered.includes('cloudflare tunnel error')
+  );
+
+  if (looksLikeHtmlJsonParseError || looksLikeShieldChallenge) {
+    return {
+      shieldBlocked: true,
+      message: 'This site is shielded by anti-bot challenge. Account/password login is blocked. Create an API key on the target site and import that key.',
+    };
+  }
+
+  return {
+    shieldBlocked: false,
+    message: raw || 'login failed',
+  };
+}
+
 function summarizeAccountHealthRefresh(results: AccountHealthRefreshResult[]) {
   return {
     total: results.length,
@@ -299,7 +333,12 @@ export async function accountsRoutes(app: FastifyInstance) {
     // Login to the target site
     const loginResult = await adapter.login(site.url, username, password);
     if (!loginResult.success || !loginResult.accessToken) {
-      return { success: false, message: loginResult.message || 'login failed' };
+      const normalizedFailure = normalizeLoginFailure(loginResult.message);
+      return {
+        success: false,
+        shieldBlocked: normalizedFailure.shieldBlocked,
+        message: normalizedFailure.message,
+      };
     }
 
     const guessedPlatformUserId = guessPlatformUserIdFromUsername(username);

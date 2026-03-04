@@ -185,7 +185,17 @@ describe('resolveUpstreamEndpointCandidates', () => {
       'claude-opus-4-6',
       'openai',
     );
-    expect(openaiOrder).toEqual(['messages', 'chat']);
+    expect(openaiOrder).toEqual(['messages', 'chat', 'responses']);
+
+    const claudeOrder = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'anyrouter' },
+      },
+      'claude-opus-4-6',
+      'claude',
+    );
+    expect(claudeOrder).toEqual(['messages', 'chat', 'responses']);
 
     const responsesOrder = await resolveUpstreamEndpointCandidates(
       {

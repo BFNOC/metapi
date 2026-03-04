@@ -931,9 +931,10 @@ export async function resolveUpstreamEndpointCandidates(
   );
   if (sitePlatform === 'anyrouter') {
     // anyrouter deployments are effectively anthropic-protocol first.
-    return downstreamFormat === 'responses'
-      ? ['responses', 'messages', 'chat']
-      : ['messages', 'chat'];
+    if (downstreamFormat === 'responses') {
+      return ['responses', 'messages', 'chat'];
+    }
+    return ['messages', 'chat', 'responses'];
   }
 
   const preferred = preferredEndpointOrder(

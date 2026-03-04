@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import { clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js';
 import { tr } from '../i18n.js';
@@ -19,10 +20,12 @@ type SiteRow = {
   id: number;
   name: string;
   url: string;
+  externalCheckinUrl?: string | null;
   platform?: string;
   status?: string;
   apiKey?: string;
   proxyUrl?: string | null;
+  globalWeight?: number;
   isPinned?: boolean;
   sortOrder?: number;
   totalBalance?: number;
@@ -32,6 +35,7 @@ type SiteRow = {
 const platformColors: Record<string, string> = {
   'new-api': 'badge-info',
   'one-api': 'badge-success',
+  anyrouter: 'badge-warning',
   veloera: 'badge-warning',
   'one-hub': 'badge-muted',
   'done-hub': 'badge-muted',
@@ -39,7 +43,23 @@ const platformColors: Record<string, string> = {
   openai: 'badge-success',
   claude: 'badge-warning',
   gemini: 'badge-info',
+  cliproxyapi: 'badge-info',
 };
+
+const SITE_PLATFORM_OPTIONS = [
+  { value: '', label: '平台类型（可自动检测）' },
+  { value: 'new-api', label: 'new-api' },
+  { value: 'one-api', label: 'one-api' },
+  { value: 'anyrouter', label: 'anyrouter' },
+  { value: 'veloera', label: 'veloera' },
+  { value: 'one-hub', label: 'one-hub' },
+  { value: 'done-hub', label: 'done-hub' },
+  { value: 'sub2api', label: 'sub2api' },
+  { value: 'openai', label: 'openai' },
+  { value: 'claude', label: 'claude' },
+  { value: 'gemini', label: 'gemini' },
+  { value: 'cliproxyapi', label: 'cliproxyapi' },
+];
 
 export default function Sites() {
   const location = useLocation();
@@ -56,12 +76,16 @@ export default function Sites() {
   const [togglingSiteId, setTogglingSiteId] = useState<number | null>(null);
   const [orderingSiteId, setOrderingSiteId] = useState<number | null>(null);
   const [pinningSiteId, setPinningSiteId] = useState<number | null>(null);
+  const editorPresence = useAnimatedVisibility(Boolean(editor), 220);
+  const lastEditorRef = useRef<SiteEditorState | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<number | null>(null);
   const toast = useToast();
 
-  const isEditing = editor?.mode === 'edit';
-  const isAdding = editor?.mode === 'add';
+  if (editor) lastEditorRef.current = editor;
+  const activeEditor = editor || lastEditorRef.current;
+  const isEditing = activeEditor?.mode === 'edit';
+  const isAdding = activeEditor?.mode === 'add';
 
   const load = async () => {
     try {
@@ -82,6 +106,17 @@ export default function Sites() {
     () => sortItemsForDisplay(sites, sortMode, (site) => site.totalBalance || 0),
     [sites, sortMode],
   );
+
+  const platformOptions = useMemo(() => {
+    const current = form.platform.trim();
+    if (!current || SITE_PLATFORM_OPTIONS.some((option) => option.value === current)) {
+      return SITE_PLATFORM_OPTIONS;
+    }
+    return [
+      ...SITE_PLATFORM_OPTIONS,
+      { value: current, label: `${current}（当前值）` },
+    ];
+  }, [form.platform]);
 
   useEffect(() => {
     return () => {
@@ -117,6 +152,13 @@ export default function Sites() {
     setForm(emptySiteForm());
   };
 
+  const scrollToEditorTop = () => {
+    const scrollTo = (globalThis as { scrollTo?: (options?: ScrollToOptions) => void }).scrollTo;
+    if (typeof scrollTo === 'function') {
+      scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
   const openAdd = () => {
     if (isAdding) {
       closeEditor();
@@ -124,21 +166,31 @@ export default function Sites() {
     }
     setEditor({ mode: 'add' });
     setForm(emptySiteForm());
+    scrollToEditorTop();
   };
 
   const openEdit = (site: SiteRow) => {
     setEditor({ mode: 'edit', editingSiteId: site.id });
     setForm(siteFormFromSite(site));
+    scrollToEditorTop();
   };
 
   const handleSave = async () => {
     if (!editor) return;
+    const parsedGlobalWeight = Number(form.globalWeight);
+    if (!Number.isFinite(parsedGlobalWeight) || parsedGlobalWeight <= 0) {
+      toast.error('全局权重必须是大于 0 的数字');
+      return;
+    }
+
     const payload = {
       name: form.name.trim(),
       url: form.url.trim(),
+      externalCheckinUrl: form.externalCheckinUrl.trim(),
       platform: form.platform.trim(),
       apiKey: form.apiKey.trim(),
       proxyUrl: form.proxyUrl.trim(),
+      globalWeight: Number(parsedGlobalWeight.toFixed(3)),
     };
     if (!payload.name || !payload.url) {
       toast.error('请填写站点名称和 URL');
@@ -265,8 +317,12 @@ export default function Sites() {
         </div>
       </div>
 
-      {editor && (
-        <div className="card animate-scale-in" style={{ padding: 20, marginBottom: 16 }}>
+      <div className="info-tip" style={{ marginBottom: 12 }}>
+        站点权重说明：最终站点倍率 = 站点全局权重 × 设置页中下游 API Key 的站点倍率。它会与路由策略因子（基础权重、价值分、成本、余额、使用频次）共同作用。数值越大，该站点在同优先级下越容易被选中。建议范围 0.5-3，默认 1；长期不建议超过 5。
+      </div>
+
+      {editorPresence.shouldRender && activeEditor && (
+        <div className={`card panel-presence ${editorPresence.isVisible ? '' : 'is-closing'}`.trim()} style={{ padding: 20, marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <div style={{ fontSize: 14, fontWeight: 600 }}>
               {isEditing ? '编辑站点' : '添加站点'}
@@ -321,20 +377,34 @@ export default function Sites() {
                 {detecting ? <><span className="spinner spinner-sm" /> 检测中</> : '自动检测'}
               </button>
             </div>
+            <div
+              style={{
+                border: `1px solid ${form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 48%, transparent)' : 'var(--color-border)'}`,
+                borderRadius: 'var(--radius-sm)',
+                background: form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 10%, var(--color-bg))' : 'var(--color-bg)',
+                transition: 'all 0.2s',
+              }}
+            >
+              <ModernSelect
+                value={form.platform}
+                onChange={(value) => setForm((prev) => ({ ...prev, platform: value }))}
+                options={platformOptions}
+                placeholder="平台类型（可自动检测）"
+              />
+            </div>
             <input
-              placeholder="平台类型（可自动检测）"
-              value={form.platform}
-              onChange={(e) => setForm((prev) => ({ ...prev, platform: e.target.value }))}
+              placeholder="外部签到/福利站点 URL（可选）"
+              value={form.externalCheckinUrl}
+              onChange={(e) => setForm((prev) => ({ ...prev, externalCheckinUrl: e.target.value }))}
               style={{
                 width: '100%',
                 padding: '10px 14px',
-                border: `1px solid ${form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 48%, transparent)' : 'var(--color-border)'}`,
+                border: '1px solid var(--color-border)',
                 borderRadius: 'var(--radius-sm)',
                 fontSize: 13,
                 outline: 'none',
-                background: form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 10%, var(--color-bg))' : 'var(--color-bg)',
+                background: 'var(--color-bg)',
                 color: 'var(--color-text-primary)',
-                transition: 'all 0.2s',
               }}
             />
             <input
@@ -367,6 +437,24 @@ export default function Sites() {
                 color: 'var(--color-text-primary)',
               }}
             />
+            <input
+              placeholder="站点全局权重（默认 1）"
+              value={form.globalWeight}
+              onChange={(e) => setForm((prev) => ({ ...prev, globalWeight: e.target.value }))}
+              style={{
+                width: '100%',
+                padding: '10px 14px',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: 13,
+                outline: 'none',
+                background: 'var(--color-bg)',
+                color: 'var(--color-text-primary)',
+              }}
+            />
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+              越大越容易被路由选中。建议 0.5-3，默认 1。
+            </div>
             <button
               onClick={handleSave}
               disabled={saving || !form.name.trim() || !form.url.trim()}
@@ -385,9 +473,10 @@ export default function Sites() {
             <thead>
               <tr>
                 <th>名称</th>
-                <th>URL</th>
+                <th>外部签到站URL</th>
                 <th>总余额</th>
                 <th>状态</th>
+                <th>权重</th>
                 <th>平台</th>
                 <th>创建时间</th>
                 <th className="sites-actions-col" style={{ textAlign: 'right' }}>操作</th>
@@ -417,21 +506,23 @@ export default function Sites() {
                     </a>
                   </td>
                   <td className="sites-url-cell" style={{ maxWidth: 300 }}>
-                    <a
-                      href={site.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="sites-url-link"
-                      style={{
-                        fontSize: 12,
-                        fontFamily: 'var(--font-mono)',
-                        color: 'var(--color-primary)',
-                        textDecoration: 'underline',
-                        wordBreak: 'break-all',
-                      }}
-                    >
-                      {site.url}
-                    </a>
+                    {site.externalCheckinUrl ? (
+                      <a
+                        href={site.externalCheckinUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="sites-url-link"
+                        style={{
+                          fontSize: 12,
+                          fontFamily: 'var(--font-mono)',
+                          color: 'var(--color-primary)',
+                          textDecoration: 'underline',
+                          wordBreak: 'break-all',
+                        }}
+                      >
+                        {site.externalCheckinUrl}
+                      </a>
+                    ) : null}
                   </td>
                   <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                     ${(site.totalBalance || 0).toFixed(2)}
@@ -440,6 +531,9 @@ export default function Sites() {
                     <span className={`badge ${site.status === 'disabled' ? 'badge-muted' : 'badge-success'}`} style={{ fontSize: 11 }}>
                       {site.status === 'disabled' ? '禁用' : '启用'}
                     </span>
+                  </td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                    {(site.globalWeight || 1).toFixed(2)}
                   </td>
                   <td>
                     <a

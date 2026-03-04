@@ -31,6 +31,43 @@ function normalizeSortOrder(input: unknown): number | null {
   return Math.max(0, parsed);
 }
 
+function normalizeGlobalWeight(input: unknown): number | null {
+  if (input === undefined || input === null || input === '') return null;
+  const parsed = Number(input);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.max(0.01, Math.min(100, Number(parsed.toFixed(3))));
+}
+
+function normalizeOptionalExternalCheckinUrl(input: unknown): {
+  valid: boolean;
+  present: boolean;
+  url: string | null;
+} {
+  if (input === undefined) {
+    return { valid: true, present: false, url: null };
+  }
+  if (input === null) {
+    return { valid: true, present: true, url: null };
+  }
+  if (typeof input !== 'string') {
+    return { valid: false, present: true, url: null };
+  }
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { valid: true, present: true, url: null };
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { valid: false, present: true, url: null };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { valid: false, present: true, url: null };
+  }
+  return { valid: true, present: true, url: parsed.toString().replace(/\/+$/, '') };
+}
+
 export async function sitesRoutes(app: FastifyInstance) {
   // List all sites
   app.get('/api/sites', async () => {
@@ -54,8 +91,19 @@ export async function sitesRoutes(app: FastifyInstance) {
   });
 
   // Add a site
-  app.post<{ Body: { name: string; url: string; platform?: string; apiKey?: string; proxyUrl?: string | null; status?: string; isPinned?: boolean; sortOrder?: number } }>('/api/sites', async (request, reply) => {
-    const { name, url, platform, apiKey, proxyUrl, status, isPinned, sortOrder } = request.body;
+  app.post<{ Body: {
+    name: string;
+    url: string;
+    platform?: string;
+    apiKey?: string;
+    proxyUrl?: string | null;
+    externalCheckinUrl?: string | null;
+    status?: string;
+    isPinned?: boolean;
+    sortOrder?: number;
+    globalWeight?: number;
+  } }>('/api/sites', async (request, reply) => {
+    const { name, url, platform, apiKey, proxyUrl, externalCheckinUrl, status, isPinned, sortOrder, globalWeight } = request.body;
     const normalizedStatus = normalizeSiteStatus(status);
     if (status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });
@@ -64,6 +112,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!parsedProxyUrl.valid) {
       return reply.code(400).send({ error: 'Invalid proxyUrl. Expected a valid http(s)/socks proxy URL.' });
     }
+    const normalizedExternalCheckinUrl = normalizeOptionalExternalCheckinUrl(externalCheckinUrl);
+    if (!normalizedExternalCheckinUrl.valid) {
+      return reply.code(400).send({ error: 'Invalid externalCheckinUrl. Expected a valid http(s) URL.' });
+    }
     const normalizedPinned = normalizePinnedFlag(isPinned);
     if (isPinned !== undefined && normalizedPinned === null) {
       return reply.code(400).send({ error: 'Invalid isPinned value. Expected boolean.' });
@@ -71,6 +123,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     const normalizedSortOrder = normalizeSortOrder(sortOrder);
     if (sortOrder !== undefined && normalizedSortOrder === null) {
       return reply.code(400).send({ error: 'Invalid sortOrder value. Expected non-negative integer.' });
+    }
+    const normalizedGlobalWeight = normalizeGlobalWeight(globalWeight);
+    if (globalWeight !== undefined && normalizedGlobalWeight === null) {
+      return reply.code(400).send({ error: 'Invalid globalWeight value. Expected a positive number.' });
     }
 
     const existingSites = db.select().from(schema.sites).all();
@@ -90,16 +146,29 @@ export async function sitesRoutes(app: FastifyInstance) {
       platform: detectedPlatform,
       apiKey,
       proxyUrl: parsedProxyUrl.proxyUrl,
+      externalCheckinUrl: normalizedExternalCheckinUrl.url,
       status: normalizedStatus ?? 'active',
       isPinned: normalizedPinned ?? false,
       sortOrder: normalizedSortOrder ?? (maxSortOrder + 1),
+      globalWeight: normalizedGlobalWeight ?? 1,
     }).returning().get();
     invalidateSiteProxyCache();
     return result;
   });
 
   // Update a site
-  app.put<{ Params: { id: string }; Body: { name?: string; url?: string; platform?: string; apiKey?: string; proxyUrl?: string | null; status?: string; isPinned?: boolean; sortOrder?: number } }>('/api/sites/:id', async (request, reply) => {
+  app.put<{ Params: { id: string }; Body: {
+    name?: string;
+    url?: string;
+    platform?: string;
+    apiKey?: string;
+    proxyUrl?: string | null;
+    externalCheckinUrl?: string | null;
+    status?: string;
+    isPinned?: boolean;
+    sortOrder?: number;
+    globalWeight?: number;
+  } }>('/api/sites/:id', async (request, reply) => {
     const id = parseInt(request.params.id);
     if (Number.isNaN(id)) {
       return reply.code(400).send({ error: 'Invalid site id' });
@@ -120,6 +189,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!parsedProxyUrl.valid) {
       return reply.code(400).send({ error: 'Invalid proxyUrl. Expected a valid http(s)/socks proxy URL.' });
     }
+    const normalizedExternalCheckinUrl = normalizeOptionalExternalCheckinUrl(body.externalCheckinUrl);
+    if (!normalizedExternalCheckinUrl.valid) {
+      return reply.code(400).send({ error: 'Invalid externalCheckinUrl. Expected a valid http(s) URL.' });
+    }
     const normalizedPinned = normalizePinnedFlag(body.isPinned);
     if (body.isPinned !== undefined && normalizedPinned === null) {
       return reply.code(400).send({ error: 'Invalid isPinned value. Expected boolean.' });
@@ -128,15 +201,21 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.sortOrder !== undefined && normalizedSortOrder === null) {
       return reply.code(400).send({ error: 'Invalid sortOrder value. Expected non-negative integer.' });
     }
+    const normalizedGlobalWeight = normalizeGlobalWeight(body.globalWeight);
+    if (body.globalWeight !== undefined && normalizedGlobalWeight === null) {
+      return reply.code(400).send({ error: 'Invalid globalWeight value. Expected a positive number.' });
+    }
 
     if (body.name !== undefined) updates.name = body.name;
     if (body.url !== undefined) updates.url = body.url.replace(/\/+$/, '');
     if (body.platform !== undefined) updates.platform = body.platform;
     if (body.apiKey !== undefined) updates.apiKey = body.apiKey;
     if (parsedProxyUrl.present) updates.proxyUrl = parsedProxyUrl.proxyUrl;
+    if (normalizedExternalCheckinUrl.present) updates.externalCheckinUrl = normalizedExternalCheckinUrl.url;
     if (body.status !== undefined) updates.status = normalizedStatus;
     if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;
     if (body.sortOrder !== undefined) updates.sortOrder = normalizedSortOrder;
+    if (body.globalWeight !== undefined) updates.globalWeight = normalizedGlobalWeight;
     updates.updatedAt = new Date().toISOString();
     db.update(schema.sites).set(updates).where(eq(schema.sites.id, id)).run();
     invalidateSiteProxyCache();

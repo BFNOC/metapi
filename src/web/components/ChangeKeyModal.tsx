@@ -3,8 +3,10 @@ import { createPortal } from 'react-dom';
 import { api } from '../api.js';
 import { useToast } from './Toast.js';
 import { persistAuthSession } from '../authSession.js';
+import { useAnimatedVisibility } from './useAnimatedVisibility.js';
 
 export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const presence = useAnimatedVisibility(open, 200);
   const [oldToken, setOldToken] = useState('');
   const [newToken, setNewToken] = useState('');
   const [confirmToken, setConfirmToken] = useState('');
@@ -56,7 +58,7 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
     }
   };
 
-  if (!open) return null;
+  if (!presence.shouldRender) return null;
 
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '10px 14px', border: '1px solid var(--color-border)',
@@ -65,8 +67,8 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
   };
 
   const modal = (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+    <div className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={onClose}>
+      <div className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
         <div className="modal-header">修改管理员 Token</div>
 
         <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

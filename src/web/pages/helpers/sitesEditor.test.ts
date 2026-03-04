@@ -8,9 +8,11 @@ describe('buildSiteSaveAction', () => {
       {
         name: 'site-a',
         url: 'https://a.example.com/',
+        externalCheckinUrl: 'https://checkin.a.example.com',
         platform: 'new-api',
         apiKey: 'sk-1',
         proxyUrl: 'http://127.0.0.1:7890',
+        globalWeight: '1.2',
       },
     );
 
@@ -19,9 +21,11 @@ describe('buildSiteSaveAction', () => {
       payload: {
         name: 'site-a',
         url: 'https://a.example.com/',
+        externalCheckinUrl: 'https://checkin.a.example.com',
         platform: 'new-api',
         apiKey: 'sk-1',
         proxyUrl: 'http://127.0.0.1:7890',
+        globalWeight: '1.2',
       },
     });
   });
@@ -29,7 +33,15 @@ describe('buildSiteSaveAction', () => {
   it('returns update action in edit mode with site id', () => {
     const action = buildSiteSaveAction(
       { mode: 'edit', editingSiteId: 12 },
-      { name: 'site-b', url: 'https://b.example.com', platform: 'one-api', apiKey: '', proxyUrl: '' },
+      {
+        name: 'site-b',
+        url: 'https://b.example.com',
+        externalCheckinUrl: '',
+        platform: 'one-api',
+        apiKey: '',
+        proxyUrl: '',
+        globalWeight: '0.8',
+      },
     );
 
     expect(action).toEqual({
@@ -38,9 +50,11 @@ describe('buildSiteSaveAction', () => {
       payload: {
         name: 'site-b',
         url: 'https://b.example.com',
+        externalCheckinUrl: '',
         platform: 'one-api',
         apiKey: '',
         proxyUrl: '',
+        globalWeight: '0.8',
       },
     });
   });
@@ -49,7 +63,15 @@ describe('buildSiteSaveAction', () => {
     expect(() =>
       buildSiteSaveAction(
         { mode: 'edit' },
-        { name: 'site-c', url: 'https://c.example.com', platform: '', apiKey: '', proxyUrl: '' },
+        {
+          name: 'site-c',
+          url: 'https://c.example.com',
+          externalCheckinUrl: '',
+          platform: '',
+          apiKey: '',
+          proxyUrl: '',
+          globalWeight: '1',
+        },
       ),
     ).toThrow('editingSiteId is required in edit mode');
   });

@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { getBrand, hashColor, BrandIcon, type BrandInfo, useIconCdn } from '../components/BrandIcon.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { mergeMarketplaceMetadata, shouldHydrateMarketplaceMetadata } from './helpers/modelsMarketplaceMetadata.js';
 import { tr } from '../i18n.js';
 
@@ -130,6 +131,7 @@ export default function Models() {
   const [copied, setCopied] = useState<string | null>(null);
   const [filterCollapsed, setFilterCollapsed] = useState(false);
   const [metadataHydrating, setMetadataHydrating] = useState(false);
+  const filterPanelPresence = useAnimatedVisibility(!filterCollapsed, 220);
   const latestPrimaryRequestRef = useRef(0);
   const latestMetadataRequestRef = useRef(0);
   const location = useLocation();
@@ -332,8 +334,8 @@ export default function Models() {
   return (
     <div className="animate-fade-in" style={{ display: 'flex', gap: 24, minHeight: 400 }}>
       {/* ====== LEFT: Filter Panel ====== */}
-      {!filterCollapsed && (
-        <div className="filter-panel">
+      {filterPanelPresence.shouldRender && (
+        <div className={`filter-panel filter-collapsible ${filterPanelPresence.isVisible ? '' : 'is-closing'}`.trim()}>
           {/* Brand filter */}
           <div className="filter-panel-section">
             <div className="filter-panel-title">
@@ -475,10 +477,10 @@ export default function Models() {
               <span className="badge badge-muted" style={{ fontSize: 11 }}>{tr('加载元数据中...')}</span>
             )}
             <div className="view-toggle">
-              <button className={`view-toggle-btn ${viewMode === 'card' ? 'active' : ''}`} onClick={() => setViewMode('card')} title={tr('卡片视图')}>
+              <button className={`view-toggle-btn ${viewMode === 'card' ? 'active' : ''}`} onClick={() => setViewMode('card')} data-tooltip={tr('卡片视图')} aria-label={tr('卡片视图')}>
                 <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
               </button>
-              <button className={`view-toggle-btn ${viewMode === 'table' ? 'active' : ''}`} onClick={() => setViewMode('table')} title={tr('表格视图')}>
+              <button className={`view-toggle-btn ${viewMode === 'table' ? 'active' : ''}`} onClick={() => setViewMode('table')} data-tooltip={tr('表格视图')} aria-label={tr('表格视图')}>
                 <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M3 6h18M3 18h18M10 3v18M14 3v18" /></svg>
               </button>
             </div>
@@ -499,10 +501,10 @@ export default function Models() {
           </div>
           {/* Quick stats */}
           <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--color-text-muted)', alignItems: 'center' }}>
-            <span title={tr('所有模型 accountCount 累计值，同一账号在多个模型中会重复计数')}>
+            <span data-tooltip={tr('所有模型 accountCount 累计值，同一账号在多个模型中会重复计数')}>
               {tr('覆盖槽位')} <b style={{ color: 'var(--color-text-primary)' }}>{totalCoverageSlots}</b>
             </span>
-            <span title={tr('当前筛选范围内去重后的唯一账号数')}>
+            <span data-tooltip={tr('当前筛选范围内去重后的唯一账号数')}>
               {tr('去重账号')} <b style={{ color: 'var(--color-text-primary)' }}>{uniqueAccountCount}</b>
             </span>
             <span>{tr('平均延迟')} <b style={{ color: getMetricColor(avgLatency) }}>{avgLatency}ms</b></span>
@@ -541,21 +543,21 @@ export default function Models() {
                       <span
                         className={`badge ${getLatencyBadgeClass(m.avgLatency)}`}
                         style={{ fontVariantNumeric: 'tabular-nums' }}
-                        title={tr('平均延迟')}
+                        data-tooltip={tr('平均延迟')}
                       >
                         {tr('延迟')} {m.avgLatency}ms
                       </span>
                       <span
                         className={`badge ${getSuccessBadgeClass(m.successRate)}`}
                         style={{ fontVariantNumeric: 'tabular-nums' }}
-                        title={tr('成功率')}
+                        data-tooltip={tr('成功率')}
                       >
                         {tr('成功率')} {m.successRate != null ? `${m.successRate}%` : '—'}
                       </span>
                     </div>
                   </div>
                   <div className="model-card-actions" onClick={e => e.stopPropagation()}>
-                    <button className="model-card-action-btn" title={tr('复制模型名')} onClick={() => copyName(m.name)}>
+                    <button className="model-card-action-btn" data-tooltip={tr('复制模型名')} aria-label={tr('复制模型名')} onClick={() => copyName(m.name)}>
                       {copied === m.name ? (
                         <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="var(--color-success)"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                       ) : (
@@ -564,7 +566,8 @@ export default function Models() {
                     </button>
                     <button
                       className="model-card-action-btn"
-                      title={expanded === m.name ? tr('收起') : tr('展开')}
+                      data-tooltip={expanded === m.name ? tr('收起') : tr('展开')}
+                      aria-label={expanded === m.name ? tr('收起') : tr('展开')}
                     >
                       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ transform: expanded === m.name ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -593,8 +596,9 @@ export default function Models() {
                 </div>
 
                 {/* Expand: Account Details */}
-                {expanded === m.name && (
-                  <div className="model-card-expand" onClick={e => e.stopPropagation()}>
+                <div className={`anim-collapse ${expanded === m.name ? 'is-open' : ''}`.trim()} onClick={e => e.stopPropagation()}>
+                  <div className="anim-collapse-inner">
+                    <div className="model-card-expand">
                     <div style={{ display: 'grid', gap: 8, marginBottom: 10 }}>
                       <div className="card" style={{ padding: 10 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{tr('基础信息')}</div>
@@ -675,8 +679,9 @@ export default function Models() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </div>
-                )}
+                </div>
               </div>
             ))}
           </div>
@@ -736,7 +741,7 @@ export default function Models() {
                         </span>
                       </td>
                       <td onClick={e => e.stopPropagation()}>
-                        <button className="model-card-action-btn" title={tr('复制')} onClick={() => copyName(m.name)}>
+                        <button className="model-card-action-btn" data-tooltip={tr('复制')} aria-label={tr('复制')} onClick={() => copyName(m.name)}>
                           {copied === m.name ? (
                             <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="var(--color-success)"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                           ) : (
@@ -745,10 +750,11 @@ export default function Models() {
                         </button>
                       </td>
                     </tr>
-                    {expanded === m.name && (
-                      <tr className="log-detail-row">
-                        <td colSpan={7} style={{ padding: 0 }}>
-                          <div style={{ padding: '12px 16px 12px 54px' }}>
+                    <tr className={expanded === m.name ? 'log-detail-row' : ''}>
+                      <td colSpan={7} style={{ padding: 0 }}>
+                        <div className={`anim-collapse ${expanded === m.name ? 'is-open' : ''}`.trim()}>
+                          <div className="anim-collapse-inner">
+                            <div style={{ padding: '12px 16px 12px 54px' }}>
                             <div style={{ display: 'grid', gap: 8, marginBottom: 10 }}>
                               <div className="card" style={{ padding: 10 }}>
                                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{tr('基础信息')}</div>
@@ -825,10 +831,11 @@ export default function Models() {
                                 ))}
                               </tbody>
                             </table>
+                            </div>
                           </div>
-                        </td>
-                      </tr>
-                    )}
+                        </div>
+                      </td>
+                    </tr>
                   </React.Fragment>
                 ))}
               </tbody>

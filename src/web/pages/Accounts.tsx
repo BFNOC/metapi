@@ -3,10 +3,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { getAccountsAddPanelStyle } from './helpers/accountsPanelStyle.js';
 import { clearFocusParams, readFocusAccountIntent } from './helpers/navigationFocus.js';
 import { tr } from '../i18n.js';
 import { buildCustomReorderUpdates, sortItemsForDisplay, type SortMode } from './helpers/listSorting.js';
+import { SITE_DOCS_URL } from '../docsLink.js';
 
 export default function Accounts() {
   const location = useLocation();
@@ -19,7 +21,15 @@ export default function Accounts() {
   const [showAdd, setShowAdd] = useState(false);
   const [addMode, setAddMode] = useState<'token' | 'login'>('token');
   const [loginForm, setLoginForm] = useState({ siteId: 0, username: '', password: '' });
-  const [tokenForm, setTokenForm] = useState({ siteId: 0, accessToken: '', platformUserId: '' });
+  const [tokenForm, setTokenForm] = useState({
+    siteId: 0,
+    username: '',
+    accessToken: '',
+    platformUserId: '',
+    refreshToken: '',
+    tokenExpiresAt: '',
+    credentialMode: 'auto' as 'auto' | 'session' | 'apikey',
+  });
   const [verifyResult, setVerifyResult] = useState<any>(null);
   const [verifying, setVerifying] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -31,11 +41,16 @@ export default function Accounts() {
   const [rebindSaving, setRebindSaving] = useState(false);
   const [highlightRebindPanel, setHighlightRebindPanel] = useState(false);
   const [rebindFocusTrigger, setRebindFocusTrigger] = useState(0);
+  const addPanelPresence = useAnimatedVisibility(showAdd, 220);
+  const rebindPanelPresence = useAnimatedVisibility(Boolean(rebindTarget), 220);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rebindPanelRef = useRef<HTMLDivElement | null>(null);
   const rebindPanelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRebindTargetRef = useRef<any | null>(null);
   const toast = useToast();
+  if (rebindTarget) lastRebindTargetRef.current = rebindTarget;
+  const activeRebindTarget = rebindTarget || lastRebindTargetRef.current;
 
   const load = async () => {
     const [accountsResult, sitesResult] = await Promise.allSettled([
@@ -53,6 +68,12 @@ export default function Accounts() {
     setLoaded(true);
   };
   useEffect(() => { void load(); }, []);
+
+  const selectedTokenSite = useMemo(
+    () => sites.find((item) => item.id === tokenForm.siteId) || null,
+    [sites, tokenForm.siteId],
+  );
+  const isSub2ApiSelected = (selectedTokenSite?.platform || '').toLowerCase() === 'sub2api';
 
   const sortedAccounts = useMemo(
     () => sortItemsForDisplay(accounts, sortMode, (account) => account.balance || 0),
@@ -102,10 +123,15 @@ export default function Accounts() {
         siteId: tokenForm.siteId,
         accessToken: tokenForm.accessToken,
         platformUserId: tokenForm.platformUserId ? parseInt(tokenForm.platformUserId) : undefined,
+        credentialMode: tokenForm.credentialMode,
       });
       setVerifyResult(result);
       if (result.success) {
-        toast.success(`验证成功: ${result.userInfo?.username || '未知用户'}`);
+        if (result.tokenType === 'apikey') {
+          toast.success(`API Key 验证成功（可用模型 ${result.modelCount || 0} 个）`);
+        } else {
+          toast.success(`Session 验证成功: ${result.userInfo?.username || '未知用户'}`);
+        }
       } else {
         toast.error(result.message || 'Token 无效');
       }
@@ -127,11 +153,27 @@ export default function Accounts() {
     try {
       const result = await api.addAccount({
         siteId: tokenForm.siteId,
+        username: tokenForm.username.trim() || undefined,
         accessToken: tokenForm.accessToken,
         platformUserId: tokenForm.platformUserId ? parseInt(tokenForm.platformUserId) : undefined,
+        refreshToken: isSub2ApiSelected && tokenForm.refreshToken.trim()
+          ? tokenForm.refreshToken.trim()
+          : undefined,
+        tokenExpiresAt: isSub2ApiSelected && tokenForm.tokenExpiresAt.trim()
+          ? Number.parseInt(tokenForm.tokenExpiresAt.trim(), 10)
+          : undefined,
+        credentialMode: tokenForm.credentialMode,
       });
       setShowAdd(false);
-      setTokenForm({ siteId: 0, accessToken: '', platformUserId: '' });
+      setTokenForm({
+        siteId: 0,
+        username: '',
+        accessToken: '',
+        platformUserId: '',
+        refreshToken: '',
+        tokenExpiresAt: '',
+        credentialMode: 'auto',
+      });
       setVerifyResult(null);
       if (result.tokenType === 'apikey') {
         toast.success('已添加为 API Key 账号（可用于代理转发）');
@@ -190,6 +232,23 @@ export default function Accounts() {
         ? '账号或站点已禁用'
         : (state === 'unhealthy' ? '最近健康检查失败' : '尚未获取运行健康信息'));
     return { state, reason, ...cfg };
+  };
+
+  const resolveAccountCapabilities = (account: any) => {
+    const fromServer = account?.capabilities;
+    if (fromServer && typeof fromServer === 'object') {
+      return {
+        canCheckin: !!fromServer.canCheckin,
+        canRefreshBalance: !!fromServer.canRefreshBalance,
+        proxyOnly: !!fromServer.proxyOnly,
+      };
+    }
+    const hasSession = typeof account?.accessToken === 'string' && account.accessToken.trim().length > 0;
+    return {
+      canCheckin: hasSession,
+      canRefreshBalance: hasSession,
+      proxyOnly: !hasSession,
+    };
   };
 
   const handleRefreshRuntimeHealth = async () => {
@@ -261,7 +320,7 @@ export default function Accounts() {
       const raw = parsed?.platformUserId;
       const value = Number.parseInt(String(raw ?? ''), 10);
       if (Number.isFinite(value) && value > 0) return String(value);
-    } catch {}
+    } catch { }
     const guessed = Number.parseInt(String(account?.username || '').match(/(\d{3,8})$/)?.[1] || '', 10);
     return Number.isFinite(guessed) && guessed > 0 ? String(guessed) : '';
   };
@@ -308,6 +367,7 @@ export default function Accounts() {
         siteId: rebindTarget.siteId,
         accessToken: rebindForm.accessToken.trim(),
         platformUserId: rebindForm.platformUserId ? Number.parseInt(rebindForm.platformUserId, 10) : undefined,
+        credentialMode: 'session',
       });
       setRebindVerifyResult(result);
       if (result.success && result.tokenType === 'session') {
@@ -412,8 +472,8 @@ export default function Accounts() {
       </div>
 
       {/* Add Panel */}
-      {showAdd && (
-        <div className="card animate-scale-in" style={getAccountsAddPanelStyle()}>
+      {addPanelPresence.shouldRender && (
+        <div className={`card panel-presence ${addPanelPresence.isVisible ? '' : 'is-closing'}`.trim()} style={getAccountsAddPanelStyle()}>
           {/* Mode tabs */}
           <div style={{ display: 'flex', gap: 0, background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', padding: 3, marginBottom: 16 }}>
             <button onClick={() => { setAddMode('token'); setVerifyResult(null); }}
@@ -440,11 +500,22 @@ export default function Accounts() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div className="info-tip">
                 <div>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>支持两种凭证类型，系统自动识别</div>
-                  <div><strong>API Key</strong>（在站点「令牌」页面生成）→ 用于代理转发</div>
-                  <div><strong>Session Cookie</strong>（从浏览器获取）→ 支持签到、余额查询等全部功能</div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>凭证模式：Session / API Key（可切换，默认自动识别）</div>
+                  <div><strong>API Key</strong>（在站点「令牌」页面生成）→ 仅代理转发</div>
+                  <div><strong>Session 模式</strong>支持两种凭证：<strong>系统访问令牌（Access Token，推荐）</strong> 或 <strong>浏览器 Cookie</strong></div>
+                  <div style={{ marginTop: 2 }}>以 NewAPI 为例：控制台 → 个人设置 → 安全设置 → 生成「系统访问令牌」</div>
                   <div style={{ opacity: 0.7, borderTop: '1px solid rgba(0,0,0,0.1)', paddingTop: 6, marginTop: 6 }}>
-                    获取 Session Cookie: <kbd style={{ padding: '1px 5px', background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 3, fontSize: 11 }}>F12</kbd> → Application → Local Storage</div>
+                    推荐优先使用 Access Token（更稳定、可多账号）；Cookie 仅用于兼容场景。获取 Cookie: <kbd style={{ padding: '1px 5px', background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 3, fontSize: 11 }}>F12</kbd> → Application → Cookie</div>
+                  <div style={{ marginTop: 6 }}>
+                    <a
+                      href={SITE_DOCS_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 12, color: 'var(--color-primary)', textDecoration: 'underline' }}
+                    >
+                      查看认证方式与特殊站点说明文档
+                    </a>
+                  </div>
                 </div>
               </div>
               <ModernSelect
@@ -463,17 +534,75 @@ export default function Accounts() {
                 ]}
                 placeholder="选择站点"
               />
-              <textarea placeholder="粘贴 Session Cookie 或 API Key&#10;（系统会自动识别凭证类型）"
+              <input
+                placeholder="账号名称（可选，API Key 模式建议填写）"
+                value={tokenForm.username}
+                onChange={(e) => setTokenForm((f) => ({ ...f, username: e.target.value }))}
+                style={inputStyle}
+              />
+              <ModernSelect
+                value={tokenForm.credentialMode}
+                onChange={(nextValue) => {
+                  const nextMode = (nextValue as 'auto' | 'session' | 'apikey') || 'auto';
+                  setTokenForm((f) => ({ ...f, credentialMode: nextMode }));
+                  setVerifyResult(null);
+                }}
+                options={[
+                  { value: 'auto', label: '自动识别（推荐）' },
+                  { value: 'session', label: 'Session 模式（Access Token / Cookie）' },
+                  { value: 'apikey', label: 'API Key 模式' },
+                ]}
+                placeholder="选择凭证模式"
+              />
+              <textarea placeholder={
+                tokenForm.credentialMode === 'session'
+                  ? '粘贴系统访问令牌（Access Token）或 Session Cookie'
+                  : (tokenForm.credentialMode === 'apikey'
+                    ? '粘贴 API Key'
+                    : '粘贴 Access Token / Session Cookie / API Key（自动识别）')
+              }
                 value={tokenForm.accessToken}
                 onChange={e => { setTokenForm(f => ({ ...f, accessToken: e.target.value.trim() })); setVerifyResult(null); }}
                 style={{ ...inputStyle, fontFamily: 'var(--font-mono)', height: 72, resize: 'none' as const }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <input
+                  placeholder="用户 ID（可选）"
+                  value={tokenForm.platformUserId}
+                  onChange={e => { setTokenForm(f => ({ ...f, platformUserId: e.target.value.replace(/\D/g, '') })); setVerifyResult(null); }}
+                  style={inputStyle}
+                />
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  若站点要求 New-Api-User / User-ID，请在这里提前填写。
+                </div>
+              </div>
+              {isSub2ApiSelected && (
+                <>
+                  <input
+                    placeholder="Sub2API refresh_token（可选，用于托管自动续期）"
+                    value={tokenForm.refreshToken}
+                    onChange={(e) => setTokenForm((f) => ({ ...f, refreshToken: e.target.value.trim() }))}
+                    style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <input
+                      placeholder="token_expires_at（可选，毫秒时间戳）"
+                      value={tokenForm.tokenExpiresAt}
+                      onChange={(e) => setTokenForm((f) => ({ ...f, tokenExpiresAt: e.target.value.replace(/\D/g, '') }))}
+                      style={inputStyle}
+                    />
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                      配置 refresh_token 后，metapi 会在 JWT 临近过期或 401 时自动续期并回写新 token。
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Verify results */}
               {verifyResult && verifyResult.success && verifyResult.tokenType === 'session' && (
                 <div className="alert alert-success animate-scale-in">
                   <div className="alert-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    Session Cookie 有效
+                    Session 凭证有效（Access Token / Cookie）
                   </div>
                   <div style={{ fontSize: 12, lineHeight: 1.8 }}>
                     <div>用户名: <strong>{verifyResult.userInfo?.username || '未知'}</strong></div>
@@ -499,11 +628,8 @@ export default function Accounts() {
               {verifyResult && !verifyResult.success && verifyResult.needsUserId && (
                 <div className="alert alert-warning animate-scale-in">
                   <div className="alert-title">
-                    Token 已识别，但此站点需要提供用户 ID
+                    此站点要求用户 ID，请补充后重新验证
                   </div>
-                  <input placeholder="用户 ID（数字）" value={tokenForm.platformUserId}
-                    onChange={e => setTokenForm(f => ({ ...f, platformUserId: e.target.value.replace(/\D/g, '') }))}
-                    style={{ ...inputStyle, borderColor: 'color-mix(in srgb, var(--color-warning) 45%, transparent)' }} />
                 </div>
               )}
               {verifyResult && !verifyResult.success && !verifyResult.needsUserId && (
@@ -562,10 +688,10 @@ export default function Accounts() {
         </div>
       )}
 
-      {rebindTarget && (
+      {rebindPanelPresence.shouldRender && activeRebindTarget && (
         <div
           ref={rebindPanelRef}
-          className={`card animate-scale-in rebind-panel ${highlightRebindPanel ? 'rebind-panel-highlight' : ''}`}
+          className={`card panel-presence rebind-panel ${rebindPanelPresence.isVisible ? '' : 'is-closing'} ${highlightRebindPanel ? 'rebind-panel-highlight' : ''}`.trim()}
           style={{ marginBottom: 16, padding: 16 }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -575,7 +701,7 @@ export default function Accounts() {
             <button className="btn btn-ghost" onClick={closeRebindPanel}>关闭</button>
           </div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            账号: {rebindTarget.username || '未命名'} @ {rebindTarget.site?.name || '-'}。请粘贴新的 Session Token，验证成功后再绑定。
+            账号: {activeRebindTarget.username || '未命名'} @ {activeRebindTarget.site?.name || '-'}。请粘贴新的 Session Token，验证成功后再绑定。
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 220px', gap: 10, marginBottom: 10 }}>
@@ -654,140 +780,161 @@ export default function Accounts() {
               </tr>
             </thead>
             <tbody>
-              {sortedAccounts.map((a: any, i: number) => (
-                <tr
-                  key={a.id}
-                  ref={(node) => {
-                    if (node) rowRefs.current.set(a.id, node);
-                    else rowRefs.current.delete(a.id);
-                  }}
-                  className={`animate-slide-up stagger-${Math.min(i + 1, 5)} ${highlightAccountId === a.id ? 'row-focus-highlight' : ''}`}
-                >
-                  <td style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>{a.username || '未命名'}</td>
-                  <td>
-                    {a.site?.url ? (
-                      <a
-                        href={a.site.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="badge-link"
-                      >
+              {sortedAccounts.map((a: any, i: number) => {
+                const capabilities = resolveAccountCapabilities(a);
+                return (
+                  <tr
+                    key={a.id}
+                    ref={(node) => {
+                      if (node) rowRefs.current.set(a.id, node);
+                      else rowRefs.current.delete(a.id);
+                    }}
+                    className={`animate-slide-up stagger-${Math.min(i + 1, 5)} ${highlightAccountId === a.id ? 'row-focus-highlight' : ''}`}
+                  >
+                    <td style={{ color: 'var(--color-text-primary)' }}>
+                      <div style={{ fontWeight: 600 }}>{a.username || '未命名'}</div>
+                      <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                        {capabilities.proxyOnly && (
+                          <span className="badge badge-muted" style={{ fontSize: 10 }}>仅代理</span>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      {a.site?.url ? (
+                        <a
+                          href={a.site.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="badge-link"
+                        >
+                          <span className="badge badge-muted" style={{ fontSize: 11 }}>
+                            {a.site?.name || '-'}
+                          </span>
+                        </a>
+                      ) : (
                         <span className="badge badge-muted" style={{ fontSize: 11 }}>
                           {a.site?.name || '-'}
                         </span>
-                      </a>
-                    ) : (
-                      <span className="badge badge-muted" style={{ fontSize: 11 }}>
-                        {a.site?.name || '-'}
-                      </span>
-                    )}
-                  </td>
-                  <td>
-                    {(() => {
-                      const health = resolveRuntimeHealth(a);
-                      return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span className={`badge ${health.cls}`} style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, width: 'fit-content' }}>
-                            <span className={`status-dot ${health.dotClass} ${health.pulse ? 'animate-pulse-dot' : ''}`} style={{ marginRight: 0 }} />
-                            {health.label}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: 11,
-                              color: 'var(--color-text-muted)',
-                              maxWidth: 200,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                            title={health.reason}
-                          >
-                            {health.reason}
-                          </span>
-                        </div>
-                      );
-                    })()}
-                  </td>
-                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>
-                    <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>${(a.balance || 0).toFixed(2)}</div>
-                    <div style={{ fontSize: 11, color: (a.todayReward || 0) > 0 ? 'var(--color-success)' : 'var(--color-text-muted)', fontWeight: 500 }}>
-                      +{(a.todayReward || 0).toFixed(2)}
-                    </div>
-                  </td>
-                  <td style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
-                    <div>${(a.balanceUsed || 0).toFixed(2)}</div>
-                    <div style={{ fontSize: 11, color: (a.todaySpend || 0) > 0 ? 'var(--color-danger)' : 'var(--color-text-muted)', fontWeight: 500 }}>
-                      -{(a.todaySpend || 0).toFixed(2)}
-                    </div>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className={`checkin-toggle-badge ${a.checkinEnabled ? 'is-on' : 'is-off'}`}
-                      onClick={() => handleToggleCheckin(a)}
-                      disabled={!!actionLoading[`checkin-toggle-${a.id}`]}
-                      title={a.checkinEnabled ? '点击关闭签到，全部签到会忽略此账号' : '点击开启签到'}
-                    >
-                      {actionLoading[`checkin-toggle-${a.id}`]
-                        ? <span className="spinner spinner-sm" />
-                        : (a.checkinEnabled ? '开启' : '关闭')}
-                    </button>
-                  </td>
-                  <td className="accounts-actions-cell" style={{ textAlign: 'right' }}>
-                    <div className="accounts-row-actions">
-                      <button
-                        onClick={() => handleTogglePin(a)}
-                        disabled={!!actionLoading[`pin-toggle-${a.id}`]}
-                        className={`btn btn-link ${a.isPinned ? 'btn-link-warning' : 'btn-link-primary'}`}
-                      >
-                        {actionLoading[`pin-toggle-${a.id}`] ? <span className="spinner spinner-sm" /> : (a.isPinned ? '取消置顶' : '置顶')}
-                      </button>
-                      {sortMode === 'custom' && (
-                        <>
-                          <button
-                            onClick={() => handleMoveCustomOrder(a, 'up')}
-                            disabled={!!actionLoading[`reorder-${a.id}`]}
-                            className="btn btn-link btn-link-muted"
-                          >
-                            ↑
-                          </button>
-                          <button
-                            onClick={() => handleMoveCustomOrder(a, 'down')}
-                            disabled={!!actionLoading[`reorder-${a.id}`]}
-                            className="btn btn-link btn-link-muted"
-                          >
-                            ↓
-                          </button>
-                        </>
                       )}
-                      <button onClick={() => withLoading(`refresh-${a.id}`, () => api.refreshBalance(a.id), '余额已刷新')} disabled={actionLoading[`refresh-${a.id}`]}
-                        className="btn btn-link btn-link-primary">
-                        {actionLoading[`refresh-${a.id}`] ? <span className="spinner spinner-sm" /> : '刷新'}
-                      </button>
-                      <button onClick={() => withLoading(`models-${a.id}`, () => api.checkModels(a.id), '模型已更新')} disabled={actionLoading[`models-${a.id}`]}
-                        className="btn btn-link btn-link-info">
-                        {actionLoading[`models-${a.id}`] ? <span className="spinner spinner-sm" /> : '模型'}
-                      </button>
-                      <button onClick={() => withLoading(`checkin-${a.id}`, () => api.triggerCheckin(a.id), '签到完成')} disabled={actionLoading[`checkin-${a.id}`]}
-                        className="btn btn-link btn-link-warning">
-                        {actionLoading[`checkin-${a.id}`] ? <span className="spinner spinner-sm" /> : '签到'}
-                      </button>
-                      {a.status === 'expired' && (
+                    </td>
+                    <td>
+                      {(() => {
+                        const health = resolveRuntimeHealth(a);
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <span className={`badge ${health.cls}`} style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, width: 'fit-content' }}>
+                              <span className={`status-dot ${health.dotClass} ${health.pulse ? 'animate-pulse-dot' : ''}`} style={{ marginRight: 0 }} />
+                              {health.label}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                color: 'var(--color-text-muted)',
+                                maxWidth: 200,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                              data-tooltip={health.reason}
+                            >
+                              {health.reason}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>${(a.balance || 0).toFixed(2)}</div>
+                      <div style={{ fontSize: 11, color: (a.todayReward || 0) > 0 ? 'var(--color-success)' : 'var(--color-text-muted)', fontWeight: 500 }}>
+                        +{(a.todayReward || 0).toFixed(2)}
+                      </div>
+                    </td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>
+                      <div>${(a.balanceUsed || 0).toFixed(2)}</div>
+                      <div style={{ fontSize: 11, color: (a.todaySpend || 0) > 0 ? 'var(--color-danger)' : 'var(--color-text-muted)', fontWeight: 500 }}>
+                        -{(a.todaySpend || 0).toFixed(2)}
+                      </div>
+                    </td>
+                    <td>
+                      {capabilities.canCheckin ? (
                         <button
-                          onClick={() => openRebindPanel(a)}
-                          className="btn btn-link btn-link-warning"
+                          type="button"
+                          className={`checkin-toggle-badge ${a.checkinEnabled ? 'is-on' : 'is-off'}`}
+                          onClick={() => handleToggleCheckin(a)}
+                          disabled={!!actionLoading[`checkin-toggle-${a.id}`]}
+                          data-tooltip={a.checkinEnabled ? '点击关闭签到，全部签到会忽略此账号' : '点击开启签到'}
+                          aria-label={a.checkinEnabled ? '点击关闭签到，全部签到会忽略此账号' : '点击开启签到'}
                         >
-                          重新绑定
+                          {actionLoading[`checkin-toggle-${a.id}`]
+                            ? <span className="spinner spinner-sm" />
+                            : (a.checkinEnabled ? '开启' : '关闭')}
                         </button>
+                      ) : (
+                        <span className="badge badge-muted" style={{ fontSize: 11 }}>
+                          不支持
+                        </span>
                       )}
-                      <button onClick={() => withLoading(`delete-${a.id}`, () => api.deleteAccount(a.id), '已删除')} disabled={actionLoading[`delete-${a.id}`]}
-                        className="btn btn-link btn-link-danger">
-                        {actionLoading[`delete-${a.id}`] ? <span className="spinner spinner-sm" /> : '删除'}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="accounts-actions-cell" style={{ textAlign: 'right' }}>
+                      <div className="accounts-row-actions">
+                        <button
+                          onClick={() => handleTogglePin(a)}
+                          disabled={!!actionLoading[`pin-toggle-${a.id}`]}
+                          className={`btn btn-link ${a.isPinned ? 'btn-link-warning' : 'btn-link-primary'}`}
+                        >
+                          {actionLoading[`pin-toggle-${a.id}`] ? <span className="spinner spinner-sm" /> : (a.isPinned ? '取消置顶' : '置顶')}
+                        </button>
+                        {sortMode === 'custom' && (
+                          <>
+                            <button
+                              onClick={() => handleMoveCustomOrder(a, 'up')}
+                              disabled={!!actionLoading[`reorder-${a.id}`]}
+                              className="btn btn-link btn-link-muted"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              onClick={() => handleMoveCustomOrder(a, 'down')}
+                              disabled={!!actionLoading[`reorder-${a.id}`]}
+                              className="btn btn-link btn-link-muted"
+                            >
+                              ↓
+                            </button>
+                          </>
+                        )}
+                        {capabilities.canRefreshBalance && (
+                          <button onClick={() => withLoading(`refresh-${a.id}`, () => api.refreshBalance(a.id), '余额已刷新')} disabled={actionLoading[`refresh-${a.id}`]}
+                            className="btn btn-link btn-link-primary">
+                            {actionLoading[`refresh-${a.id}`] ? <span className="spinner spinner-sm" /> : '刷新'}
+                          </button>
+                        )}
+                        <button onClick={() => withLoading(`models-${a.id}`, () => api.checkModels(a.id), '模型已更新')} disabled={actionLoading[`models-${a.id}`]}
+                          className="btn btn-link btn-link-info">
+                          {actionLoading[`models-${a.id}`] ? <span className="spinner spinner-sm" /> : '模型'}
+                        </button>
+                        {capabilities.canCheckin && (
+                          <button onClick={() => withLoading(`checkin-${a.id}`, () => api.triggerCheckin(a.id), '签到完成')} disabled={actionLoading[`checkin-${a.id}`]}
+                            className="btn btn-link btn-link-warning">
+                            {actionLoading[`checkin-${a.id}`] ? <span className="spinner spinner-sm" /> : '签到'}
+                          </button>
+                        )}
+                        {a.status === 'expired' && (
+                          <button
+                            onClick={() => openRebindPanel(a)}
+                            className="btn btn-link btn-link-warning"
+                          >
+                            重新绑定
+                          </button>
+                        )}
+                        <button onClick={() => withLoading(`delete-${a.id}`, () => api.deleteAccount(a.id), '已删除')} disabled={actionLoading[`delete-${a.id}`]}
+                          className="btn btn-link btn-link-danger">
+                          {actionLoading[`delete-${a.id}`] ? <span className="spinner spinner-sm" /> : '删除'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         ) : (

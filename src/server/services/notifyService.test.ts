@@ -108,6 +108,53 @@ describe('notifyService', () => {
     ).rejects.toThrow(/webhook|bark|Webhook 响应状态|Bark 响应状态/i);
   });
 
+  it('sends enterprise wechat webhook payload as structured text message', async () => {
+    const { config } = await import('../config.js');
+    config.webhookEnabled = true;
+    config.webhookUrl = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=demo-key';
+    config.smtpEnabled = false;
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ errcode: 0, errmsg: 'ok' }),
+    });
+
+    const { sendNotification } = await import('./notifyService.js');
+    await sendNotification('测试通知', 'message', 'info', { bypassThrottle: true, throwOnFailure: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchMock.mock.calls[0] as [string, { body?: string }];
+    expect(call[0]).toContain('qyapi.weixin.qq.com/cgi-bin/webhook/send');
+
+    const payload = JSON.parse(call[1]?.body || '{}') as { msgtype?: string; text?: { content?: string } };
+    expect(Array.isArray(payload)).toBe(false);
+    expect(payload.msgtype).toBe('text');
+    expect(payload.text?.content || '').toContain('[metapi][INFO] 测试通知');
+    expect(payload.text?.content || '').toContain('message');
+  });
+
+  it('fails when enterprise wechat webhook returns non-zero errcode', async () => {
+    const { config } = await import('../config.js');
+    config.webhookEnabled = true;
+    config.webhookUrl = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=demo-key';
+    config.smtpEnabled = false;
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ errcode: 93000, errmsg: 'invalid json' }),
+    });
+
+    const { sendNotification } = await import('./notifyService.js');
+    await expect(
+      sendNotification('测试通知', 'message', 'info', {
+        bypassThrottle: true,
+        throwOnFailure: true,
+      }),
+    ).rejects.toThrow(/企业微信|93000|invalid json/);
+  });
+
   it('includes local time and utc time labels in smtp payload', async () => {
     sendMailMock.mockResolvedValue({ accepted: ['receiver@example.com'] });
     const { sendNotification } = await import('./notifyService.js');

@@ -49,4 +49,13 @@ describe('failureReasonService', () => {
     expect(result.category).toBe('site');
     expect(result.title).toBe('站点未开启签到');
   });
+
+  it('classifies sub2api unsupported checkin message as site capability issue', () => {
+    const result = classifyFailureReason({
+      message: 'Check-in is not supported by Sub2API',
+      status: 'failed',
+    });
+    expect(result.code).toBe('checkin_not_supported');
+    expect(result.category).toBe('site');
+  });
 });

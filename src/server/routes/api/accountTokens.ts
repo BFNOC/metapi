@@ -215,7 +215,7 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
         `token sync timeout (${Math.round(TOKEN_SYNC_TIMEOUT_MS / 1000)}s)`,
       );
       if (fallback) {
-        tokens = [{ name: 'default', key: fallback, enabled: true }];
+        tokens = [{ name: 'default', key: fallback, enabled: true, tokenGroup: 'default' }];
       }
     }
 
@@ -351,6 +351,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         accountId: body.accountId,
         name: (body.name || '').trim() || (existing.length === 0 ? 'default' : `token-${existing.length + 1}`),
         token: tokenValue,
+        tokenGroup: (body.group || '').trim() || null,
         source: body.source || 'manual',
         enabled: body.enabled ?? true,
         isDefault: body.isDefault ?? false,

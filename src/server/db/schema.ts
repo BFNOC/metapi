@@ -5,11 +5,13 @@ export const sites = sqliteTable('sites', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   url: text('url').notNull(),
+  externalCheckinUrl: text('external_checkin_url'),
   platform: text('platform').notNull(), // 'new-api' | 'one-api' | 'veloera' | 'one-hub' | 'done-hub' | 'sub2api' | 'openai' | 'claude' | 'gemini'
   proxyUrl: text('proxy_url'),
   status: text('status').notNull().default('active'), // 'active' | 'disabled'
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
   sortOrder: integer('sort_order').default(0),
+  globalWeight: real('global_weight').default(1),
   apiKey: text('api_key'),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
@@ -48,6 +50,7 @@ export const accountTokens = sqliteTable('account_tokens', {
   accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   token: text('token').notNull(),
+  tokenGroup: text('token_group'),
   source: text('source').default('manual'), // 'manual' | 'sync' | 'legacy'
   enabled: integer('enabled', { mode: 'boolean' }).default(true),
   isDefault: integer('is_default', { mode: 'boolean' }).default(false),

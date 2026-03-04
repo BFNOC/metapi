@@ -9,6 +9,7 @@ import { estimateProxyCost } from '../../services/modelPricingService.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
 import { withExplicitProxyRequestInit } from '../../services/siteProxy.js';
+import { composeProxyLogMessage } from './logPathMeta.js';
 
 const MAX_RETRIES = 2;
 
@@ -126,6 +127,10 @@ function logProxy(
   estimatedCost = 0,
 ) {
   try {
+    const normalizedErrorMessage = composeProxyLogMessage({
+      downstreamPath: '/v1/images/generations',
+      errorMessage,
+    });
     db.insert(schema.proxyLogs).values({
       routeId: selected.channel.routeId,
       channelId: selected.channel.id,
@@ -139,7 +144,7 @@ function logProxy(
       completionTokens: 0,
       totalTokens: 0,
       estimatedCost,
-      errorMessage,
+      errorMessage: normalizedErrorMessage,
       retryCount,
     }).run();
   } catch (error) {

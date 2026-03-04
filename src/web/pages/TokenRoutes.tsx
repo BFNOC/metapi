@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   DndContext,
   KeyboardSensor,
@@ -17,9 +18,10 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { api } from '../api.js';
-import { InlineBrandIcon, getBrand, useIconCdn, type BrandInfo } from '../components/BrandIcon.js';
+import { InlineBrandIcon, getBrand, hashColor, useIconCdn, type BrandInfo } from '../components/BrandIcon.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { tr } from '../i18n.js';
 import {
   buildRouteModelCandidatesIndex,
@@ -27,6 +29,11 @@ import {
   type RouteModelCandidatesByModelName,
 } from './helpers/routeModelCandidatesIndex.js';
 import { getInitialVisibleCount, getNextVisibleCount } from './helpers/progressiveRender.js';
+import {
+  buildRouteMissingTokenIndex,
+  normalizeMissingTokenModels,
+  type MissingTokenModelsByName,
+} from './helpers/routeMissingTokenHints.js';
 
 type RouteSortBy = 'modelPattern' | 'channelCount';
 type RouteSortDir = 'asc' | 'desc';
@@ -54,7 +61,9 @@ type RouteChannel = {
     username: string | null;
   };
   site?: {
+    id: number;
     name: string | null;
+    platform: string | null;
   };
   token?: {
     id: number;
@@ -122,6 +131,13 @@ type RouteIconOption = {
   iconText?: string;
 };
 
+type MissingTokenRouteSiteActionItem = {
+  key: string;
+  siteName: string;
+  accountId: number;
+  accountLabel: string;
+};
+
 type SortableChannelRowProps = {
   channel: RouteChannel;
   decisionCandidate?: RouteDecisionCandidate;
@@ -147,6 +163,34 @@ const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
 const ROUTE_ICON_OPTIONS: RouteIconOption[] = [
   { value: '', label: '自动品牌图标', description: '按模型匹配规则自动识别品牌', iconText: '✦' },
 ];
+const ENDPOINT_TYPE_ICON_MODEL_MAP: Record<string, string> = {
+  openai: 'chatgpt',
+  gemini: 'gemini',
+  anthropic: 'claude',
+  anthroic: 'claude',
+  claude: 'claude',
+};
+const PLATFORM_ENDPOINT_FALLBACK_MAP: Record<string, string[]> = {
+  openai: ['openai'],
+  'new-api': ['openai'],
+  'one-api': ['openai'],
+  'one-hub': ['openai'],
+  'done-hub': ['openai'],
+  sub2api: ['openai'],
+  veloera: ['openai'],
+  cliproxyapi: ['openai'],
+  claude: ['anthropic'],
+  gemini: ['gemini'],
+  anyrouter: ['openai', 'anthropic'],
+};
+const PLATFORM_ALIASES: Record<string, string> = {
+  anthropic: 'claude',
+  google: 'gemini',
+  'new api': 'new-api',
+  newapi: 'new-api',
+  'one api': 'one-api',
+  oneapi: 'one-api',
+};
 
 function isRegexModelPattern(modelPattern: string): boolean {
   return modelPattern.trim().toLowerCase().startsWith('re:');
@@ -252,6 +296,39 @@ function parseBrandIconValue(raw: string): string | null {
   return icon || null;
 }
 
+function resolveEndpointTypeIconModel(endpointType: string): string | null {
+  const key = String(endpointType || '').trim().toLowerCase();
+  if (!key) return null;
+  return ENDPOINT_TYPE_ICON_MODEL_MAP[key] || null;
+}
+
+function normalizePlatformKey(platform: string | null | undefined): string {
+  const raw = String(platform || '').trim().toLowerCase();
+  if (!raw) return '';
+  return PLATFORM_ALIASES[raw] || raw;
+}
+
+function inferEndpointTypesFromPlatform(platform: string | null | undefined): string[] {
+  const key = normalizePlatformKey(platform);
+  if (!key) return [];
+  const mapped = PLATFORM_ENDPOINT_FALLBACK_MAP[key];
+  if (Array.isArray(mapped) && mapped.length > 0) return mapped;
+
+  if (key.includes('claude') || key.includes('anthropic')) return ['anthropic'];
+  if (key.includes('gemini')) return ['gemini'];
+  if (key.includes('openai') || key.includes('new-api') || key.includes('one-api')) return ['openai'];
+  return [];
+}
+
+function siteAvatarLetters(siteName: string): string {
+  const normalized = String(siteName || '').trim();
+  if (!normalized) return 'S';
+  const parts = normalized.replace(/[-_/.]/g, ' ').split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  const compact = normalized.replace(/\s+/g, '');
+  return compact.slice(0, 2).toUpperCase();
+}
+
 function resolveRouteIcon(route: RouteRow): { kind: 'none' } | { kind: 'text'; value: string } | { kind: 'brand'; value: string } {
   const icon = (route.displayIcon || '').trim();
   if (!icon) return { kind: 'none' };
@@ -274,6 +351,11 @@ function normalizeRoutes(routeRows: any[]): RouteRow[] {
       channels,
     };
   });
+}
+
+function buildSourceGroupKey(routeId: number, sourceModel: string): string {
+  const normalizedSourceModel = sourceModel.trim() || '__ungrouped__';
+  return `${routeId}::${normalizedSourceModel}`;
 }
 
 function getPriorityTagStyle(priority: number): CSSProperties {
@@ -449,7 +531,8 @@ function SortableChannelRow({
             color: 'var(--color-text-muted)',
             cursor: isSavingPriority ? 'not-allowed' : 'grab',
           }}
-          title="拖拽调整优先级"
+          data-tooltip="拖拽调整优先级"
+          aria-label="拖拽调整优先级"
         >
           <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
             <circle cx="3" cy="2" r="1" />
@@ -502,7 +585,7 @@ function SortableChannelRow({
           <span
             className="badge badge-warning"
             style={{ fontSize: 10 }}
-            title="该通道由用户手动添加，而非系统自动生成"
+            data-tooltip="该通道由用户手动添加，而非系统自动生成"
           >
             手动配置
           </span>
@@ -512,7 +595,7 @@ function SortableChannelRow({
           <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 120 }}>
             <div
-              title={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
+              data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
               style={{
                 width: 80,
                 height: 6,
@@ -532,7 +615,7 @@ function SortableChannelRow({
               />
             </div>
             <span
-              title={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
+              data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
               style={{
                 fontSize: 11,
                 color: decisionState.probability > 0 ? 'var(--color-text-secondary)' : decisionState.reasonColor,
@@ -589,19 +672,38 @@ function SortableChannelRow({
   );
 }
 
+function AnimatedCollapseSection({ open, children }: { open: boolean; children: ReactNode }) {
+  const presence = useAnimatedVisibility(open, 220);
+  if (!presence.shouldRender) return null;
+  return (
+    <div className={`anim-collapse ${presence.isVisible ? 'is-open' : ''}`.trim()}>
+      <div className="anim-collapse-inner">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function TokenRoutes() {
+  const navigate = useNavigate();
   const cdn = useIconCdn();
   const [routes, setRoutes] = useState<RouteRow[]>([]);
   const [modelCandidates, setModelCandidates] = useState<RouteModelCandidatesByModelName>({});
+  const [missingTokenModelsByName, setMissingTokenModelsByName] = useState<MissingTokenModelsByName>({});
+  const [endpointTypesByModel, setEndpointTypesByModel] = useState<Record<string, string[]>>({});
 
   const [search, setSearch] = useState('');
   const [activeBrand, setActiveBrand] = useState<string | null>(null);
+  const [activeSite, setActiveSite] = useState<string | null>(null);
+  const [activeEndpointType, setActiveEndpointType] = useState<string | null>(null);
   const [activeGroupFilter, setActiveGroupFilter] = useState<GroupFilter>(null);
   const [filterCollapsed, setFilterCollapsed] = useState(false);
   const [sortBy, setSortBy] = useState<RouteSortBy>('channelCount');
   const [sortDir, setSortDir] = useState<RouteSortDir>('desc');
 
   const [showManual, setShowManual] = useState(false);
+  const filterPanelPresence = useAnimatedVisibility(!filterCollapsed, 220);
+  const manualPanelPresence = useAnimatedVisibility(showManual, 220);
   const [form, setForm] = useState({ modelPattern: '', displayName: '', displayIcon: '' });
   const [saving, setSaving] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
@@ -615,6 +717,7 @@ export default function TokenRoutes() {
   const [loadingDecision, setLoadingDecision] = useState(false);
   const [decisionAutoSkipped, setDecisionAutoSkipped] = useState(false);
   const [visibleRouteCount, setVisibleRouteCount] = useState(ROUTE_RENDER_CHUNK);
+  const [expandedSourceGroupMap, setExpandedSourceGroupMap] = useState<Record<string, boolean>>({});
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -693,7 +796,11 @@ export default function TokenRoutes() {
 
     const normalizedRoutes = normalizeRoutes(routeRows || []);
     setRoutes(normalizedRoutes);
-    setModelCandidates((candidateRows?.models || {}) as Record<string, ModelCandidate[]>);
+    setModelCandidates((candidateRows?.models || {}) as RouteModelCandidatesByModelName);
+    setMissingTokenModelsByName(
+      normalizeMissingTokenModels((candidateRows?.modelsWithoutToken || {}) as MissingTokenModelsByName),
+    );
+    setEndpointTypesByModel(candidateRows?.endpointTypesByModel || {});
     void loadRouteDecisions(normalizedRoutes, { force: true });
   };
 
@@ -809,6 +916,22 @@ export default function TokenRoutes() {
     }
   };
 
+  const handleToggleRouteEnabled = async (route: RouteRow) => {
+    const newEnabled = !route.enabled;
+    setRoutes((prev) =>
+      prev.map((item) => (item.id === route.id ? { ...item, enabled: newEnabled } : item)),
+    );
+    try {
+      await api.updateRoute(route.id, { enabled: newEnabled });
+      toast.success(newEnabled ? '路由已启用' : '路由已禁用');
+    } catch (e: any) {
+      setRoutes((prev) =>
+        prev.map((item) => (item.id === route.id ? { ...item, enabled: route.enabled } : item)),
+      );
+      toast.error(e.message || '切换路由状态失败');
+    }
+  };
+
   const routeBrandById = useMemo(() => {
     const next = new Map<number, BrandInfo | null>();
     for (const route of routes) {
@@ -844,6 +967,76 @@ export default function TokenRoutes() {
       otherCount,
     };
   }, [routes, routeBrandById]);
+
+  const siteList = useMemo(() => {
+    const grouped = new Map<string, { count: number; siteId: number }>();
+
+    for (const route of routes) {
+      const seenSites = new Set<string>();
+      for (const channel of route.channels || []) {
+        const siteName = channel.site?.name;
+        const siteId = channel.site?.id;
+        if (!siteName || !siteId || seenSites.has(siteName)) continue;
+        seenSites.add(siteName);
+
+        const existing = grouped.get(siteName);
+        if (existing) {
+          existing.count++;
+        } else {
+          grouped.set(siteName, { count: 1, siteId });
+        }
+      }
+    }
+
+    return [...grouped.entries()].sort((a, b) => {
+      if (a[1].count === b[1].count) return a[0].localeCompare(b[0]);
+      return b[1].count - a[1].count;
+    });
+  }, [routes]);
+
+  const routeEndpointTypesByRouteId = useMemo(() => {
+    const index: Record<number, Set<string>> = {};
+    const entries = Object.entries(endpointTypesByModel || {});
+    for (const route of routes) {
+      const pattern = (route.modelPattern || '').trim();
+      if (!pattern) {
+        index[route.id] = new Set<string>();
+        continue;
+      }
+      const endpointTypes = new Set<string>();
+      for (const [modelName, rawTypes] of entries) {
+        if (!matchesModelPattern(modelName, pattern)) continue;
+        for (const rawType of Array.isArray(rawTypes) ? rawTypes : []) {
+          const endpointType = String(rawType || '').trim();
+          if (!endpointType) continue;
+          endpointTypes.add(endpointType);
+        }
+      }
+      if (endpointTypes.size === 0) {
+        for (const channel of route.channels || []) {
+          for (const endpointType of inferEndpointTypesFromPlatform(channel.site?.platform)) {
+            endpointTypes.add(endpointType);
+          }
+        }
+      }
+      index[route.id] = endpointTypes;
+    }
+    return index;
+  }, [routes, endpointTypesByModel]);
+
+  const endpointTypeList = useMemo(() => {
+    const grouped = new Map<string, number>();
+    for (const route of routes) {
+      const endpointTypes = routeEndpointTypesByRouteId[route.id] || new Set<string>();
+      for (const endpointType of endpointTypes) {
+        grouped.set(endpointType, (grouped.get(endpointType) || 0) + 1);
+      }
+    }
+    return [...grouped.entries()].sort((a, b) => {
+      if (a[1] === b[1]) return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
+      return b[1] - a[1];
+    });
+  }, [routes, routeEndpointTypesByRouteId]);
 
   const routeBrandIconCandidates = useMemo(() => {
     const byIcon = new Map<string, BrandInfo>();
@@ -930,13 +1123,34 @@ export default function TokenRoutes() {
       }
     }
 
+    if (activeSite) {
+      list = list.filter((route) =>
+        route.channels?.some((channel) => channel.site?.name === activeSite)
+      );
+    }
+
+    if (activeEndpointType) {
+      list = list.filter((route) =>
+        (routeEndpointTypesByRouteId[route.id] || new Set<string>()).has(activeEndpointType)
+      );
+    }
+
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((route) => route.modelPattern.toLowerCase().includes(q));
     }
 
     return list;
-  }, [sortedRoutes, activeGroupFilter, activeBrand, search, routeBrandById]);
+  }, [
+    sortedRoutes,
+    activeGroupFilter,
+    activeBrand,
+    activeSite,
+    activeEndpointType,
+    search,
+    routeBrandById,
+    routeEndpointTypesByRouteId,
+  ]);
 
   useEffect(() => {
     setVisibleRouteCount(getInitialVisibleCount(filteredRoutes.length, ROUTE_RENDER_CHUNK));
@@ -977,8 +1191,22 @@ export default function TokenRoutes() {
     [routes, modelCandidates],
   );
 
+  const routeMissingTokenIndex = useMemo(
+    () => buildRouteMissingTokenIndex(routes, missingTokenModelsByName, matchesModelPattern),
+    [routes, missingTokenModelsByName],
+  );
+
   const getRouteCandidateView = (routeId: number): RouteCandidateView => {
     return routeModelCandidateIndex[routeId] || EMPTY_ROUTE_CANDIDATE_VIEW;
+  };
+
+  const handleCreateTokenForMissingAccount = (accountId: number, modelName: string) => {
+    const params = new URLSearchParams();
+    params.set('create', '1');
+    params.set('accountId', String(accountId));
+    params.set('model', modelName);
+    params.set('from', 'routes');
+    navigate(`/tokens?${params.toString()}`);
   };
 
   const handleRouteAccountChange = (route: RouteRow, accountId: number) => {
@@ -1121,8 +1349,8 @@ export default function TokenRoutes() {
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', gap: 24, minHeight: 400 }}>
-      {!filterCollapsed && (
-        <div className="filter-panel">
+      {filterPanelPresence.shouldRender && (
+        <div className={`filter-panel filter-collapsible ${filterPanelPresence.isVisible ? '' : 'is-closing'}`.trim()}>
           <div className="filter-panel-section">
             <div className="filter-panel-title">
               品牌
@@ -1233,6 +1461,94 @@ export default function TokenRoutes() {
                 <span className="filter-item-count">{groupRoute.channelCount}</span>
               </div>
             ))}
+          </div>
+
+          {siteList.length > 0 && (
+            <div className="filter-panel-section">
+              <div className="filter-panel-title">
+                站点
+                {activeSite && <button onClick={() => setActiveSite(null)}>重置</button>}
+              </div>
+
+              <div className={`filter-item ${!activeSite ? 'active' : ''}`} onClick={() => setActiveSite(null)}>
+                <span
+                  className="filter-item-icon"
+                  style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}
+                >
+                  ⚡
+                </span>
+                全部站点
+                <span className="filter-item-count">{routes.length}</span>
+              </div>
+
+              {siteList.map(([siteName, { count }]) => (
+                <div
+                  key={siteName}
+                  className={`filter-item ${activeSite === siteName ? 'active' : ''}`}
+                  onClick={() => setActiveSite(activeSite === siteName ? null : siteName)}
+                >
+                  <span
+                    className="filter-item-icon"
+                    style={{ background: hashColor(siteName), color: 'white', fontSize: 9, borderRadius: 4 }}
+                  >
+                    {siteAvatarLetters(siteName)}
+                  </span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{siteName}</span>
+                  <span className="filter-item-count">{count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="filter-panel-section">
+            <div className="filter-panel-title">
+              接口能力
+              {activeEndpointType && <button onClick={() => setActiveEndpointType(null)}>重置</button>}
+            </div>
+
+            <div className={`filter-item ${!activeEndpointType ? 'active' : ''}`} onClick={() => setActiveEndpointType(null)}>
+              <span
+                className="filter-item-icon"
+                style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}
+              >
+                ⚙
+              </span>
+              全部能力
+              <span className="filter-item-count">{routes.length}</span>
+            </div>
+
+            {endpointTypeList.map(([endpointType, count]) => (
+              <div
+                key={endpointType}
+                className={`filter-item ${activeEndpointType === endpointType ? 'active' : ''}`}
+                onClick={() => setActiveEndpointType(activeEndpointType === endpointType ? null : endpointType)}
+              >
+                <span
+                  className="filter-item-icon"
+                  style={{
+                    background: 'var(--color-bg)',
+                    color: 'var(--color-text-muted)',
+                    fontSize: 10,
+                    borderRadius: 4,
+                    overflow: 'hidden',
+                  }}
+                >
+                  {(() => {
+                    const iconModel = resolveEndpointTypeIconModel(endpointType);
+                    if (!iconModel) return <span style={{ fontSize: 10 }}>⚙</span>;
+                    return <InlineBrandIcon model={iconModel} size={14} />;
+                  })()}
+                </span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{endpointType}</span>
+                <span className="filter-item-count">{count}</span>
+              </div>
+            ))}
+
+            {endpointTypeList.length === 0 && (
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', padding: '4px 10px 0' }}>
+                暂无接口能力数据
+              </div>
+            )}
           </div>
 
           <button
@@ -1365,7 +1681,8 @@ export default function TokenRoutes() {
               className="btn btn-ghost"
               style={{ border: '1px solid var(--color-border)', padding: '8px 12px', fontSize: 12 }}
               onClick={() => setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-              title={tr('切换排序方向')}
+              data-tooltip={tr('切换排序方向')}
+              aria-label={tr('切换排序方向')}
             >
               {sortDir === 'asc' ? tr('升序 ↑') : tr('降序 ↓')}
             </button>
@@ -1377,8 +1694,8 @@ export default function TokenRoutes() {
             {decisionAutoSkipped ? ` ${tr('当前精确路由')} ${exactRouteCount} ${tr('条，为避免首屏卡顿，默认不自动计算概率，点击“加载选择解释”后按需获取。')}` : ''}
           </div>
 
-          {showManual && (
-            <div className="card animate-scale-in" style={{ padding: 20, marginBottom: 16 }}>
+          {manualPanelPresence.shouldRender && (
+            <div className={`card panel-presence ${manualPanelPresence.isVisible ? '' : 'is-closing'}`.trim()} style={{ padding: 20, marginBottom: 16 }}>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
                 {tr('用于创建群组路由（聚合多个上游模型为一个下游模型名，即模型重定向）；自动路由仍会保持开启。')}
               </div>
@@ -1519,6 +1836,34 @@ export default function TokenRoutes() {
                 ? (candidateView.tokenOptionsByAccountId[selectedAccountId] || [])
                 : [];
               const candidateMode = routeCandidates.length > 0;
+              const missingTokenHints = routeMissingTokenIndex[route.id] || [];
+              const missingTokenSiteItems = (() => {
+                const siteMap = new Map<string, MissingTokenRouteSiteActionItem>();
+                for (const hint of missingTokenHints) {
+                  for (const account of hint.accounts) {
+                    const siteName = (account.siteName || '').trim() || `site-${account.siteId || 'unknown'}`;
+                    const key = `${account.siteId || 0}::${siteName.toLowerCase()}`;
+                    const accountLabel = account.username || `account-${account.accountId}`;
+                    const existing = siteMap.get(key);
+                    if (!existing) {
+                      siteMap.set(key, {
+                        key,
+                        siteName,
+                        accountId: account.accountId,
+                        accountLabel,
+                      });
+                      continue;
+                    }
+                    if (account.accountId < existing.accountId) {
+                      existing.accountId = account.accountId;
+                      existing.accountLabel = accountLabel;
+                    }
+                  }
+                }
+                return Array.from(siteMap.values()).sort((a, b) => (
+                  a.siteName.localeCompare(b.siteName, undefined, { sensitivity: 'base' })
+                ));
+              })();
               const routeDecision = decisionByRoute[route.id] || null;
               const exactRoute = isExactModelPattern(route.modelPattern);
               const decisionMap = new Map<number, RouteDecisionCandidate>(
@@ -1618,15 +1963,30 @@ export default function TokenRoutes() {
                           {route.modelPattern}
                         </span>
                       ) : null}
-                      <span className={`badge ${route.enabled ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 11 }}>
+                      <button
+                        className={`badge route-enable-toggle ${route.enabled ? 'is-enabled' : 'is-disabled'}`}
+                        style={{ fontSize: 11, cursor: 'pointer', border: 'none' }}
+                        onClick={(e) => { e.stopPropagation(); handleToggleRouteEnabled(route); }}
+                        data-tooltip={route.enabled ? '点击禁用此路由' : '点击启用此路由'}
+                        aria-label={route.enabled ? '点击禁用此路由' : '点击启用此路由'}
+                      >
                         {route.enabled ? tr('启用') : tr('禁用')}
-                      </span>
+                      </button>
                       <span className="badge badge-info" style={{ fontSize: 10 }}>
                         {route.channels?.length || 0} {tr('通道')}
                       </span>
                       {candidateMode && (
-                        <span className="badge badge-info" style={{ fontSize: 10 }}>
+                        <span
+                          className="badge badge-info"
+                          style={{ fontSize: 10 }}
+                          data-tooltip="添加通道时，仅展示可覆盖当前模型模式的账号与令牌，自动过滤不支持该模型的令牌。"
+                        >
                           {tr('按模型过滤')}
+                        </span>
+                      )}
+                      {missingTokenSiteItems.length > 0 && (
+                        <span className="badge badge-warning" style={{ fontSize: 10 }}>
+                          待注册站点 {missingTokenSiteItems.length}
                         </span>
                       )}
                       {channelGroups.length > 1 && (
@@ -1714,6 +2074,43 @@ export default function TokenRoutes() {
                     </div>
                   )}
 
+                  {missingTokenSiteItems.length > 0 && (
+                    <div
+                      style={{
+                        marginBottom: 8,
+                        padding: '8px 10px',
+                        border: '1px solid color-mix(in srgb, var(--color-warning) 35%, transparent)',
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'color-mix(in srgb, var(--color-warning) 10%, var(--color-bg))',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6,
+                      }}
+                    >
+                      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                        以下站点已提供该模型，但你未注册对应站点令牌；点击站点标签可跳转创建对应站点令牌：
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                        {missingTokenSiteItems.map((item) => (
+                          <button
+                            key={`missing-create-${route.id}-${item.key}`}
+                            type="button"
+                            onClick={() => handleCreateTokenForMissingAccount(item.accountId, route.modelPattern)}
+                            className="badge badge-info missing-token-site-tag"
+                            data-tooltip={`点击跳转到令牌创建（预选 ${item.siteName}/${item.accountLabel}）`}
+                            aria-label={`点击跳转到令牌创建（预选 ${item.siteName}/${item.accountLabel}）`}
+                            style={{
+                              fontSize: 11,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {item.siteName}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {route.channels?.length > 0 ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       <DndContext
@@ -1726,60 +2123,144 @@ export default function TokenRoutes() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                           {channelGroups.map((group) => (
                             <div key={`${route.id}-${group.sourceModel || '__ungrouped__'}`} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              {group.sourceModel ? (
-                                <div
-                                  style={{
-                                    fontSize: 12,
-                                    color: 'var(--color-text-secondary)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 8,
-                                    paddingLeft: 2,
-                                  }}
-                                >
-                                  <span>来源模型</span>
-                                  <code
-                                    style={{
-                                      fontSize: 11,
-                                      border: '1px solid var(--color-border)',
-                                      borderRadius: 6,
-                                      padding: '2px 6px',
-                                      background: 'var(--color-bg)',
-                                    }}
-                                  >
-                                    {group.sourceModel}
-                                  </code>
-                                  <span style={{ color: 'var(--color-text-muted)' }}>{group.channels.length} 通道</span>
-                                </div>
-                              ) : null}
-                              <SortableContext
-                                items={group.channels.map((channel) => channel.id)}
-                                strategy={verticalListSortingStrategy}
-                              >
-                                {group.channels.map((channel) => {
-                                  const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
-                                  const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
+                              {(() => {
+                                const groupKey = buildSourceGroupKey(route.id, group.sourceModel || '');
+                                const supportsCollapse = !exactRoute && !!group.sourceModel;
+                                const isGroupExpanded = supportsCollapse ? !!expandedSourceGroupMap[groupKey] : true;
 
-                                  return (
-                                    <SortableChannelRow
-                                      key={channel.id}
-                                      channel={channel}
-                                      decisionCandidate={decisionMap.get(channel.id)}
-                                      isExactRoute={exactRoute}
-                                      loadingDecision={loadingDecision}
-                                      isSavingPriority={!!savingPriorityByRoute[route.id]}
-                                      tokenOptions={tokenOptions}
-                                      activeTokenId={activeTokenId}
-                                      isUpdatingToken={!!updatingChannel[channel.id]}
-                                      onTokenDraftChange={(channelId, tokenId) =>
-                                        setChannelTokenDraft((prev) => ({ ...prev, [channelId]: tokenId }))
-                                      }
-                                      onSaveToken={() => handleChannelTokenSave(route, channel.id, channel.accountId)}
-                                      onDeleteChannel={() => handleDeleteChannel(channel.id)}
-                                    />
-                                  );
-                                })}
-                              </SortableContext>
+                                return (
+                                  <>
+                                    {group.sourceModel ? (
+                                      supportsCollapse ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setExpandedSourceGroupMap((prev) => ({
+                                              ...prev,
+                                              [groupKey]: !prev[groupKey],
+                                            }));
+                                          }}
+                                          aria-expanded={isGroupExpanded}
+                                          className="btn btn-ghost"
+                                          style={{
+                                            fontSize: 12,
+                                            color: 'var(--color-text-secondary)',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            gap: 8,
+                                            padding: '4px 6px',
+                                            border: '1px dashed var(--color-border)',
+                                            borderRadius: 'var(--radius-sm)',
+                                            background: 'transparent',
+                                          }}
+                                        >
+                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                                            <span>来源模型</span>
+                                            <code
+                                              style={{
+                                                fontSize: 11,
+                                                border: '1px solid var(--color-border)',
+                                                borderRadius: 6,
+                                                padding: '2px 6px',
+                                                background: 'var(--color-bg)',
+                                              }}
+                                            >
+                                              {group.sourceModel}
+                                            </code>
+                                            <span style={{ color: 'var(--color-text-muted)' }}>{group.channels.length} 通道</span>
+                                          </span>
+                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-text-muted)' }}>
+                                            {isGroupExpanded ? '收起' : '展开'}
+                                            <svg
+                                              width="12"
+                                              height="12"
+                                              viewBox="0 0 20 20"
+                                              fill="none"
+                                              stroke="currentColor"
+                                              strokeWidth="2"
+                                              style={{
+                                                transform: isGroupExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                                transition: 'transform 0.2s ease',
+                                              }}
+                                              aria-hidden
+                                            >
+                                              <path d="m5 7 5 6 5-6" />
+                                            </svg>
+                                          </span>
+                                        </button>
+                                      ) : (
+                                        <div
+                                          style={{
+                                            fontSize: 12,
+                                            color: 'var(--color-text-secondary)',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 8,
+                                            paddingLeft: 2,
+                                          }}
+                                        >
+                                          <span>来源模型</span>
+                                          <code
+                                            style={{
+                                              fontSize: 11,
+                                              border: '1px solid var(--color-border)',
+                                              borderRadius: 6,
+                                              padding: '2px 6px',
+                                              background: 'var(--color-bg)',
+                                            }}
+                                          >
+                                            {group.sourceModel}
+                                          </code>
+                                          <span style={{ color: 'var(--color-text-muted)' }}>{group.channels.length} 通道</span>
+                                        </div>
+                                      )
+                                    ) : null}
+
+                                    <AnimatedCollapseSection open={isGroupExpanded}>
+                                        <SortableContext
+                                          items={group.channels.map((channel) => channel.id)}
+                                          strategy={verticalListSortingStrategy}
+                                        >
+                                          {group.channels.map((channel) => {
+                                            const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
+                                            const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
+
+                                            return (
+                                              <SortableChannelRow
+                                                key={channel.id}
+                                                channel={channel}
+                                                decisionCandidate={decisionMap.get(channel.id)}
+                                                isExactRoute={exactRoute}
+                                                loadingDecision={loadingDecision}
+                                                isSavingPriority={!!savingPriorityByRoute[route.id]}
+                                                tokenOptions={tokenOptions}
+                                                activeTokenId={activeTokenId}
+                                                isUpdatingToken={!!updatingChannel[channel.id]}
+                                                onTokenDraftChange={(channelId, tokenId) =>
+                                                  setChannelTokenDraft((prev) => ({ ...prev, [channelId]: tokenId }))
+                                                }
+                                                onSaveToken={() => handleChannelTokenSave(route, channel.id, channel.accountId)}
+                                                onDeleteChannel={() => handleDeleteChannel(channel.id)}
+                                              />
+                                            );
+                                          })}
+                                        </SortableContext>
+                                    </AnimatedCollapseSection>
+                                    {!isGroupExpanded ? (
+                                      <div
+                                        style={{
+                                          fontSize: 11,
+                                          color: 'var(--color-text-muted)',
+                                          paddingLeft: 6,
+                                        }}
+                                      >
+                                        已收起，点击展开查看通道
+                                      </div>
+                                    ) : null}
+                                  </>
+                                );
+                              })()}
                             </div>
                           ))}
                         </div>

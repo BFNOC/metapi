@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
+import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { getAccountsAddPanelStyle } from './helpers/accountsPanelStyle.js';
@@ -69,7 +71,21 @@ async function copyText(text: string) {
   document.body.removeChild(textarea);
 }
 
+function parsePositiveInt(input: string | null): number {
+  const value = Number.parseInt(String(input || '').trim(), 10);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return value;
+}
+
+function isTruthyFlag(input: string | null): boolean {
+  if (!input) return false;
+  const normalized = input.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+}
+
 export default function Tokens() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const initialCreateForm = {
     accountId: 0,
     name: '',
@@ -88,10 +104,12 @@ export default function Tokens() {
   const [syncing, setSyncing] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [createHintModelName, setCreateHintModelName] = useState('');
   const [rowLoading, setRowLoading] = useState<Record<string, boolean>>({});
   const [form, setForm] = useState(initialCreateForm);
   const [groupOptions, setGroupOptions] = useState<string[]>(['default']);
   const [groupLoading, setGroupLoading] = useState(false);
+  const addPanelPresence = useAnimatedVisibility(showAdd, 220);
   const toast = useToast();
 
   const load = async () => {
@@ -159,6 +177,44 @@ export default function Tokens() {
 
   const activeAccounts = useMemo(() => accounts.filter(isAccountSyncable), [accounts]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const shouldOpenCreate = isTruthyFlag(params.get('create'));
+    const requestedAccountId = parsePositiveInt(params.get('accountId'));
+    const requestedModel = (params.get('model') || '').trim();
+    if (!shouldOpenCreate || !requestedAccountId) return;
+
+    const preferredAccount = activeAccounts.find((account) => account.id === requestedAccountId);
+    const fallbackAccount = preferredAccount || activeAccounts[0] || null;
+    if (!fallbackAccount) return;
+
+    setShowAdd(true);
+    setCreateHintModelName(requestedModel);
+    setSyncingAccountId(fallbackAccount.id);
+    setForm((prev) => ({
+      ...prev,
+      accountId: fallbackAccount.id,
+      group: 'default',
+    }));
+
+    if (!preferredAccount) {
+      toast.info('指定账号不可用，已自动切换到首个可用账号');
+    }
+
+    params.delete('create');
+    params.delete('accountId');
+    params.delete('model');
+    params.delete('from');
+    const nextSearch = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : '',
+      },
+      { replace: true },
+    );
+  }, [activeAccounts, location.pathname, location.search, navigate, toast]);
+
   const withRowLoading = async (key: string, fn: () => Promise<void>) => {
     setRowLoading((prev) => ({ ...prev, [key]: true }));
     try {
@@ -208,6 +264,7 @@ export default function Tokens() {
       toast.success('已在站点创建并同步令牌');
       setForm(initialCreateForm);
       setShowAdd(false);
+      setCreateHintModelName('');
       await load();
     } catch (e: any) {
       toast.error(e.message || '创建令牌失败');
@@ -340,7 +397,16 @@ export default function Tokens() {
           >
             {syncingAll ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步全部账号'}
           </button>
-          <button onClick={() => setShowAdd((prev) => !prev)} className="btn btn-primary">
+          <button
+            onClick={() => {
+              setShowAdd((prev) => {
+                const nextOpen = !prev;
+                if (!nextOpen) setCreateHintModelName('');
+                return nextOpen;
+              });
+            }}
+            className="btn btn-primary"
+          >
             {showAdd ? '取消' : '+ 新增令牌'}
           </button>
         </div>
@@ -350,8 +416,8 @@ export default function Tokens() {
         新增令牌会调用站点 API 创建新密钥，再自动同步到本地。支持设置分组、额度、过期时间和 IP 白名单；已存在密钥可直接用“同步站点令牌”读取。
       </div>
 
-      {showAdd && (
-        <div className="card animate-scale-in" style={getAccountsAddPanelStyle()}>
+      {addPanelPresence.shouldRender && (
+        <div className={`card panel-presence ${addPanelPresence.isVisible ? '' : 'is-closing'}`.trim()} style={getAccountsAddPanelStyle()}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div style={{ gridColumn: '1 / span 2' }}>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>所属账号</div>
@@ -374,6 +440,21 @@ export default function Tokens() {
                 placeholder="选择账号"
               />
             </div>
+            {createHintModelName ? (
+              <div
+                style={{
+                  gridColumn: '1 / span 2',
+                  fontSize: 12,
+                  color: 'var(--color-text-secondary)',
+                  background: 'color-mix(in srgb, var(--color-info) 10%, var(--color-bg))',
+                  border: '1px solid color-mix(in srgb, var(--color-info) 30%, transparent)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '6px 8px',
+                }}
+              >
+                来自路由提醒：为模型 <code style={{ fontSize: 11 }}>{createHintModelName}</code> 补充该账号令牌后，可自动生成对应通道。
+              </div>
+            ) : null}
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>令牌名称（可选）</div>
               <input

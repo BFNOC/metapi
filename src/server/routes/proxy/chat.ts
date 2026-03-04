@@ -33,6 +33,7 @@ import {
   getDownstreamRoutingPolicy,
   recordDownstreamCostUsage,
 } from './downstreamPolicy.js';
+import { composeProxyLogMessage } from './logPathMeta.js';
 
 const MAX_RETRIES = 2;
 const CLAUDE_SSE_EVENT_NAMES = new Set([
@@ -59,6 +60,10 @@ function shouldRetryClaudeMessagesWithNormalizedBody(
   if (downstreamFormat !== 'claude') return false;
   if (!endpointPath.includes('/v1/messages')) return false;
   if (status < 400 || status >= 500) return false;
+  return /messages\s+is\s+required/i.test(upstreamErrorText);
+}
+
+function isMessagesRequiredError(upstreamErrorText: string): boolean {
   return /messages\s+is\s+required/i.test(upstreamErrorText);
 }
 
@@ -134,6 +139,7 @@ async function handleChatProxyRequest(
   }
 
   const { requestedModel, isStream, upstreamBody, claudeOriginalBody } = parsedRequest.value!;
+  const downstreamPath = downstreamFormat === 'claude' ? '/v1/messages' : '/v1/chat/completions';
   if (!ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
   const downstreamPolicy = getDownstreamRoutingPolicy(request);
 
@@ -238,6 +244,32 @@ async function handleChatProxyRequest(
           }
 
           const normalizedErrText = await normalizedResponse.text().catch(() => 'unknown error');
+          const shouldDowngradeEndpoint = (
+            endpointIndex < endpointCandidates.length - 1
+            && (
+              isEndpointDowngradeError(normalizedResponse.status, normalizedErrText)
+              || isMessagesRequiredError(normalizedErrText)
+            )
+          );
+
+          if (shouldDowngradeEndpoint) {
+            const errText = withUpstreamPath(
+              normalizedClaudeRequest.path,
+              `normalized-claude-body fallback failed: ${normalizedErrText}`,
+            );
+            logProxy(
+              selected,
+              requestedModel,
+              'failed',
+              normalizedResponse.status,
+              Date.now() - startTime,
+              errText,
+              retryCount,
+              downstreamPath,
+            );
+            continue;
+          }
+
           finalStatus = normalizedResponse.status;
           finalErrText = withUpstreamPath(
             normalizedClaudeRequest.path,
@@ -253,7 +285,7 @@ async function handleChatProxyRequest(
         );
 
         if (shouldDowngradeEndpoint) {
-          logProxy(selected, requestedModel, 'failed', response.status, Date.now() - startTime, errText, retryCount);
+          logProxy(selected, requestedModel, 'failed', response.status, Date.now() - startTime, errText, retryCount, downstreamPath);
           continue;
         }
 
@@ -266,7 +298,7 @@ async function handleChatProxyRequest(
         const status = finalStatus || 502;
         const errText = finalErrText || 'unknown error';
         tokenRouter.recordFailure(selected.channel.id);
-        logProxy(selected, requestedModel, 'failed', status, Date.now() - startTime, errText, retryCount);
+        logProxy(selected, requestedModel, 'failed', status, Date.now() - startTime, errText, retryCount, downstreamPath);
 
         if (isTokenExpiredError({ status, message: errText })) {
           await reportTokenExpired({
@@ -400,6 +432,7 @@ async function handleChatProxyRequest(
             latency,
             null,
             retryCount,
+            downstreamPath,
             resolvedUsage.promptTokens,
             resolvedUsage.completionTokens,
             resolvedUsage.totalTokens,
@@ -539,6 +572,7 @@ async function handleChatProxyRequest(
           latency,
           null,
           retryCount,
+          downstreamPath,
           resolvedUsage.promptTokens,
           resolvedUsage.completionTokens,
           resolvedUsage.totalTokens,
@@ -600,6 +634,7 @@ async function handleChatProxyRequest(
         latency,
         null,
         retryCount,
+        downstreamPath,
         resolvedUsage.promptTokens,
         resolvedUsage.completionTokens,
         resolvedUsage.totalTokens,
@@ -610,7 +645,7 @@ async function handleChatProxyRequest(
       return reply.send(downstreamResponse);
     } catch (err: any) {
       tokenRouter.recordFailure(selected.channel.id);
-      logProxy(selected, requestedModel, 'failed', 0, Date.now() - startTime, err?.message || 'network error', retryCount);
+      logProxy(selected, requestedModel, 'failed', 0, Date.now() - startTime, err?.message || 'network error', retryCount, downstreamPath);
 
       if (retryCount < MAX_RETRIES) {
         retryCount += 1;
@@ -640,6 +675,7 @@ function logProxy(
   latencyMs: number,
   errorMessage: string | null,
   retryCount: number,
+  downstreamPath: string,
   promptTokens = 0,
   completionTokens = 0,
   totalTokens = 0,
@@ -647,8 +683,11 @@ function logProxy(
   upstreamPath: string | null = null,
 ) {
   try {
-    const normalizedErrorMessage = errorMessage
-      || (upstreamPath ? `[upstream:${upstreamPath}]` : null);
+    const normalizedErrorMessage = composeProxyLogMessage({
+      downstreamPath,
+      upstreamPath,
+      errorMessage,
+    });
     db.insert(schema.proxyLogs).values({
       routeId: selected.channel.routeId,
       channelId: selected.channel.id,

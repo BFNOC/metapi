@@ -11,6 +11,7 @@ import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageF
 import { parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
 import { withExplicitProxyRequestInit } from '../../services/siteProxy.js';
+import { composeProxyLogMessage } from './logPathMeta.js';
 
 const MAX_RETRIES = 2;
 
@@ -156,6 +157,10 @@ function logProxy(
   estimatedCost = 0,
 ) {
   try {
+    const normalizedErrorMessage = composeProxyLogMessage({
+      downstreamPath: '/v1/embeddings',
+      errorMessage,
+    });
     db.insert(schema.proxyLogs).values({
       routeId: selected.channel.routeId,
       channelId: selected.channel.id,
@@ -169,7 +174,7 @@ function logProxy(
       completionTokens,
       totalTokens,
       estimatedCost,
-      errorMessage,
+      errorMessage: normalizedErrorMessage,
       retryCount,
     }).run();
   } catch (error) {

@@ -531,6 +531,61 @@ describe('chat proxy stream behavior', () => {
     expect(secondBody.messages[0]?.content).toContain('hello');
   });
 
+  it('downgrades to next endpoint when normalized Claude fallback still returns messages is required', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          type: '<nil>',
+          message: 'messages is required',
+        },
+      }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          type: '<nil>',
+          message: 'messages is required',
+        },
+      }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'chatcmpl_downgraded_ok',
+        object: 'chat.completion',
+        model: 'upstream-gpt',
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: 'ok after endpoint downgrade' },
+          finish_reason: 'stop',
+        }],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      payload: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock.mock.calls.length).toBe(3);
+    const [firstUrl] = fetchMock.mock.calls[0] as [string, any];
+    const [secondUrl] = fetchMock.mock.calls[1] as [string, any];
+    const [thirdUrl] = fetchMock.mock.calls[2] as [string, any];
+    expect(firstUrl).toContain('/v1/messages');
+    expect(secondUrl).toContain('/v1/messages');
+    expect(thirdUrl).toContain('/v1/chat/completions');
+    expect(response.json()?.type).toBe('message');
+  });
+
   it('passes through Claude tool_use SSE events on /v1/messages for CLI tool execution', async () => {
     const encoder = new TextEncoder();
     const upstreamBody = new ReadableStream<Uint8Array>({
@@ -601,6 +656,64 @@ describe('chat proxy stream behavior', () => {
     const forwarded = JSON.parse(options.body);
     expect(forwarded.model).toBe('upstream-gpt');
     expect(forwarded.input).toBe('hello');
+  });
+
+  it('continues downgrade to /v1/messages when /v1/chat/completions returns messages is required for /v1/responses', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          message: 'openai_error',
+          type: 'bad_response_status_code',
+          code: 'bad_response_status_code',
+        },
+      }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          message: 'messages is required',
+          type: 'upstream_error',
+          code: null,
+        },
+      }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'msg_responses_retry_messages',
+        type: 'message',
+        model: 'upstream-gpt',
+        content: [{ type: 'text', text: 'ok from messages fallback' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    const [firstUrl] = fetchMock.mock.calls[0] as [string, any];
+    const [secondUrl] = fetchMock.mock.calls[1] as [string, any];
+    const [thirdUrl] = fetchMock.mock.calls[2] as [string, any];
+    expect(firstUrl).toContain('/v1/responses');
+    expect(secondUrl).toContain('/v1/chat/completions');
+    expect(thirdUrl).toContain('/v1/messages');
+
+    const body = response.json();
+    expect(body.object).toBe('response');
+    expect(body.output_text).toContain('ok from messages fallback');
   });
 
   it('passes through /v1/responses SSE payloads', async () => {

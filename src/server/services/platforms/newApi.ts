@@ -176,12 +176,19 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const key = typeof item?.key === 'string' ? item.key.trim() : '';
       if (!key) continue;
       const rawName = typeof item?.name === 'string' ? item.name.trim() : '';
+      const rawGroup = typeof item?.group === 'string'
+        ? item.group.trim()
+        : (typeof item?.group_name === 'string'
+          ? item.group_name.trim()
+          : (typeof item?.token_group === 'string' ? item.token_group.trim() : ''));
       const status = typeof item?.status === 'number' ? item.status : undefined;
-      normalized.push({
+      const tokenInfo: ApiTokenInfo = {
         name: rawName || (index === 0 ? 'default' : `token-${index + 1}`),
         key,
         enabled: status === undefined ? true : status === 1,
-      });
+      };
+      if (rawGroup) tokenInfo.tokenGroup = rawGroup;
+      normalized.push(tokenInfo);
     }
     return normalized;
   }

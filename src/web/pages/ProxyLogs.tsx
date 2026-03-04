@@ -4,6 +4,7 @@ import { useToast } from '../components/Toast.js';
 import { ModelBadge } from '../components/BrandIcon.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { parseProxyLogPathMeta } from './helpers/proxyLogPathMeta.js';
 import { tr } from '../i18n.js';
 
 type StatusFilter = 'all' | 'success' | 'failed';
@@ -49,17 +50,6 @@ function latencyBgColor(ms: number) {
   if (ms >= 3000) return 'color-mix(in srgb, var(--color-danger) 12%, transparent)';
   if (ms >= 1000) return 'color-mix(in srgb, var(--color-warning) 12%, transparent)';
   return 'color-mix(in srgb, var(--color-success) 12%, transparent)';
-}
-
-function extractUpstreamPath(errorMessage?: string): string | null {
-  if (!errorMessage) return null;
-  const matched = errorMessage.match(/\[upstream:(\/v1\/[^\]]+)\]/i);
-  return matched?.[1] || null;
-}
-
-function stripUpstreamPrefix(errorMessage?: string): string {
-  if (!errorMessage) return '';
-  return errorMessage.replace(/^\[upstream:\/v1\/[^\]]+\]\s*/i, '');
 }
 
 export default function ProxyLogs() {
@@ -189,8 +179,7 @@ export default function ProxyLogs() {
             </thead>
             <tbody>
               {paged.map(log => {
-                const upstreamPath = extractUpstreamPath(log.errorMessage);
-                const errorMessageDisplay = stripUpstreamPrefix(log.errorMessage);
+                const pathMeta = parseProxyLogPathMeta(log.errorMessage);
                 return (
                 <React.Fragment key={log.id}>
                   <tr
@@ -255,10 +244,11 @@ export default function ProxyLogs() {
                       )}
                     </td>
                   </tr>
-                  {expanded === log.id && (
-                    <tr style={{ background: 'var(--color-bg)' }}>
-                      <td colSpan={9} style={{ padding: 0 }}>
-                        <div className="animate-fade-in" style={{
+                  <tr style={{ background: 'var(--color-bg)' }}>
+                    <td colSpan={9} style={{ padding: 0 }}>
+                      <div className={`anim-collapse ${expanded === log.id ? 'is-open' : ''}`.trim()}>
+                        <div className="anim-collapse-inner">
+                          <div className="animate-fade-in" style={{
                           padding: '14px 20px 14px 40px',
                           borderTop: '1px solid var(--color-border-light)',
                           borderBottom: '1px solid var(--color-border-light)',
@@ -294,16 +284,32 @@ export default function ProxyLogs() {
                             </span>
                           </div>
 
-                          {/* 请求路径 */}
+                          {/* 下游请求路径 */}
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                            <span style={{ fontWeight: 600, color: 'var(--color-primary)', flexShrink: 0 }}>请求路径</span>
-                            {upstreamPath ? (
+                            <span style={{ fontWeight: 600, color: 'var(--color-primary)', flexShrink: 0 }}>下游请求路径</span>
+                            {pathMeta.downstreamPath ? (
                               <code style={{
                                 fontFamily: 'var(--font-mono)', fontSize: 12,
                                 background: 'var(--color-bg-card)', padding: '1px 8px', borderRadius: 4,
                                 border: '1px solid var(--color-border-light)',
                               }}>
-                                {upstreamPath}
+                                {pathMeta.downstreamPath}
+                              </code>
+                            ) : (
+                              <span style={{ color: 'var(--color-text-muted)' }}>未记录</span>
+                            )}
+                          </div>
+
+                          {/* 上游请求路径 */}
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--color-primary)', flexShrink: 0 }}>上游请求路径</span>
+                            {pathMeta.upstreamPath ? (
+                              <code style={{
+                                fontFamily: 'var(--font-mono)', fontSize: 12,
+                                background: 'var(--color-bg-card)', padding: '1px 8px', borderRadius: 4,
+                                border: '1px solid var(--color-border-light)',
+                              }}>
+                                {pathMeta.upstreamPath}
                               </code>
                             ) : (
                               <span style={{ color: 'var(--color-text-muted)' }}>未记录</span>
@@ -311,16 +317,17 @@ export default function ProxyLogs() {
                           </div>
 
                           {/* 错误信息 */}
-                          {errorMessageDisplay.trim().length > 0 && (
+                          {pathMeta.errorMessage.trim().length > 0 && (
                             <div style={{ display: 'flex', gap: 6 }}>
                               <span style={{ fontWeight: 600, color: 'var(--color-danger)', flexShrink: 0 }}>错误信息</span>
-                              <span style={{ color: 'var(--color-danger)' }}>{errorMessageDisplay}</span>
+                              <span style={{ color: 'var(--color-danger)' }}>{pathMeta.errorMessage}</span>
                             </div>
                           )}
+                          </div>
                         </div>
-                      </td>
-                    </tr>
-                  )}
+                      </div>
+                    </td>
+                  </tr>
                 </React.Fragment>
               )})}
             </tbody>

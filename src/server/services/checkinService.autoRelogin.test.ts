@@ -283,6 +283,41 @@ describe('checkinService auto relogin', () => {
     expect(notifyMock).not.toHaveBeenCalled();
   });
 
+  it('treats sub2api checkin unsupported message as skipped', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 15,
+          username: 'sub2_user',
+          accessToken: 'token',
+          status: 'active',
+          extraConfig: null,
+        },
+        sites: {
+          id: 15,
+          name: 'sub2',
+          url: 'https://sub2.example.com',
+          platform: 'sub2api',
+        },
+      },
+    ]);
+
+    adapterMock.checkin.mockResolvedValue({
+      success: false,
+      message: 'Check-in is not supported by Sub2API',
+    });
+
+    const { checkinAccount } = await import('./checkinService.js');
+    const result = await checkinAccount(15);
+
+    expect(result.success).toBe(true);
+    expect(result.status).toBe('skipped');
+    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(firstInsertPayload?.status).toBe('skipped');
+    expect(refreshBalanceMock).not.toHaveBeenCalled();
+    expect(notifyMock).not.toHaveBeenCalled();
+  });
+
   it('treats turnstile-required responses as skipped', async () => {
     selectAllMock.mockReturnValue([
       {

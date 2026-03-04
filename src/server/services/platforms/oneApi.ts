@@ -104,12 +104,17 @@ export class OneApiAdapter extends BasePlatformAdapter {
           const key = typeof item?.key === 'string' ? item.key.trim() : '';
           if (!key) return null;
           const rawName = typeof item?.name === 'string' ? item.name.trim() : '';
+          const rawGroup = typeof item?.group === 'string'
+            ? item.group.trim()
+            : (typeof item?.token_group === 'string' ? item.token_group.trim() : '');
           const status = typeof item?.status === 'number' ? item.status : undefined;
-          return {
+          const tokenInfo: ApiTokenInfo = {
             name: rawName || (index === 0 ? 'default' : `token-${index + 1}`),
             key,
             enabled: status === undefined ? true : status === 1,
-          } satisfies ApiTokenInfo;
+          };
+          if (rawGroup) tokenInfo.tokenGroup = rawGroup;
+          return tokenInfo;
         })
         .filter((item: ApiTokenInfo | null): item is ApiTokenInfo => !!item);
     } catch {

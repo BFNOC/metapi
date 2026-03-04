@@ -816,9 +816,18 @@ export class TokenRouter {
     const contributions = candidates.map((candidate, i) => {
       const siteChannels = Math.max(1, siteChannelCounts.get(candidate.site.id) || 1);
       let contribution = baseContributions[i] / siteChannels;
-      const siteMultiplier = downstreamPolicy.siteWeightMultipliers[candidate.site.id] ?? 1;
-      if (siteMultiplier > 0 && Number.isFinite(siteMultiplier)) {
-        contribution *= siteMultiplier;
+      const downstreamSiteMultiplier = downstreamPolicy.siteWeightMultipliers[candidate.site.id] ?? 1;
+      const normalizedDownstreamSiteMultiplier =
+        (Number.isFinite(downstreamSiteMultiplier) && downstreamSiteMultiplier > 0)
+          ? downstreamSiteMultiplier
+          : 1;
+      const siteGlobalWeight =
+        (Number.isFinite(candidate.site.globalWeight) && (candidate.site.globalWeight || 0) > 0)
+          ? (candidate.site.globalWeight as number)
+          : 1;
+      const combinedSiteWeight = siteGlobalWeight * normalizedDownstreamSiteMultiplier;
+      if (combinedSiteWeight > 0 && Number.isFinite(combinedSiteWeight)) {
+        contribution *= combinedSiteWeight;
       }
 
       // If upstream price is unknown and we are using fallback unit cost,
@@ -839,11 +848,20 @@ export class TokenRouter {
         ? '实测'
         : (cost?.source === 'configured' ? '配置' : (cost?.source === 'catalog' ? '目录' : '默认'));
       const siteChannels = Math.max(1, siteChannelCounts.get(candidate.site.id) || 1);
-      const siteMultiplier = downstreamPolicy.siteWeightMultipliers[candidate.site.id] ?? 1;
+      const downstreamSiteMultiplier = downstreamPolicy.siteWeightMultipliers[candidate.site.id] ?? 1;
+      const normalizedDownstreamSiteMultiplier =
+        (Number.isFinite(downstreamSiteMultiplier) && downstreamSiteMultiplier > 0)
+          ? downstreamSiteMultiplier
+          : 1;
+      const siteGlobalWeight =
+        (Number.isFinite(candidate.site.globalWeight) && (candidate.site.globalWeight || 0) > 0)
+          ? (candidate.site.globalWeight as number)
+          : 1;
+      const combinedSiteWeight = siteGlobalWeight * normalizedDownstreamSiteMultiplier;
       return {
         candidate,
         probability,
-        reason: `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点倍率=${siteMultiplier.toFixed(2)}，同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`,
+        reason: `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`,
       };
     });
 

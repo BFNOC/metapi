@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
+import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { tr } from '../i18n.js';
 
 type MonitorSite = {
@@ -76,6 +77,8 @@ export default function Monitors() {
   }, [activeSiteId, reloadSeed]);
 
   const usingCookieProxy = activeSite.id === 'ldoh-105117' && monitorConfig.ldohCookieConfigured;
+  const oauthHintPresence = useAnimatedVisibility(Boolean(activeSite.requiresLinuxDoOAuth), 220);
+  const fallbackHintPresence = useAnimatedVisibility(showFallbackHint && !loaded, 180);
   const directSiteUrl = `${activeSite.url.replace(/\/$/, '')}/`;
   const iframeUrl = usingCookieProxy ? '/monitor-proxy/ldoh/' : directSiteUrl;
   const ldohOauthUrl = `${directSiteUrl}api/oauth/initiate?returnTo=%2F`;
@@ -114,7 +117,8 @@ export default function Monitors() {
             className="btn btn-ghost"
             style={{ border: '1px solid var(--color-border)' }}
             onClick={() => setReloadSeed((prev) => prev + 1)}
-            title="重新加载当前站点"
+            data-tooltip="重新加载当前站点"
+            aria-label="重新加载当前站点"
           >
             刷新
           </button>
@@ -122,7 +126,8 @@ export default function Monitors() {
             type="button"
             className="btn btn-primary"
             onClick={() => window.open(directSiteUrl, '_blank', 'noopener,noreferrer')}
-            title="在新窗口直接打开目标站点"
+            data-tooltip="在新窗口直接打开目标站点"
+            aria-label="在新窗口直接打开目标站点"
           >
             新窗口打开
           </button>
@@ -143,8 +148,8 @@ export default function Monitors() {
         ))}
       </div>
 
-      {activeSite.requiresLinuxDoOAuth && (
-        <div className="monitor-oauth-hint card">
+      {oauthHintPresence.shouldRender && (
+        <div className={`monitor-oauth-hint card panel-presence ${oauthHintPresence.isVisible ? '' : 'is-closing'}`.trim()}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>
             {usingCookieProxy ? '已启用 Cookie 代理模式' : '该站点需要 LinuxDo OAuth 授权'}
           </div>
@@ -205,8 +210,8 @@ export default function Monitors() {
       )}
 
       <div className="monitor-frame-shell card">
-        {showFallbackHint && !loaded && (
-          <div className="monitor-hint">
+        {fallbackHintPresence.shouldRender && (
+          <div className={`monitor-hint panel-presence ${fallbackHintPresence.isVisible ? '' : 'is-closing'}`.trim()}>
             {fallbackHint}
           </div>
         )}

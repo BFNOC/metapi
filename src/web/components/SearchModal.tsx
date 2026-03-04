@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { formatDateLocal, formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
 import { buildAccountFocusPath, buildSiteFocusPath } from '../pages/helpers/navigationFocus.js';
 import { useI18n } from '../i18n.js';
+import { useAnimatedVisibility } from './useAnimatedVisibility.js';
 
 interface SiteResult {
   id: number;
@@ -52,6 +53,7 @@ interface SearchResult {
 
 export default function SearchModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useI18n();
+  const presence = useAnimatedVisibility(open, 180);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -109,7 +111,7 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
     return () => document.removeEventListener('keydown', handler);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!presence.shouldRender) return null;
 
   const hasResults = results && (
     results.models.length
@@ -120,8 +122,8 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
   );
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" style={{ maxWidth: 560, padding: 0 }} onClick={e => e.stopPropagation()}>
+    <div className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={onClose}>
+      <div className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()} style={{ maxWidth: 560, padding: 0 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
           <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="var(--color-text-muted)">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />

@@ -5,7 +5,15 @@ import { refreshBalance } from '../../services/balanceService.js';
 import { getAdapter } from '../../services/platforms/index.js';
 import { refreshModelsForAccount, rebuildTokenRoutesFromAvailability } from '../../services/modelService.js';
 import { ensureDefaultTokenForAccount, syncTokensFromUpstream } from '../../services/accountTokenService.js';
-import { guessPlatformUserIdFromUsername, mergeAccountExtraConfig, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
+import {
+  getCredentialModeFromExtraConfig,
+  guessPlatformUserIdFromUsername,
+  getSub2ApiAuthFromExtraConfig,
+  mergeAccountExtraConfig,
+  normalizeCredentialMode as normalizeCredentialModeInput,
+  resolvePlatformUserId,
+  type AccountCredentialMode,
+} from '../../services/accountExtraConfig.js';
 import { encryptAccountPassword } from '../../services/accountCredentialService.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { parseCheckinRewardAmount } from '../../services/checkinRewardParser.js';
@@ -33,6 +41,45 @@ type AccountHealthRefreshResult = {
   message: string;
 };
 
+type AccountCapabilities = {
+  canCheckin: boolean;
+  canRefreshBalance: boolean;
+  proxyOnly: boolean;
+};
+
+function hasSessionTokenValue(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function resolveRequestedCredentialMode(input: unknown): AccountCredentialMode {
+  return normalizeCredentialModeInput(input) || 'auto';
+}
+
+function resolveStoredCredentialMode(account: typeof schema.accounts.$inferSelect): AccountCredentialMode {
+  const fromConfig = getCredentialModeFromExtraConfig(account.extraConfig);
+  if (fromConfig && fromConfig !== 'auto') return fromConfig;
+  return hasSessionTokenValue(account.accessToken) ? 'session' : 'apikey';
+}
+
+function buildCapabilitiesFromCredentialMode(
+  credentialMode: AccountCredentialMode,
+  hasSessionToken: boolean,
+): AccountCapabilities {
+  const sessionCapable = credentialMode === 'session'
+    ? hasSessionToken
+    : (credentialMode === 'apikey' ? false : hasSessionToken);
+  return {
+    canCheckin: sessionCapable,
+    canRefreshBalance: sessionCapable,
+    proxyOnly: !sessionCapable,
+  };
+}
+
+function buildCapabilitiesForAccount(account: typeof schema.accounts.$inferSelect): AccountCapabilities {
+  const credentialMode = resolveStoredCredentialMode(account);
+  return buildCapabilitiesFromCredentialMode(credentialMode, hasSessionTokenValue(account.accessToken));
+}
+
 function normalizePinnedFlag(input: unknown): boolean | null {
   if (input === undefined || input === null) return null;
   if (typeof input === 'boolean') return input;
@@ -50,6 +97,21 @@ function normalizeSortOrder(input: unknown): number | null {
   const parsed = Number.parseInt(String(input), 10);
   if (!Number.isFinite(parsed)) return null;
   return Math.max(0, parsed);
+}
+
+function normalizeManagedRefreshToken(input: unknown): string | undefined {
+  if (typeof input !== 'string') return undefined;
+  const trimmed = input.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeManagedTokenExpiresAt(input: unknown): number | undefined {
+  if (typeof input === 'number' && Number.isFinite(input) && input > 0) return Math.trunc(input);
+  if (typeof input === 'string') {
+    const parsed = Number.parseInt(input.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
 }
 
 function getNextAccountSortOrder(): number {
@@ -195,23 +257,31 @@ export async function accountsRoutes(app: FastifyInstance) {
       parsedRewardCountByAccount[log.accountId] = (parsedRewardCountByAccount[log.accountId] || 0) + 1;
     }
 
-    return rows.map((r) => ({
-      ...r.accounts,
-      site: r.sites,
-      todaySpend: Math.round((spendByAccount[r.accounts.id] || 0) * 1_000_000) / 1_000_000,
-      todayReward: Math.round(estimateRewardWithTodayIncomeFallback({
-        day: localDay,
-        successCount: successCountByAccount[r.accounts.id] || 0,
-        parsedRewardCount: parsedRewardCountByAccount[r.accounts.id] || 0,
-        rewardSum: rewardByAccount[r.accounts.id] || 0,
-        extraConfig: r.accounts.extraConfig,
-      }) * 1_000_000) / 1_000_000,
-      runtimeHealth: buildRuntimeHealthForAccount({
-        accountStatus: r.accounts.status,
-        siteStatus: r.sites.status,
-        extraConfig: r.accounts.extraConfig,
-      }),
-    }));
+    return rows.map((r) => {
+      const credentialMode = resolveStoredCredentialMode(r.accounts);
+      return {
+        ...r.accounts,
+        site: r.sites,
+        credentialMode,
+        capabilities: buildCapabilitiesFromCredentialMode(
+          credentialMode,
+          hasSessionTokenValue(r.accounts.accessToken),
+        ),
+        todaySpend: Math.round((spendByAccount[r.accounts.id] || 0) * 1_000_000) / 1_000_000,
+        todayReward: Math.round(estimateRewardWithTodayIncomeFallback({
+          day: localDay,
+          successCount: successCountByAccount[r.accounts.id] || 0,
+          parsedRewardCount: parsedRewardCountByAccount[r.accounts.id] || 0,
+          rewardSum: rewardByAccount[r.accounts.id] || 0,
+          extraConfig: r.accounts.extraConfig,
+        }) * 1_000_000) / 1_000_000,
+        runtimeHealth: buildRuntimeHealthForAccount({
+          accountStatus: r.accounts.status,
+          siteStatus: r.sites.status,
+          extraConfig: r.accounts.extraConfig,
+        }),
+      };
+    });
   });
 
   // Login to a site and auto-create account
@@ -250,6 +320,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       .get();
 
     const extraConfigPatch: Record<string, unknown> = {
+      credentialMode: 'session',
       autoRelogin: {
         username,
         passwordCipher: encryptAccountPassword(password),
@@ -318,14 +389,44 @@ export async function accountsRoutes(app: FastifyInstance) {
     };
   });
 
-  // Verify a token against a site - auto-detects token type (session vs API key)
-  app.post<{ Body: { siteId: number; accessToken: string; platformUserId?: number } }>('/api/accounts/verify-token', async (request) => {
-    const { siteId, accessToken, platformUserId } = request.body;
+  // Verify credentials against a site.
+  app.post<{ Body: { siteId: number; accessToken: string; platformUserId?: number; credentialMode?: AccountCredentialMode } }>('/api/accounts/verify-token', async (request) => {
+    const { siteId, platformUserId } = request.body;
+    const accessToken = (request.body.accessToken || '').trim();
+    const credentialMode = resolveRequestedCredentialMode(request.body.credentialMode);
     const site = db.select().from(schema.sites).where(eq(schema.sites.id, siteId)).get();
     if (!site) return { success: false, message: 'site not found' };
 
+    if (!accessToken) {
+      return { success: false, message: 'Token 不能为空' };
+    }
+
     const adapter = getAdapter(site.platform);
     if (!adapter) return { success: false, message: `婵炴垶鎸哥粔鐢稿极椤曗偓楠炴劖鎷呴悜妯兼殸濡ょ姷鍋涢崯鑳亹? ${site.platform}` };
+
+    if (credentialMode === 'apikey') {
+      try {
+        const models = await adapter.getModels(site.url, accessToken, platformUserId);
+        const availableModels = Array.isArray(models) ? models.filter((item) => typeof item === 'string' && item.trim().length > 0) : [];
+        if (availableModels.length === 0) {
+          return {
+            success: false,
+            message: 'API Key 验证失败：未获取到可用模型',
+          };
+        }
+        return {
+          success: true,
+          tokenType: 'apikey',
+          modelCount: availableModels.length,
+          models: availableModels.slice(0, 10),
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          message: err?.message || 'API Key 验证失败',
+        };
+      }
+    }
 
     let result: any;
     try {
@@ -348,6 +449,12 @@ export async function accountsRoutes(app: FastifyInstance) {
     }
 
     if (result.tokenType === 'apikey') {
+      if (credentialMode === 'session') {
+        return {
+          success: false,
+          message: '当前凭证是 API Key，请切换到 API Key 模式，或改用 Session Token',
+        };
+      }
       return {
         success: true,
         tokenType: 'apikey',
@@ -379,8 +486,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       try {
         const { fetch } = await import('undici');
         const candidates = new Set<string>();
-        const trimmed = (accessToken || '').trim();
-        const raw = trimmed.startsWith('Bearer ') ? trimmed.slice(7).trim() : trimmed;
+        const raw = accessToken.startsWith('Bearer ') ? accessToken.slice(7).trim() : accessToken;
         if (raw) {
           if (raw.includes('=')) candidates.add(raw);
           candidates.add(`session=${raw}`);
@@ -432,7 +538,9 @@ export async function accountsRoutes(app: FastifyInstance) {
 
     return {
       success: false,
-      message: 'Token invalid: cannot use it as session cookie or API key',
+      message: credentialMode === 'session'
+        ? 'Session Token 验证失败'
+        : 'Token invalid: cannot use it as session cookie or API key',
     };
   });
 
@@ -510,9 +618,11 @@ export async function accountsRoutes(app: FastifyInstance) {
       if (nextApiToken) {
         updates.apiToken = nextApiToken;
       }
+      const extraConfigPatch: Record<string, unknown> = { credentialMode: 'session' };
       if (resolvedPlatformUserId) {
-        updates.extraConfig = mergeAccountExtraConfig(account.extraConfig, { platformUserId: resolvedPlatformUserId });
+        extraConfigPatch.platformUserId = resolvedPlatformUserId;
       }
+      updates.extraConfig = mergeAccountExtraConfig(account.extraConfig, extraConfigPatch);
 
       db.update(schema.accounts).set(updates).where(eq(schema.accounts.id, accountId)).run();
 
@@ -534,13 +644,16 @@ export async function accountsRoutes(app: FastifyInstance) {
       return {
         success: true,
         account: latest,
+        tokenType: 'session',
+        credentialMode: 'session',
+        capabilities: latest ? buildCapabilitiesForAccount(latest) : buildCapabilitiesFromCredentialMode('session', true),
         apiTokenFound: !!nextApiToken,
       };
     },
   );
 
-  // Add an account (manual token input) - auto-detects token type and fetches info
-  app.post<{ Body: { siteId: number; username?: string; accessToken: string; apiToken?: string; platformUserId?: number; checkinEnabled?: boolean } }>('/api/accounts', async (request, reply) => {
+  // Add an account (manual credential input)
+  app.post<{ Body: { siteId: number; username?: string; accessToken: string; apiToken?: string; platformUserId?: number; checkinEnabled?: boolean; credentialMode?: AccountCredentialMode; refreshToken?: string; tokenExpiresAt?: number | string } }>('/api/accounts', async (request, reply) => {
     const body = request.body;
     const site = db.select().from(schema.sites).where(eq(schema.sites.id, body.siteId)).get();
     if (!site) {
@@ -552,45 +665,99 @@ export async function accountsRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: `platform not supported: ${site.platform}` });
     }
 
-    let username = body.username;
-    let accessToken = body.accessToken;
-    let apiToken = body.apiToken;
-    let verifyResult: any;
-    try {
-      verifyResult = await adapter.verifyToken(site.url, body.accessToken, body.platformUserId);
-    } catch (err: any) {
-      return reply.code(400).send({
-        success: false,
-        message: appendSessionTokenRebindHint(err?.message || 'Token 验证失败'),
-      });
-    }
-    const tokenType = verifyResult.tokenType;
-
-    if (tokenType === 'unknown') {
-      return reply.code(400).send({
-        success: false,
-        requiresVerification: true,
-        message: 'Token 验证失败，请先点击“验证 Token”，验证成功后再绑定账号',
-      });
+    const credentialMode = resolveRequestedCredentialMode(body.credentialMode);
+    const rawAccessToken = (body.accessToken || '').trim();
+    if (!rawAccessToken) {
+      return reply.code(400).send({ success: false, message: '请填写 Token' });
     }
 
-    if (tokenType === 'session') {
-      // Token is a session cookie - can do management ops
-      if (!username && verifyResult.userInfo?.username) username = verifyResult.userInfo.username;
-      if (!apiToken && verifyResult.apiToken) apiToken = verifyResult.apiToken;
-    } else if (tokenType === 'apikey') {
-      // Token is an API key - store as apiToken, not accessToken
-      apiToken = body.accessToken;
-      accessToken = ''; // no session cookie available
+    let username = (body.username || '').trim();
+    let accessToken = rawAccessToken;
+    let apiToken = (body.apiToken || '').trim();
+    let tokenType: 'session' | 'apikey' | 'unknown' = 'unknown';
+    let verifiedModels: string[] = [];
+
+    if (credentialMode === 'apikey') {
+      try {
+        const models = await adapter.getModels(site.url, rawAccessToken, body.platformUserId);
+        verifiedModels = Array.isArray(models)
+          ? models.filter((item) => typeof item === 'string' && item.trim().length > 0)
+          : [];
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || 'API Key 验证失败',
+        });
+      }
+
+      if (verifiedModels.length === 0) {
+        return reply.code(400).send({
+          success: false,
+          requiresVerification: true,
+          message: 'API Key 验证失败：未获取到可用模型',
+        });
+      }
+
+      tokenType = 'apikey';
+      accessToken = '';
+      if (!apiToken) apiToken = rawAccessToken;
+    } else {
+      let verifyResult: any;
+      try {
+        verifyResult = await adapter.verifyToken(site.url, rawAccessToken, body.platformUserId);
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: appendSessionTokenRebindHint(err?.message || 'Token 验证失败'),
+        });
+      }
+
+      tokenType = verifyResult.tokenType;
+      if (tokenType === 'unknown') {
+        return reply.code(400).send({
+          success: false,
+          requiresVerification: true,
+          message: 'Token 验证失败，请先点击“验证 Token”，验证成功后再绑定账号',
+        });
+      }
+
+      if (credentialMode === 'session' && tokenType !== 'session') {
+        return reply.code(400).send({
+          success: false,
+          message: '当前凭证是 API Key，请切换到 API Key 模式，或改用 Session Token',
+        });
+      }
+
+      if (tokenType === 'session') {
+        if (!username && verifyResult.userInfo?.username) username = String(verifyResult.userInfo.username).trim();
+        if (!apiToken && verifyResult.apiToken) apiToken = String(verifyResult.apiToken).trim();
+      } else if (tokenType === 'apikey') {
+        accessToken = '';
+        if (!apiToken) apiToken = rawAccessToken;
+        verifiedModels = Array.isArray(verifyResult.models)
+          ? verifyResult.models.filter((item: unknown) => typeof item === 'string' && item.trim().length > 0)
+          : [];
+      }
     }
 
-    // Store platformUserId in extraConfig for NewAPI sites that need it
+    // Store platformUserId and credential mode in extraConfig.
     const resolvedPlatformUserId =
       body.platformUserId || guessPlatformUserIdFromUsername(username) || undefined;
-    let extraConfig: string | undefined;
+    const resolvedCredentialMode: AccountCredentialMode = tokenType === 'apikey' ? 'apikey' : 'session';
+    const extraConfigPatch: Record<string, unknown> = { credentialMode: resolvedCredentialMode };
     if (resolvedPlatformUserId) {
-      extraConfig = mergeAccountExtraConfig(undefined, { platformUserId: resolvedPlatformUserId });
+      extraConfigPatch.platformUserId = resolvedPlatformUserId;
     }
+    if ((site.platform || '').toLowerCase() === 'sub2api') {
+      const managedRefreshToken = normalizeManagedRefreshToken(body.refreshToken);
+      const managedTokenExpiresAt = normalizeManagedTokenExpiresAt(body.tokenExpiresAt);
+      if (managedRefreshToken) {
+        extraConfigPatch.sub2apiAuth = managedTokenExpiresAt
+          ? { refreshToken: managedRefreshToken, tokenExpiresAt: managedTokenExpiresAt }
+          : { refreshToken: managedRefreshToken };
+      }
+    }
+    const extraConfig = mergeAccountExtraConfig(undefined, extraConfigPatch);
 
     const result = db.insert(schema.accounts).values({
       siteId: body.siteId,
@@ -628,16 +795,63 @@ export async function accountsRoutes(app: FastifyInstance) {
     } catch { }
 
     const account = db.select().from(schema.accounts).where(eq(schema.accounts.id, result.id)).get();
-    return { ...account, tokenType, apiTokenFound: !!apiToken, usernameDetected: !!(!body.username && username) };
+    const finalCredentialMode = account ? resolveStoredCredentialMode(account) : resolvedCredentialMode;
+    const capabilities = account
+      ? buildCapabilitiesForAccount(account)
+      : buildCapabilitiesFromCredentialMode(finalCredentialMode, tokenType === 'session');
+    return {
+      ...account,
+      tokenType,
+      credentialMode: finalCredentialMode,
+      capabilities,
+      modelCount: verifiedModels.length,
+      apiTokenFound: !!apiToken,
+      usernameDetected: !!(!body.username && username),
+    };
   });
 
   // Update an account
   app.put<{ Params: { id: string }; Body: any }>('/api/accounts/:id', async (request, reply) => {
     const id = parseInt(request.params.id);
     const body = request.body as Record<string, unknown>;
+    const row = db.select()
+      .from(schema.accounts)
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(eq(schema.accounts.id, id))
+      .get();
+    if (!row) {
+      return reply.code(404).send({ message: 'account not found' });
+    }
+    const account = row.accounts;
+    const site = row.sites;
     const updates: any = {};
     for (const key of ['username', 'accessToken', 'apiToken', 'status', 'checkinEnabled', 'unitCost', 'extraConfig']) {
       if (body[key] !== undefined) updates[key] = body[key];
+    }
+
+    const wantsManagedSub2ApiAuthPatch =
+      Object.prototype.hasOwnProperty.call(body, 'refreshToken')
+      || Object.prototype.hasOwnProperty.call(body, 'tokenExpiresAt');
+    if (wantsManagedSub2ApiAuthPatch && (site.platform || '').toLowerCase() === 'sub2api') {
+      const baseExtraConfig = typeof updates.extraConfig === 'string'
+        ? updates.extraConfig
+        : account.extraConfig;
+      const existingManagedAuth = getSub2ApiAuthFromExtraConfig(baseExtraConfig);
+
+      const nextRefreshToken = Object.prototype.hasOwnProperty.call(body, 'refreshToken')
+        ? normalizeManagedRefreshToken(body.refreshToken)
+        : existingManagedAuth?.refreshToken;
+      const nextTokenExpiresAt = Object.prototype.hasOwnProperty.call(body, 'tokenExpiresAt')
+        ? normalizeManagedTokenExpiresAt(body.tokenExpiresAt)
+        : existingManagedAuth?.tokenExpiresAt;
+
+      updates.extraConfig = mergeAccountExtraConfig(baseExtraConfig, {
+        sub2apiAuth: nextRefreshToken
+          ? (nextTokenExpiresAt
+            ? { refreshToken: nextRefreshToken, tokenExpiresAt: nextTokenExpiresAt }
+            : { refreshToken: nextRefreshToken })
+          : undefined,
+      });
     }
 
     if (body.isPinned !== undefined) {

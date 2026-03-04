@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getCredentialModeFromExtraConfig,
   getPlatformUserIdFromExtraConfig,
+  getSub2ApiAuthFromExtraConfig,
   guessPlatformUserIdFromUsername,
   mergeAccountExtraConfig,
+  normalizeCredentialMode,
   resolvePlatformUserId,
 } from './accountExtraConfig.js';
 
@@ -37,5 +40,31 @@ describe('accountExtraConfig', () => {
     expect(parsed.foo).toBe('bar');
     expect(parsed.autoRelogin?.username).toBe('demo');
     expect(parsed.platformUserId).toBe(7659);
+  });
+
+  it('parses credential mode from extra config', () => {
+    expect(getCredentialModeFromExtraConfig(JSON.stringify({ credentialMode: 'apikey' }))).toBe('apikey');
+    expect(getCredentialModeFromExtraConfig(JSON.stringify({ credentialMode: 'session' }))).toBe('session');
+    expect(getCredentialModeFromExtraConfig(JSON.stringify({ credentialMode: 'AUTO' }))).toBe('auto');
+    expect(getCredentialModeFromExtraConfig(JSON.stringify({ credentialMode: 'unknown' }))).toBeUndefined();
+  });
+
+  it('normalizes credential mode input', () => {
+    expect(normalizeCredentialMode(' apikey ')).toBe('apikey');
+    expect(normalizeCredentialMode('session')).toBe('session');
+    expect(normalizeCredentialMode('AUTO')).toBe('auto');
+    expect(normalizeCredentialMode('abc')).toBeUndefined();
+  });
+
+  it('parses managed sub2api refresh token config from extra config', () => {
+    expect(getSub2ApiAuthFromExtraConfig(JSON.stringify({
+      sub2apiAuth: { refreshToken: 'refresh-1', tokenExpiresAt: 1760000000000 },
+    }))).toEqual({
+      refreshToken: 'refresh-1',
+      tokenExpiresAt: 1760000000000,
+    });
+    expect(getSub2ApiAuthFromExtraConfig(JSON.stringify({
+      sub2apiAuth: { refreshToken: '  ' },
+    }))).toBeNull();
   });
 });

@@ -34,6 +34,7 @@ function ensureTokenManagementSchema() {
       account_id integer NOT NULL,
       name text NOT NULL,
       token text NOT NULL,
+      token_group text,
       source text DEFAULT 'manual',
       enabled integer DEFAULT true,
       is_default integer DEFAULT false,
@@ -45,6 +46,10 @@ function ensureTokenManagementSchema() {
 
   if (!tableColumnExists('route_channels', 'token_id')) {
     sqlite.exec('ALTER TABLE route_channels ADD COLUMN token_id integer;');
+  }
+
+  if (!tableColumnExists('account_tokens', 'token_group')) {
+    sqlite.exec('ALTER TABLE account_tokens ADD COLUMN token_group text;');
   }
 
   sqlite.exec(`
@@ -123,6 +128,33 @@ function ensureSiteProxySchema() {
   }
 }
 
+function ensureSiteExternalCheckinUrlSchema() {
+  if (!tableExists('sites')) {
+    return;
+  }
+
+  if (!tableColumnExists('sites', 'external_checkin_url')) {
+    sqlite.exec(`ALTER TABLE sites ADD COLUMN external_checkin_url text;`);
+  }
+}
+
+function ensureSiteGlobalWeightSchema() {
+  if (!tableExists('sites')) {
+    return;
+  }
+
+  if (!tableColumnExists('sites', 'global_weight')) {
+    sqlite.exec(`ALTER TABLE sites ADD COLUMN global_weight real DEFAULT 1;`);
+  }
+
+  sqlite.exec(`
+    UPDATE sites
+    SET global_weight = 1
+    WHERE global_weight IS NULL
+      OR global_weight <= 0;
+  `);
+}
+
 function ensureRouteGroupingSchema() {
   if (!tableExists('token_routes') || !tableExists('route_channels')) {
     return;
@@ -184,6 +216,8 @@ function ensureDownstreamApiKeySchema() {
 ensureTokenManagementSchema();
 ensureSiteStatusSchema();
 ensureSiteProxySchema();
+ensureSiteExternalCheckinUrlSchema();
+ensureSiteGlobalWeightSchema();
 ensureRouteGroupingSchema();
 ensureDownstreamApiKeySchema();
 

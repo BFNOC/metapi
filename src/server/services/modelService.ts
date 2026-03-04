@@ -114,6 +114,51 @@ export async function refreshModelsForAccount(accountId: number) {
   const accountModels = new Set<string>();
   const modelLatency = new Map<string, number | null>();
   let scannedTokenCount = 0;
+  let discoveredByCredential = false;
+  const attemptedCredentials = new Set<string>();
+
+  const mergeDiscoveredModels = (models: string[], latencyMs: number | null) => {
+    for (const modelName of models) {
+      accountModels.add(modelName);
+      const prev = modelLatency.get(modelName);
+      if (prev === undefined || prev === null) {
+        modelLatency.set(modelName, latencyMs);
+        continue;
+      }
+      if (latencyMs === null) continue;
+      if (latencyMs < prev) modelLatency.set(modelName, latencyMs);
+    }
+  };
+
+  const discoverModelsWithCredential = async (credentialRaw: string | null | undefined) => {
+    const credential = (credentialRaw || '').trim();
+    if (!credential) return;
+    if (attemptedCredentials.has(credential)) return;
+    attemptedCredentials.add(credential);
+
+    const startedAt = Date.now();
+    let models: string[] = [];
+    try {
+      models = normalizeModels(
+        await withTimeout(
+          () => adapter.getModels(site.url, credential, platformUserId),
+          MODEL_DISCOVERY_TIMEOUT_MS,
+          `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+        ),
+      );
+    } catch {
+      models = [];
+    }
+    if (models.length === 0) return;
+    discoveredByCredential = true;
+    const latencyMs = Date.now() - startedAt;
+    mergeDiscoveredModels(models, latencyMs);
+  };
+
+  // Prefer account-level credential discovery so model availability does not rely on managed tokens.
+  await discoverModelsWithCredential(account.apiToken);
+  await discoverModelsWithCredential(discoveredApiToken);
+  await discoverModelsWithCredential(account.accessToken);
 
   for (const token of enabledTokens) {
     const startedAt = Date.now();
@@ -147,14 +192,7 @@ export async function refreshModelsForAccount(accountId: number) {
     ).run();
 
     scannedTokenCount++;
-
-    for (const modelName of models) {
-      accountModels.add(modelName);
-      const prev = modelLatency.get(modelName);
-      if (prev === undefined || prev === null || latencyMs < prev) {
-        modelLatency.set(modelName, latencyMs);
-      }
-    }
+    mergeDiscoveredModels(models, latencyMs);
   }
 
   if (accountModels.size > 0) {
@@ -175,6 +213,7 @@ export async function refreshModelsForAccount(accountId: number) {
     refreshed: true,
     modelCount: accountModels.size,
     tokenScanned: scannedTokenCount,
+    discoveredByCredential,
     discoveredApiToken: !!discoveredApiToken,
   };
 }

@@ -4,9 +4,24 @@ type AutoReloginConfig = {
   updatedAt?: unknown;
 };
 
+type Sub2ApiAuthConfig = {
+  refreshToken?: unknown;
+  tokenExpiresAt?: unknown;
+};
+
+export type AccountCredentialMode = 'auto' | 'session' | 'apikey';
+
+const VALID_CREDENTIAL_MODES = new Set<AccountCredentialMode>([
+  'auto',
+  'session',
+  'apikey',
+]);
+
 type AccountExtraConfig = {
   platformUserId?: unknown;
+  credentialMode?: unknown;
   autoRelogin?: AutoReloginConfig;
+  sub2apiAuth?: Sub2ApiAuthConfig;
   [key: string]: unknown;
 };
 
@@ -30,9 +45,53 @@ function normalizeUserId(raw: unknown): number | undefined {
   return undefined;
 }
 
+function normalizeNonEmptyString(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeTimestampMs(raw: unknown): number | undefined {
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return Math.trunc(raw);
+  if (typeof raw === 'string') {
+    const parsed = Number.parseInt(raw.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+export function normalizeCredentialMode(raw: unknown): AccountCredentialMode | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (!VALID_CREDENTIAL_MODES.has(normalized as AccountCredentialMode)) return undefined;
+  return normalized as AccountCredentialMode;
+}
+
 export function getPlatformUserIdFromExtraConfig(extraConfig?: string | null): number | undefined {
   const parsed = parseExtraConfig(extraConfig);
   return normalizeUserId(parsed.platformUserId);
+}
+
+export function getCredentialModeFromExtraConfig(extraConfig?: string | null): AccountCredentialMode | undefined {
+  const parsed = parseExtraConfig(extraConfig);
+  return normalizeCredentialMode(parsed.credentialMode);
+}
+
+export type ManagedSub2ApiAuth = {
+  refreshToken: string;
+  tokenExpiresAt?: number;
+};
+
+export function getSub2ApiAuthFromExtraConfig(extraConfig?: string | null): ManagedSub2ApiAuth | null {
+  const parsed = parseExtraConfig(extraConfig);
+  const raw = parsed.sub2apiAuth;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const refreshToken = normalizeNonEmptyString(raw.refreshToken);
+  if (!refreshToken) return null;
+  const tokenExpiresAt = normalizeTimestampMs(raw.tokenExpiresAt);
+  return tokenExpiresAt
+    ? { refreshToken, tokenExpiresAt }
+    : { refreshToken };
 }
 
 export function guessPlatformUserIdFromUsername(username?: string | null): number | undefined {

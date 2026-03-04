@@ -5,6 +5,7 @@ type UpstreamApiToken = {
   name?: string | null;
   key?: string | null;
   enabled?: boolean | null;
+  tokenGroup?: string | null;
 };
 
 export function normalizeTokenForDisplay(token?: string | null, platform?: string | null): string {
@@ -44,6 +45,20 @@ function normalizeTokenValue(token: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeTokenGroup(value: string | null | undefined, tokenName?: string | null): string | null {
+  const explicit = (value || '').trim();
+  if (explicit.length > 0) return explicit;
+
+  const name = (tokenName || '').trim();
+  if (!name) return null;
+  const normalized = name.toLowerCase();
+  if (normalized === 'default' || normalized === '默认' || /^default($|[-_\s])/.test(normalized)) {
+    return 'default';
+  }
+  if (/^token-\d+$/.test(normalized)) return null;
+  return name;
+}
+
 function updateAccountApiToken(accountId: number, tokenValue: string | null) {
   db.update(schema.accounts)
     .set({ apiToken: tokenValue || null, updatedAt: new Date().toISOString() })
@@ -66,10 +81,11 @@ export function getPreferredAccountToken(accountId: number) {
 export function ensureDefaultTokenForAccount(
   accountId: number,
   tokenValue: string,
-  options?: { name?: string; source?: string; enabled?: boolean },
+  options?: { name?: string; source?: string; enabled?: boolean; tokenGroup?: string | null },
 ): number | null {
   const normalizedToken = normalizeTokenValue(tokenValue);
   if (!normalizedToken) return null;
+  const tokenGroup = normalizeTokenGroup(options?.tokenGroup, options?.name) || 'default';
 
   const now = new Date().toISOString();
   const tokens = db.select()
@@ -84,6 +100,7 @@ export function ensureDefaultTokenForAccount(
         accountId,
         name: normalizeTokenName(options?.name, tokens.length + 1),
         token: normalizedToken,
+        tokenGroup,
         source: options?.source || 'manual',
         enabled: options?.enabled ?? true,
         isDefault: true,
@@ -96,6 +113,7 @@ export function ensureDefaultTokenForAccount(
     db.update(schema.accountTokens)
       .set({
         name: options?.name ? normalizeTokenName(options.name) : target.name,
+        tokenGroup,
         source: options?.source || target.source || 'manual',
         enabled: options?.enabled ?? target.enabled,
         isDefault: true,
@@ -179,12 +197,14 @@ export function syncTokensFromUpstream(accountId: number, upstreamTokens: Upstre
 
     const tokenName = normalizeTokenName(upstream.name, index);
     const enabled = upstream.enabled ?? true;
+    const tokenGroup = normalizeTokenGroup(upstream.tokenGroup, tokenName);
 
     const byToken = existing.find((row) => row.token === tokenValue);
     if (byToken) {
       db.update(schema.accountTokens)
         .set({
           name: tokenName,
+          tokenGroup,
           source: 'sync',
           enabled,
           updatedAt: now,
@@ -192,6 +212,7 @@ export function syncTokensFromUpstream(accountId: number, upstreamTokens: Upstre
         .where(eq(schema.accountTokens.id, byToken.id))
         .run();
       byToken.name = tokenName;
+      byToken.tokenGroup = tokenGroup;
       byToken.enabled = enabled;
       byToken.source = 'sync';
       byToken.updatedAt = now;
@@ -204,6 +225,7 @@ export function syncTokensFromUpstream(accountId: number, upstreamTokens: Upstre
         accountId,
         name: tokenName,
         token: tokenValue,
+        tokenGroup,
         source: 'sync',
         enabled,
         isDefault: false,

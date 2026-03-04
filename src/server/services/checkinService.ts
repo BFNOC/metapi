@@ -48,7 +48,11 @@ function isUnsupportedCheckinMessage(message?: string | null): boolean {
   return (
     text.includes('invalid url (post /api/user/checkin)') ||
     (text.includes('http 404') && text.includes('/api/user/checkin')) ||
-    text.includes('checkin endpoint not found')
+    text.includes('checkin endpoint not found') ||
+    text.includes('check-in is not supported') ||
+    text.includes('checkin is not supported') ||
+    text.includes('does not support checkin') ||
+    text.includes('not support checkin')
   );
 }
 

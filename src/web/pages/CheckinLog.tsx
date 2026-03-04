@@ -176,7 +176,7 @@ export default function CheckinLog() {
                     </td>
                     <td>
                       {reason ? (
-                        <span className="badge badge-info" title={reason.detailHint}>
+                        <span className="badge badge-info" data-tooltip={reason.detailHint}>
                           {reason.title}
                         </span>
                       ) : (
@@ -198,7 +198,7 @@ export default function CheckinLog() {
                           color: 'var(--color-text-secondary)',
                           fontSize: 12,
                         }}
-                        title={reason?.detailHint || ''}
+                        data-tooltip={reason?.detailHint || ''}
                       >
                         {reason?.actionHint || '-'}
                       </span>

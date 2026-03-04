@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
 import { buildEventNavigationPath } from '../pages/helpers/navigationFocus.js';
 import { useI18n } from '../i18n.js';
+import { useAnimatedVisibility } from './useAnimatedVisibility.js';
 
 const levelColors: Record<string, string> = {
   info: 'var(--color-info)',
@@ -31,6 +32,7 @@ export default function NotificationPanel({
   onUnreadCountChange?: (count: number) => void;
 }) {
   const { t: tr } = useI18n();
+  const presence = useAnimatedVisibility(open, 160);
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<string>('');
@@ -77,10 +79,14 @@ export default function NotificationPanel({
     onUnreadCountChange?.(0);
   };
 
-  if (!open) return null;
+  if (!presence.shouldRender) return null;
 
   return (
-    <div ref={panelRef} className="user-dropdown" style={{ right: 0, top: '100%', width: 360, maxHeight: 480, padding: 0, marginTop: 4 }}>
+    <div
+      ref={panelRef}
+      className={`user-dropdown ${presence.isVisible ? '' : 'is-closing'}`.trim()}
+      style={{ right: 0, top: '100%', width: 360, maxHeight: 480, padding: 0, marginTop: 4 }}
+    >
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
         <span style={{ fontWeight: 600, fontSize: 14 }}>{tr('通知')}</span>

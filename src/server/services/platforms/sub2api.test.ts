@@ -154,6 +154,46 @@ describe('Sub2ApiAdapter', () => {
     expect(models).toEqual(['gpt-4o', 'claude-3-opus']);
   });
 
+  it('fetches models via api key discovered from /api/v1/keys when JWT cannot call /v1/models directly', async () => {
+    await startServer((req, res) => {
+      const auth = req.headers.authorization || '';
+      if (req.url === '/v1/models' && auth === 'Bearer jwt-token') {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 'API_KEY_REQUIRED',
+          message: 'API key is required',
+        }));
+        return;
+      }
+      if (req.url === '/api/v1/keys?page=1&page_size=100' && auth === 'Bearer jwt-token') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: {
+            items: [
+              { id: 1, key: 'sk-sub2-active', name: 'default', status: 'active' },
+              { id: 2, key: 'sk-sub2-disabled', name: 'old', status: 'inactive' },
+            ],
+          },
+        }));
+        return;
+      }
+      if (req.url === '/v1/models' && auth === 'Bearer sk-sub2-active') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          object: 'list',
+          data: [{ id: 'gpt-4o-mini' }, { id: 'claude-3-5-sonnet' }],
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const models = await adapter.getModels(baseUrl, 'jwt-token');
+    expect(models).toEqual(['gpt-4o-mini', 'claude-3-5-sonnet']);
+  });
+
   it('handles non-zero code as error in /api/v1/auth/me', async () => {
     await startServer((req, res) => {
       if (req.url === '/api/v1/auth/me') {
@@ -176,10 +216,152 @@ describe('Sub2ApiAdapter', () => {
     expect(result.success).toBe(false);
   });
 
-  it('token management returns empty/false', async () => {
-    expect(await adapter.getApiToken('http://localhost', 'token')).toBeNull();
-    expect(await adapter.getApiTokens('http://localhost', 'token')).toEqual([]);
-    expect(await adapter.createApiToken('http://localhost', 'token')).toBe(false);
-    expect(await adapter.deleteApiToken('http://localhost', 'token', 'key')).toBe(false);
+  it('lists api keys from /api/v1/keys and picks active key as default api token', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/keys?page=1&page_size=100') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: {
+            items: [
+              { id: 10, key: 'sk-disabled', name: 'old', status: 'inactive' },
+              { id: 11, key: 'sk-active', name: 'default', status: 'active' },
+            ],
+          },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const tokens = await adapter.getApiTokens(baseUrl, 'jwt-token');
+    expect(tokens).toEqual([
+      { key: 'sk-disabled', name: 'old', enabled: false },
+      { key: 'sk-active', name: 'default', enabled: true },
+    ]);
+    expect(await adapter.getApiToken(baseUrl, 'jwt-token')).toBe('sk-active');
+  });
+
+  it('fetches user groups from /api/v1/groups', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/groups?page=1&page_size=100') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: {
+            items: [
+              { id: 1, name: 'default' },
+              { id: 2, name: 'vip' },
+            ],
+          },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const groups = await adapter.getUserGroups(baseUrl, 'jwt-token');
+    expect(groups).toEqual(['1', '2']);
+  });
+
+  it('falls back to infer groups from /api/v1/keys when group endpoint is unavailable', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/groups?page=1&page_size=100') {
+        res.writeHead(404).end();
+        return;
+      }
+      if (req.url === '/api/v1/groups') {
+        res.writeHead(404).end();
+        return;
+      }
+      if (req.url === '/api/v1/group?page=1&page_size=100') {
+        res.writeHead(404).end();
+        return;
+      }
+      if (req.url === '/api/v1/group') {
+        res.writeHead(404).end();
+        return;
+      }
+      if (req.url === '/api/v1/keys?page=1&page_size=100') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: {
+            items: [
+              { id: 11, key: 'sk-1', group_id: 7, status: 'active' },
+              { id: 12, key: 'sk-2', group_id: 7, status: 'inactive' },
+              { id: 13, key: 'sk-3', group_id: 9, status: 'active' },
+            ],
+          },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const groups = await adapter.getUserGroups(baseUrl, 'jwt-token');
+    expect(groups).toEqual(['7', '9']);
+  });
+
+  it('creates api key via /api/v1/keys', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/keys' && req.method === 'POST') {
+        let rawBody = '';
+        req.on('data', (chunk) => { rawBody += chunk; });
+        req.on('end', () => {
+          const body = JSON.parse(rawBody || '{}');
+          expect(body.name).toBe('metapi-e2e');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            code: 0,
+            message: 'success',
+            data: {
+              id: 1,
+              key: 'sk-created',
+              name: body.name,
+            },
+          }));
+        });
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const created = await adapter.createApiToken(baseUrl, 'jwt-token', undefined, { name: 'metapi-e2e' });
+    expect(created).toBe(true);
+  });
+
+  it('deletes api key by key value via /api/v1/keys/:id', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/keys?page=1&page_size=100') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: {
+            items: [
+              { id: 31, key: 'sk-delete-me', name: 'to-delete', status: 'active' },
+            ],
+          },
+        }));
+        return;
+      }
+      if (req.url === '/api/v1/keys/31' && req.method === 'DELETE') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: { id: 31 },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const deleted = await adapter.deleteApiToken(baseUrl, 'jwt-token', 'sk-delete-me');
+    expect(deleted).toBe(true);
   });
 });

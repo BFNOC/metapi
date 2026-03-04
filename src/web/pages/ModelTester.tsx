@@ -29,6 +29,7 @@ import {
   type TestChatPayload,
 } from './helpers/modelTesterSession.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { tr } from '../i18n.js';
 
 type ChatJobResponse = {
@@ -561,6 +562,7 @@ export default function ModelTester() {
   const [customRequestMode, setCustomRequestMode] = useState(false);
   const [customRequestBody, setCustomRequestBody] = useState('');
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const debugPanelPresence = useAnimatedVisibility(showDebugPanel, 220);
   const [activeDebugTab, setActiveDebugTab] = useState<DebugTab>(DEBUG_TABS.PREVIEW);
   const [debugRequest, setDebugRequest] = useState('');
   const [debugResponse, setDebugResponse] = useState('');
@@ -1264,7 +1266,7 @@ export default function ModelTester() {
     return debugResponse;
   }, [activeDebugTab, debugPreview, debugRequest, debugResponse]);
 
-  const layoutColumns = showDebugPanel
+  const layoutColumns = debugPanelPresence.shouldRender
     ? '340px minmax(0, 1fr) 360px'
     : '340px minmax(0, 1fr)';
 
@@ -1461,8 +1463,8 @@ export default function ModelTester() {
             </label>
           </div>
 
-          {customRequestMode && (
-            <div style={{ marginBottom: 14 }}>
+          <div className={`anim-collapse ${customRequestMode ? 'is-open' : ''}`.trim()} style={{ marginBottom: 14 }}>
+            <div className="anim-collapse-inner">
               <textarea
                 value={customRequestBody}
                 onChange={(event) => setCustomRequestBody(event.target.value)}
@@ -1487,7 +1489,7 @@ export default function ModelTester() {
                 </button>
               </div>
             </div>
-          )}
+          </div>
 
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8, fontWeight: 600 }}>
             采样参数
@@ -1702,18 +1704,20 @@ export default function ModelTester() {
                               <span>{isLoading ? '思考中...' : '推理过程'}</span>
                               <span>{message.isReasoningExpanded ? '▼' : '▶'}</span>
                             </button>
-                            {message.isReasoningExpanded && (
-                              <div style={{
-                                padding: '8px 10px',
-                                borderTop: '1px solid color-mix(in srgb, var(--color-primary) 20%, transparent)',
-                                fontSize: 12,
-                                lineHeight: 1.7,
-                                whiteSpace: 'pre-wrap',
-                                color: 'var(--color-text-secondary)',
-                              }}>
-                                {message.reasoningContent}
+                            <div className={`anim-collapse ${message.isReasoningExpanded ? 'is-open' : ''}`.trim()}>
+                              <div className="anim-collapse-inner">
+                                <div style={{
+                                  padding: '8px 10px',
+                                  borderTop: '1px solid color-mix(in srgb, var(--color-primary) 20%, transparent)',
+                                  fontSize: 12,
+                                  lineHeight: 1.7,
+                                  whiteSpace: 'pre-wrap',
+                                  color: 'var(--color-text-secondary)',
+                                }}>
+                                  {message.reasoningContent}
+                                </div>
                               </div>
-                            )}
+                            </div>
                           </div>
                         )}
 
@@ -1850,8 +1854,8 @@ export default function ModelTester() {
           </div>
         </div>
 
-        {showDebugPanel && (
-          <div className="card" style={{ padding: 14, minHeight: 680, maxHeight: 740, display: 'flex', flexDirection: 'column' }}>
+        {debugPanelPresence.shouldRender && (
+          <div className={`card panel-presence ${debugPanelPresence.isVisible ? '' : 'is-closing'}`.trim()} style={{ padding: 14, minHeight: 680, maxHeight: 740, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
               <h3 style={{ margin: 0, fontSize: 15 }}>调试</h3>
               <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>

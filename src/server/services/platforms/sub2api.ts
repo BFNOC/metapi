@@ -1,4 +1,11 @@
-import { BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo } from './base.js';
+import {
+  ApiTokenInfo,
+  BasePlatformAdapter,
+  CheckinResult,
+  BalanceInfo,
+  CreateApiTokenOptions,
+  UserInfo,
+} from './base.js';
 
 function normalizeBaseUrl(baseUrl: string): string {
   return (baseUrl || '').replace(/\/+$/, '');
@@ -8,11 +15,267 @@ function normalizeBaseUrl(baseUrl: string): string {
  * Sub2API adapter.
  *
  * Sub2API uses JWT-based auth with endpoints under /api/v1/*.
- * It does NOT support: login, check-in, token management, or usage stats.
+ * It does NOT support: login or check-in.
  * Balance is derived from a USD amount returned by /api/v1/auth/me.
  */
 export class Sub2ApiAdapter extends BasePlatformAdapter {
   readonly platformName = 'sub2api';
+
+  private normalizeTokenKeyForCompare(value?: string | null): string {
+    const trimmed = (value || '').trim();
+    return trimmed.startsWith('Bearer ') ? trimmed.slice(7).trim() : trimmed;
+  }
+
+  private parseTokenEnabled(status: unknown): boolean {
+    if (typeof status === 'boolean') return status;
+    if (typeof status === 'number') return status === 1;
+    if (typeof status !== 'string') return true;
+    const normalized = status.trim().toLowerCase();
+    if (!normalized) return true;
+    if (['inactive', 'disabled', 'false', '0', 'off'].includes(normalized)) return false;
+    if (['active', 'enabled', 'true', '1', 'on'].includes(normalized)) return true;
+    return true;
+  }
+
+  private parseTokenItems(payload: any): Array<{ id: number; key: string; name: string; enabled: boolean; tokenGroup: string | null }> {
+    const source = payload?.data ?? payload;
+    const rawItems = (() => {
+      if (Array.isArray(source)) return source;
+      if (Array.isArray(source?.items)) return source.items;
+      if (Array.isArray(source?.list)) return source.list;
+      if (Array.isArray(source?.data)) return source.data;
+      return [];
+    })();
+
+    const items: Array<{ id: number; key: string; name: string; enabled: boolean; tokenGroup: string | null }> = [];
+    for (const item of rawItems) {
+      const key = typeof item?.key === 'string' ? item.key.trim() : '';
+      if (!key) continue;
+      const id = Number.parseInt(String(item?.id), 10);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      const name = typeof item?.name === 'string' && item.name.trim()
+        ? item.name.trim()
+        : `token-${id}`;
+      const tokenGroup = (() => {
+        const fromNumeric = Number.parseInt(String(item?.group_id ?? item?.groupId ?? ''), 10);
+        if (Number.isFinite(fromNumeric) && fromNumeric > 0) return String(fromNumeric);
+        const fromText = typeof item?.group_name === 'string'
+          ? item.group_name.trim()
+          : (typeof item?.group === 'string' ? item.group.trim() : '');
+        return fromText || null;
+      })();
+      items.push({
+        id,
+        key,
+        name,
+        enabled: this.parseTokenEnabled(item?.status),
+        tokenGroup,
+      });
+    }
+    return items;
+  }
+
+  private parseGroupItems(payload: any): string[] {
+    const source = payload?.data ?? payload;
+    const rawItems = (() => {
+      if (Array.isArray(source)) return source;
+      if (Array.isArray(source?.items)) return source.items;
+      if (Array.isArray(source?.list)) return source.list;
+      if (Array.isArray(source?.groups)) return source.groups;
+      if (Array.isArray(source?.data)) return source.data;
+      return [];
+    })();
+
+    const groups: string[] = [];
+    for (const item of rawItems) {
+      if (item == null) continue;
+      if (typeof item === 'number' && Number.isFinite(item) && item > 0) {
+        groups.push(String(Math.trunc(item)));
+        continue;
+      }
+      if (typeof item === 'string') {
+        const normalized = item.trim();
+        if (normalized) groups.push(normalized);
+        continue;
+      }
+      if (typeof item !== 'object') continue;
+
+      const numericCandidates = [
+        (item as any).group_id,
+        (item as any).groupId,
+        (item as any).id,
+        (item as any).value,
+      ];
+      let picked = '';
+      for (const candidate of numericCandidates) {
+        const parsed = Number.parseInt(String(candidate), 10);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          picked = String(parsed);
+          break;
+        }
+      }
+      if (picked) {
+        groups.push(picked);
+        continue;
+      }
+
+      const textCandidates = [
+        (item as any).name,
+        (item as any).group_name,
+        (item as any).groupName,
+        (item as any).title,
+        (item as any).label,
+        (item as any).code,
+      ];
+      for (const candidate of textCandidates) {
+        if (typeof candidate !== 'string') continue;
+        const normalized = candidate.trim();
+        if (!normalized) continue;
+        groups.push(normalized);
+        break;
+      }
+    }
+
+    return Array.from(new Set(groups));
+  }
+
+  private async listGroups(baseUrl: string, accessToken: string): Promise<string[]> {
+    const endpoints = [
+      '/api/v1/groups?page=1&page_size=100',
+      '/api/v1/groups',
+      '/api/v1/group?page=1&page_size=100',
+      '/api/v1/group',
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await this.fetchJson<any>(`${baseUrl}${endpoint}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const parsed = (() => {
+          try {
+            return this.parseSub2ApiEnvelope<any>(res, endpoint);
+          } catch {
+            return res;
+          }
+        })();
+        const groups = this.parseGroupItems(parsed);
+        if (groups.length > 0) return groups;
+      } catch {}
+    }
+
+    return [];
+  }
+
+  private parseGroupIdsFromTokenPayload(payload: any): string[] {
+    const source = payload?.data ?? payload;
+    const rawItems = (() => {
+      if (Array.isArray(source)) return source;
+      if (Array.isArray(source?.items)) return source.items;
+      if (Array.isArray(source?.list)) return source.list;
+      if (Array.isArray(source?.data)) return source.data;
+      return [];
+    })();
+
+    const groups: string[] = [];
+    for (const item of rawItems) {
+      if (!item || typeof item !== 'object') continue;
+      const groupId = Number.parseInt(String((item as any).group_id ?? (item as any).groupId ?? ''), 10);
+      if (!Number.isFinite(groupId) || groupId <= 0) continue;
+      groups.push(String(groupId));
+    }
+    return Array.from(new Set(groups));
+  }
+
+  private async inferGroupsFromKeys(baseUrl: string, accessToken: string): Promise<string[]> {
+    const endpoints = [
+      '/api/v1/keys?page=1&page_size=100',
+      '/api/v1/api-keys?page=1&page_size=100',
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await this.fetchJson<any>(`${baseUrl}${endpoint}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const parsed = (() => {
+          try {
+            return this.parseSub2ApiEnvelope<any>(res, endpoint);
+          } catch {
+            return res;
+          }
+        })();
+        const groups = this.parseGroupIdsFromTokenPayload(parsed);
+        if (groups.length > 0) return groups;
+      } catch {}
+    }
+
+    return [];
+  }
+
+  private extractModelIds(payload: any): string[] {
+    const source = payload?.data ?? payload;
+    const rawModels = (() => {
+      if (Array.isArray(source)) return source;
+      if (Array.isArray(source?.items)) return source.items;
+      if (Array.isArray(source?.models)) return source.models;
+      return [];
+    })();
+
+    const models = rawModels
+      .map((item: any) => (typeof item === 'string' ? item : item?.id))
+      .map((value: unknown) => String(value || '').trim())
+      .filter(Boolean);
+    return Array.from(new Set(models));
+  }
+
+  private async listApiKeys(baseUrl: string, accessToken: string): Promise<Array<{ id: number; key: string; name: string; enabled: boolean; tokenGroup: string | null }>> {
+    const endpoints = [
+      '/api/v1/keys?page=1&page_size=100',
+      '/api/v1/api-keys?page=1&page_size=100',
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await this.fetchJson<any>(`${baseUrl}${endpoint}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const data = this.parseSub2ApiEnvelope<any>(res, endpoint);
+        const items = this.parseTokenItems(data);
+        if (items.length > 0) return items;
+      } catch {}
+    }
+
+    return [];
+  }
+
+  private async fetchModelsByToken(baseUrl: string, token: string): Promise<string[]> {
+    const authToken = this.normalizeTokenKeyForCompare(token);
+    if (!authToken) return [];
+
+    const endpoints = ['/v1/models', '/api/v1/models'];
+    for (const endpoint of endpoints) {
+      try {
+        const res = await this.fetchJson<any>(`${baseUrl}${endpoint}`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        const models = this.extractModelIds(res);
+        if (models.length > 0) return models;
+      } catch {}
+    }
+
+    return [];
+  }
+
+  private resolveExpiresInDays(expiredTime?: number): number | undefined {
+    if (!Number.isFinite(expiredTime)) return undefined;
+    const raw = Math.trunc(expiredTime as number);
+    if (raw <= 0) return undefined;
+    const expiresAtMs = raw > 10_000_000_000 ? raw : raw * 1000;
+    const deltaMs = expiresAtMs - Date.now();
+    const days = Math.max(1, Math.ceil(deltaMs / (24 * 60 * 60 * 1000)));
+    return Number.isFinite(days) ? Math.min(days, 3650) : undefined;
+  }
 
   async detect(url: string): Promise<boolean> {
     const normalized = (url || '').toLowerCase();
@@ -196,13 +459,128 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
 
   // --- Models: Standard OpenAI-compatible endpoint ---
   async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+    const normalizedBase = normalizeBaseUrl(baseUrl);
+    const directModels = await this.fetchModelsByToken(normalizedBase, apiToken);
+    if (directModels.length > 0) return directModels;
+
+    // Session JWT cannot access /v1/models directly; discover a user key first.
+    const discoveredApiToken = await this.getApiToken(normalizedBase, apiToken);
+    if (!discoveredApiToken) return [];
+    if (this.normalizeTokenKeyForCompare(discoveredApiToken) === this.normalizeTokenKeyForCompare(apiToken)) {
+      return [];
+    }
+    return this.fetchModelsByToken(normalizedBase, discoveredApiToken);
+  }
+
+  override async getApiTokens(baseUrl: string, accessToken: string): Promise<ApiTokenInfo[]> {
     try {
-      const res = await this.fetchJson<any>(`${baseUrl}/v1/models`, {
-        headers: { Authorization: `Bearer ${apiToken}` },
+      const keys = await this.listApiKeys(normalizeBaseUrl(baseUrl), accessToken);
+      return keys.map((item) => {
+        const tokenInfo: ApiTokenInfo = {
+          name: item.name,
+          key: item.key,
+          enabled: item.enabled,
+        };
+        if (item.tokenGroup) tokenInfo.tokenGroup = item.tokenGroup;
+        return tokenInfo;
       });
-      return (res?.data || []).map((m: any) => m.id).filter(Boolean);
     } catch {
       return [];
     }
+  }
+
+  override async getApiToken(baseUrl: string, accessToken: string): Promise<string | null> {
+    const tokens = await this.getApiTokens(baseUrl, accessToken);
+    return tokens.find((token) => token.enabled !== false)?.key || tokens[0]?.key || null;
+  }
+
+  override async getUserGroups(baseUrl: string, accessToken: string): Promise<string[]> {
+    const normalizedBase = normalizeBaseUrl(baseUrl);
+    const directGroups = await this.listGroups(normalizedBase, accessToken);
+    if (directGroups.length > 0) return directGroups;
+
+    const inferredFromKeys = await this.inferGroupsFromKeys(normalizedBase, accessToken);
+    if (inferredFromKeys.length > 0) return inferredFromKeys;
+
+    return ['default'];
+  }
+
+  override async createApiToken(
+    baseUrl: string,
+    accessToken: string,
+    _platformUserId?: number,
+    options?: CreateApiTokenOptions,
+  ): Promise<boolean> {
+    const normalizedBase = normalizeBaseUrl(baseUrl);
+    const payload: Record<string, unknown> = {
+      name: (options?.name || '').trim() || 'metapi',
+    };
+
+    const groupId = Number.parseInt((options?.group || '').trim(), 10);
+    if (Number.isFinite(groupId) && groupId > 0) {
+      payload.group_id = groupId;
+    }
+
+    const expiresInDays = this.resolveExpiresInDays(options?.expiredTime);
+    if (expiresInDays) {
+      payload.expires_in_days = expiresInDays;
+    }
+
+    if (options?.unlimitedQuota === false && Number.isFinite(options.remainQuota)) {
+      payload.quota = Math.max(0, Number(options.remainQuota));
+    }
+
+    const endpoints = ['/api/v1/keys', '/api/v1/api-keys'];
+    for (const endpoint of endpoints) {
+      try {
+        const res = await this.fetchJson<any>(`${normalizedBase}${endpoint}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify(payload),
+        });
+        this.parseSub2ApiEnvelope<any>(res, endpoint);
+        return true;
+      } catch {}
+    }
+
+    return false;
+  }
+
+  override async deleteApiToken(
+    baseUrl: string,
+    accessToken: string,
+    tokenKey: string,
+  ): Promise<boolean> {
+    const targetKey = this.normalizeTokenKeyForCompare(tokenKey);
+    if (!targetKey) return false;
+
+    const normalizedBase = normalizeBaseUrl(baseUrl);
+    let tokenId: number | null = null;
+    try {
+      const items = await this.listApiKeys(normalizedBase, accessToken);
+      tokenId = items.find((item) => this.normalizeTokenKeyForCompare(item.key) === targetKey)?.id || null;
+    } catch {
+      return false;
+    }
+
+    // Upstream key already absent means local deletion is safe.
+    if (!tokenId) return true;
+
+    const endpoints = [
+      `/api/v1/keys/${tokenId}`,
+      `/api/v1/api-keys/${tokenId}`,
+    ];
+    for (const endpoint of endpoints) {
+      try {
+        const res = await this.fetchJson<any>(`${normalizedBase}${endpoint}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        this.parseSub2ApiEnvelope<any>(res, endpoint);
+        return true;
+      } catch {}
+    }
+
+    return false;
   }
 }

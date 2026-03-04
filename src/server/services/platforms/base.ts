@@ -41,6 +41,7 @@ export interface ApiTokenInfo {
   name: string;
   key: string;
   enabled?: boolean;
+  tokenGroup?: string | null;
 }
 
 export interface CreateApiTokenOptions {
@@ -145,7 +146,7 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
   async getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number): Promise<ApiTokenInfo[]> {
     const token = await this.getApiToken(baseUrl, accessToken, platformUserId);
     if (!token) return [];
-    return [{ name: 'default', key: token, enabled: true }];
+    return [{ name: 'default', key: token, enabled: true, tokenGroup: 'default' }];
   }
 
   async createApiToken(

@@ -82,6 +82,27 @@ function buildTelegramText(
   return `${raw.slice(0, maxTextLength)}\n\n...(truncated)`;
 }
 
+function isWeComBotWebhook(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === 'qyapi.weixin.qq.com' && parsed.pathname.includes('/cgi-bin/webhook/send');
+  } catch {
+    return false;
+  }
+}
+
+function buildWeComText(
+  title: string,
+  message: string,
+  level: 'info' | 'warning' | 'error',
+  timeFootnote: string,
+): string {
+  const maxLength = 1900;
+  const raw = `[metapi][${level.toUpperCase()}] ${title}\n\n${message}\n\n${timeFootnote}`;
+  if (raw.length <= maxLength) return raw;
+  return `${raw.slice(0, maxLength)}\n...(truncated)`;
+}
+
 export async function sendNotification(
   title: string,
   message: string,
@@ -119,20 +140,41 @@ export async function sendNotification(
       {
         channel: 'webhook',
         run: async () => {
+          const isWeComWebhook = isWeComBotWebhook(config.webhookUrl);
           const response = await fetch(config.webhookUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              title,
-              message: resolvedMessage,
-              level,
-              timestamp: now.toISOString(),
-              localTime: formatLocalDateTime(now),
-              timeZone: getResolvedTimeZone(),
-            }),
+            body: JSON.stringify(
+              isWeComWebhook
+                ? {
+                  msgtype: 'text',
+                  text: {
+                    content: buildWeComText(title, resolvedMessage, level, timeFootnote),
+                  },
+                }
+                : {
+                  title,
+                  message: resolvedMessage,
+                  level,
+                  timestamp: now.toISOString(),
+                  localTime: formatLocalDateTime(now),
+                  timeZone: getResolvedTimeZone(),
+                },
+            ),
           });
           if (!response.ok) {
             throw new Error(`Webhook 响应状态 ${response.status}`);
+          }
+          if (isWeComWebhook) {
+            let payload: { errcode?: number; errmsg?: string } | null = null;
+            try {
+              payload = await response.json() as { errcode?: number; errmsg?: string };
+            } catch {
+              throw new Error('企业微信 Webhook 返回了无效 JSON');
+            }
+            if (typeof payload?.errcode === 'number' && payload.errcode !== 0) {
+              throw new Error(`企业微信 Webhook 返回错误 ${payload.errcode}: ${payload.errmsg || 'unknown error'}`);
+            }
           }
         },
       },

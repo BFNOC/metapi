@@ -172,6 +172,113 @@ describe('balanceService auto relogin', () => {
     expect(reportTokenExpiredMock).toHaveBeenCalledTimes(1);
   });
 
+  it('proactively refreshes sub2api token when managed refresh token is near expiry', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 5,
+          username: 'sub2-user',
+          accessToken: 'old-access-token',
+          status: 'active',
+          extraConfig: JSON.stringify({
+            sub2apiAuth: {
+              refreshToken: 'refresh-token-1',
+              tokenExpiresAt: Date.now() + 60_000,
+            },
+          }),
+        },
+        sites: {
+          id: 7,
+          name: 'sub2',
+          url: 'https://sub2.example.com',
+          platform: 'sub2api',
+        },
+      },
+    ]);
+
+    undiciFetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        code: 0,
+        message: 'success',
+        data: {
+          access_token: 'new-access-token',
+          refresh_token: 'refresh-token-2',
+          expires_in: 3600,
+        },
+      }),
+    });
+    adapterMock.getBalance.mockResolvedValueOnce({ balance: 20, used: 1, quota: 21 });
+
+    const { refreshBalance } = await import('./balanceService.js');
+    const result = await refreshBalance(5);
+
+    expect(result).toEqual({ balance: 20, used: 1, quota: 21 });
+    expect(adapterMock.getBalance).toHaveBeenCalledTimes(1);
+    expect(adapterMock.getBalance.mock.calls[0]?.[1]).toBe('new-access-token');
+    expect(updateSetMock.mock.calls.some((call) => call[0]?.accessToken === 'new-access-token')).toBe(true);
+    const updateWithSub2ApiAuth = updateSetMock.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((payload) => typeof payload.extraConfig === 'string' && String(payload.extraConfig).includes('refresh-token-2'));
+    expect(updateWithSub2ApiAuth).toBeDefined();
+    const parsedExtra = JSON.parse(String(updateWithSub2ApiAuth?.extraConfig)) as {
+      sub2apiAuth?: { refreshToken?: string; tokenExpiresAt?: number };
+    };
+    expect(parsedExtra.sub2apiAuth?.refreshToken).toBe('refresh-token-2');
+    expect(typeof parsedExtra.sub2apiAuth?.tokenExpiresAt).toBe('number');
+  });
+
+  it('retries once via sub2api managed refresh token when balance returns 401', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 6,
+          username: 'sub2-user',
+          accessToken: 'expired-access-token',
+          status: 'active',
+          extraConfig: JSON.stringify({
+            sub2apiAuth: {
+              refreshToken: 'refresh-token-3',
+            },
+          }),
+        },
+        sites: {
+          id: 8,
+          name: 'sub2',
+          url: 'https://sub2.example.com',
+          platform: 'sub2api',
+        },
+      },
+    ]);
+
+    adapterMock.getBalance
+      .mockRejectedValueOnce(new Error('HTTP 401: unauthorized'))
+      .mockResolvedValueOnce({ balance: 8, used: 1, quota: 9 });
+    adapterMock.login.mockResolvedValue({ success: false });
+    undiciFetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        code: 0,
+        message: 'success',
+        data: {
+          access_token: 'retried-access-token',
+          refresh_token: 'refresh-token-4',
+          expires_in: 3600,
+        },
+      }),
+    });
+
+    const { refreshBalance } = await import('./balanceService.js');
+    const result = await refreshBalance(6);
+
+    expect(result).toEqual({ balance: 8, used: 1, quota: 9 });
+    expect(adapterMock.getBalance).toHaveBeenCalledTimes(2);
+    expect(adapterMock.getBalance.mock.calls[0]?.[1]).toBe('expired-access-token');
+    expect(adapterMock.getBalance.mock.calls[1]?.[1]).toBe('retried-access-token');
+    expect(adapterMock.login).not.toHaveBeenCalled();
+    expect(reportTokenExpiredMock).not.toHaveBeenCalled();
+  });
+
   it('keeps degraded health when checkin is unsupported but balance refresh succeeds', async () => {
     selectAllMock.mockReturnValue([
       {
@@ -263,5 +370,34 @@ describe('balanceService auto relogin', () => {
     expect(updateWithSnapshot).toBeDefined();
     const parsedExtra = JSON.parse(String(updateWithSnapshot?.extraConfig));
     expect(parsedExtra.todayIncomeSnapshot?.latest).toBeCloseTo(2.08365, 6);
+  });
+
+  it('does not send low balance reminder notification when balance is below threshold', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 7,
+          username: 'linuxdo_low_balance',
+          accessToken: 'active-token',
+          status: 'active',
+          extraConfig: null,
+        },
+        sites: {
+          id: 9,
+          name: 'wong',
+          url: 'https://wzw.pp.ua',
+          platform: 'new-api',
+        },
+      },
+    ]);
+
+    adapterMock.getBalance.mockResolvedValueOnce({ balance: 0.5, used: 1, quota: 1.5 });
+
+    const { refreshBalance } = await import('./balanceService.js');
+    const result = await refreshBalance(7);
+
+    expect(result).toEqual({ balance: 0.5, used: 1, quota: 1.5 });
+    expect(sendNotificationMock).not.toHaveBeenCalled();
+    expect(insertValuesMock).not.toHaveBeenCalled();
   });
 });

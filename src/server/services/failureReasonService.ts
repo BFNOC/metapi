@@ -50,7 +50,15 @@ export function classifyFailureReason(
     };
   }
 
-  if (includesAny(text, ['checkin endpoint not found', '签到端点不存在', '站点不支持签到', 'not support checkin'])) {
+  if (includesAny(text, [
+    'checkin endpoint not found',
+    '签到端点不存在',
+    '站点不支持签到',
+    'not support checkin',
+    'check-in is not supported',
+    'checkin is not supported',
+    'does not support checkin',
+  ])) {
     return {
       code: 'checkin_not_supported',
       category: 'site',

@@ -36,7 +36,7 @@ describe('sites proxy url settings', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('stores proxy url when creating a site', async () => {
+  it('stores proxy url and external checkin url when creating a site', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/sites',
@@ -45,12 +45,20 @@ describe('sites proxy url settings', () => {
         url: 'https://proxy-site.example.com',
         platform: 'new-api',
         proxyUrl: 'http://127.0.0.1:7890',
+        externalCheckinUrl: 'https://checkin.example.com/welfare',
+        globalWeight: 1.5,
       },
     });
 
     expect(response.statusCode).toBe(200);
-    const payload = response.json() as { proxyUrl?: string | null };
+    const payload = response.json() as {
+      proxyUrl?: string | null;
+      externalCheckinUrl?: string | null;
+      globalWeight?: number;
+    };
     expect(payload.proxyUrl).toBe('http://127.0.0.1:7890');
+    expect(payload.externalCheckinUrl).toBe('https://checkin.example.com/welfare');
+    expect(payload.globalWeight).toBe(1.5);
   });
 
   it('rejects invalid proxy url', async () => {
@@ -67,5 +75,37 @@ describe('sites proxy url settings', () => {
 
     expect(response.statusCode).toBe(400);
     expect((response.json() as { error?: string }).error).toContain('Invalid proxyUrl');
+  });
+
+  it('rejects invalid site global weight', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'weight-site',
+        url: 'https://weight-site.example.com',
+        platform: 'new-api',
+        globalWeight: 0,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid globalWeight');
+  });
+
+  it('rejects invalid external checkin url', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'welfare-site',
+        url: 'https://weight-site.example.com',
+        platform: 'new-api',
+        externalCheckinUrl: 'ftp://invalid.example.com',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid externalCheckinUrl');
   });
 });

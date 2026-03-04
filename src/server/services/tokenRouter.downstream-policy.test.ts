@@ -179,6 +179,90 @@ describe('TokenRouter downstream policy', () => {
     expect((highCandidate?.probability || 0)).toBeGreaterThan(lowCandidate?.probability || 0);
   });
 
+  it('combines site global weight with downstream site multiplier', () => {
+    const siteGlobalHigh = db.insert(schema.sites).values({
+      name: 'global-high-site',
+      url: 'https://global-high.example.com',
+      platform: 'new-api',
+      status: 'active',
+      globalWeight: 3,
+    }).returning().get();
+
+    const siteGlobalLow = db.insert(schema.sites).values({
+      name: 'global-low-site',
+      url: 'https://global-low.example.com',
+      platform: 'new-api',
+      status: 'active',
+      globalWeight: 1,
+    }).returning().get();
+
+    const accountGlobalHigh = db.insert(schema.accounts).values({
+      siteId: siteGlobalHigh.id,
+      username: 'user-global-high',
+      accessToken: 'access-global-high',
+      apiToken: 'sk-global-high',
+      status: 'active',
+      unitCost: 1,
+      balance: 100,
+    }).returning().get();
+
+    const accountGlobalLow = db.insert(schema.accounts).values({
+      siteId: siteGlobalLow.id,
+      username: 'user-global-low',
+      accessToken: 'access-global-low',
+      apiToken: 'sk-global-low',
+      status: 'active',
+      unitCost: 1,
+      balance: 100,
+    }).returning().get();
+
+    const route = db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-mini',
+      enabled: true,
+    }).returning().get();
+
+    const highChannel = db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountGlobalHigh.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const lowChannel = db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountGlobalLow.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const decision = router.explainSelectionForRoute(
+      route.id,
+      'gpt-5-mini',
+      [],
+      {
+        allowedRouteIds: [route.id],
+        supportedModels: [],
+        siteWeightMultipliers: {
+          [siteGlobalHigh.id]: 0.5,
+          [siteGlobalLow.id]: 1,
+        },
+      },
+    );
+
+    const highCandidate = decision.candidates.find((candidate) => candidate.channelId === highChannel.id);
+    const lowCandidate = decision.candidates.find((candidate) => candidate.channelId === lowChannel.id);
+
+    expect(highCandidate).toBeTruthy();
+    expect(lowCandidate).toBeTruthy();
+    // combined multiplier: high=3*0.5=1.5, low=1*1=1
+    expect((highCandidate?.probability || 0)).toBeGreaterThan(lowCandidate?.probability || 0);
+  });
+
   it('supports union semantics between supportedModels and allowedRouteIds', () => {
     const site = db.insert(schema.sites).values({
       name: 'site-union',

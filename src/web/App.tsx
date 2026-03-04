@@ -7,6 +7,8 @@ import { api } from './api.js';
 import { clearAuthSession, hasValidAuthSession, persistAuthSession } from './authSession.js';
 import { I18nProvider, useI18n } from './i18n.js';
 import { resolveLoginErrorMessage } from './loginError.js';
+import { SITE_DOCS_URL } from './docsLink.js';
+import { useAnimatedVisibility } from './components/useAnimatedVisibility.js';
 const Dashboard = lazy(() => import('./pages/Dashboard.js'));
 const Sites = lazy(() => import('./pages/Sites.js'));
 const Accounts = lazy(() => import('./pages/Accounts.js'));
@@ -33,6 +35,7 @@ type UserProfile = {
 
 const THEME_MODE_STORAGE_KEY = 'theme_mode';
 const USER_PROFILE_STORAGE_KEY = 'user_profile';
+const FIRST_USE_DOC_REMINDER_KEY = 'metapi_first_use_docs_reminder_seen_v1';
 const DICEBEAR_STYLES = [
   'pixel-art',
   'pixel-art-neutral',
@@ -205,6 +208,7 @@ function UserProfileModal({
   onSave: (nextProfile: UserProfile) => void;
   t: (text: string) => string;
 }) {
+  const presence = useAnimatedVisibility(open, 200);
   const [name, setName] = useState(profile.name);
   const [avatarSeed, setAvatarSeed] = useState(profile.avatarSeed);
   const [avatarStyle, setAvatarStyle] = useState(profile.avatarStyle);
@@ -218,7 +222,7 @@ function UserProfileModal({
     setError('');
   }, [open, profile]);
 
-  if (!open) return null;
+  if (!presence.shouldRender) return null;
 
   const avatarUrl = buildDicebearAvatarUrl(avatarStyle, avatarSeed);
 
@@ -259,8 +263,8 @@ function UserProfileModal({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+    <div className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={onClose}>
+      <div className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
         <div className="modal-header">{t('个人信息')}</div>
         <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2 }}>
@@ -371,6 +375,8 @@ function AppShell() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const themeMenuPresence = useAnimatedVisibility(showThemeMenu, 160);
+  const userMenuPresence = useAnimatedVisibility(showUserMenu, 160);
   const [unreadCount, setUnreadCount] = useState(0);
   const notifBtnRef = useRef<HTMLButtonElement>(null);
   const latestTaskEventIdRef = useRef(0);
@@ -488,6 +494,13 @@ function AppShell() {
   }, [authed, toast]);
 
   useEffect(() => {
+    if (!authed) return;
+    if (localStorage.getItem(FIRST_USE_DOC_REMINDER_KEY)) return;
+    localStorage.setItem(FIRST_USE_DOC_REMINDER_KEY, '1');
+    toast.info(`${t('首次使用建议先阅读站点文档：')}${SITE_DOCS_URL}`);
+  }, [authed, t, toast]);
+
+  useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setShowUserMenu(false);
@@ -544,19 +557,20 @@ function AppShell() {
         <div className="topbar-right">
           <button
             className="topbar-icon-btn"
-            title={language === 'zh' ? 'Switch to English' : '切换到中文'}
+            data-tooltip={language === 'zh' ? 'Switch to English' : '切换到中文'}
+            aria-label={language === 'zh' ? 'Switch to English' : '切换到中文'}
             onClick={toggleLanguage}
             style={{ minWidth: 36, fontSize: 12, fontWeight: 700 }}
           >
             {language === 'zh' ? 'EN' : '中'}
           </button>
-          <button className="topbar-search-trigger" title={t('搜索 (Ctrl+K)')} onClick={() => setShowSearch(true)}>
+          <button className="topbar-search-trigger" data-tooltip={t('搜索 (Ctrl+K)')} aria-label={t('搜索 (Ctrl+K)')} onClick={() => setShowSearch(true)}>
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             <span className="topbar-search-label">{t('搜索')}</span>
             <kbd className="topbar-search-kbd">Ctrl K</kbd>
           </button>
           <div style={{ position: 'relative' }}>
-            <button ref={notifBtnRef} className="topbar-icon-btn" title={t('通知')} onClick={() => setShowNotifications(!showNotifications)}>
+            <button ref={notifBtnRef} className="topbar-icon-btn" data-tooltip={t('通知')} aria-label={t('通知')} onClick={() => setShowNotifications(!showNotifications)}>
               <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
               {unreadCount > 0 && (
                 <span className="topbar-badge">
@@ -569,7 +583,10 @@ function AppShell() {
           <div ref={themeMenuRef} style={{ position: 'relative' }}>
             <button
               className="topbar-icon-btn"
-              title={themeMode === 'system'
+              data-tooltip={themeMode === 'system'
+                ? `${t('跟随系统')} (${resolvedThemeLabel})`
+                : (themeMode === 'light' ? t('浅色模式') : t('深色模式'))}
+              aria-label={themeMode === 'system'
                 ? `${t('跟随系统')} (${resolvedThemeLabel})`
                 : (themeMode === 'light' ? t('浅色模式') : t('深色模式'))}
               onClick={() => {
@@ -585,8 +602,8 @@ function AppShell() {
                 <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
               )}
             </button>
-            {showThemeMenu && (
-              <div className="user-dropdown" style={{ right: 0, left: 'auto', minWidth: 168 }}>
+            {themeMenuPresence.shouldRender && (
+              <div className={`user-dropdown ${themeMenuPresence.isVisible ? '' : 'is-closing'}`.trim()} style={{ right: 0, left: 'auto', minWidth: 168 }}>
                 <button
                   className="user-dropdown-item"
                   onClick={() => handleSelectThemeMode('system')}
@@ -614,7 +631,8 @@ function AppShell() {
           <div ref={userMenuRef} style={{ position: 'relative' }}>
             <div
               className="topbar-avatar"
-              title={displayName}
+              data-tooltip={displayName}
+              aria-label={displayName}
               onClick={() => {
                 setShowUserMenu(!showUserMenu);
                 setShowThemeMenu(false);
@@ -626,8 +644,8 @@ function AppShell() {
                 style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
               />
             </div>
-            {showUserMenu && (
-              <div className="user-dropdown">
+            {userMenuPresence.shouldRender && (
+              <div className={`user-dropdown ${userMenuPresence.isVisible ? '' : 'is-closing'}`.trim()}>
                 <button
                   className="user-dropdown-item"
                   onClick={() => {
@@ -662,7 +680,8 @@ function AppShell() {
                   to={item.to}
                   end={item.to === '/' || item.to === '/settings'}
                   className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}
-                  title={sidebarCollapsed ? t(item.label) : undefined}
+                  data-tooltip={sidebarCollapsed ? t(item.label) : undefined}
+                  aria-label={sidebarCollapsed ? t(item.label) : undefined}
                 >
                   {item.icon}
                   {!sidebarCollapsed && <span>{t(item.label)}</span>}

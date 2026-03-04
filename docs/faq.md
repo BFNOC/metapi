@@ -4,6 +4,50 @@
 
 ---
 
+<a id="account-auth-guide"></a>
+
+## 账号认证方式与兼容性（Access Token / Cookie）
+
+### Q: Access Token 和 Cookie 有什么区别？优先用哪个？
+
+**A:** Metapi 支持两种 Session 凭证来源（都用于管理接口，如余额、签到等）：
+
+| 凭证 | 特点 | 适用场景 |
+|------|------|----------|
+| **Access Token（系统访问令牌）** | 支持多账号、通常更稳定、更适合长期使用 | 标准 NewAPI / OneAPI / OneHub / DoneHub / Veloera 等站点 |
+| **Cookie（浏览器登录态）** | 兼容性强，但可能过期，且多账号体验较差 | 访问令牌不可用、魔改站点、特殊兼容场景 |
+
+> 结论：优先使用 **Access Token**。仅在站点不支持或令牌不可用时使用 Cookie。
+
+### Q: 在 Metapi 里怎么切换认证方式？
+
+**A:** 在「账号管理 → 添加账号 → Cookie / Token 导入」中：
+
+1. 选择站点
+2. 在「凭证模式」下拉选择：
+   - 自动识别（推荐）
+   - Session 模式（Access Token / Cookie）
+   - API Key 模式（仅代理）
+3. 粘贴凭证并点击「验证 Token」
+
+### Q: 以 NewAPI 为例，Access Token 在哪里生成？
+
+**A:** 通常路径是：**控制台 → 个人设置 → 安全设置 → 系统访问令牌**。  
+如果你确实需要 Cookie 兜底，可在浏览器 `F12 → Application → Cookie` 获取对应登录态。
+
+### Q: AnyRouter 这类魔改站点为什么更容易报错？
+
+**A:** AnyRouter 为魔改实现，删除了Access Token入口，也有其他类似的魔改中转站。建议：
+
+1. 先尝试 Session 模式 + Access Token
+2. 若站点不支持或报认证相关错误，再尝试 Cookie
+
+### Q: Sub2API 站点怎么处理？
+
+**A:** Sub2API 常见 JWT 短期会话机制，和传统 NewAPI 站点差异较大。当前建议：
+
+
+
 ## 部署相关
 
 ### Q: 启动后无法访问管理后台

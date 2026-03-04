@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import ChangeKeyModal from '../components/ChangeKeyModal.js';
+import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { InlineBrandIcon, getBrand, useIconCdn } from '../components/BrandIcon.js';
 import {
   applyRoutingProfilePreset,
@@ -125,7 +126,9 @@ export default function Settings() {
   const [downstreamOps, setDownstreamOps] = useState<Record<number, boolean>>({});
   const [editingDownstreamId, setEditingDownstreamId] = useState<number | null>(null);
   const [downstreamModalOpen, setDownstreamModalOpen] = useState(false);
+  const downstreamModalPresence = useAnimatedVisibility(downstreamModalOpen, 220);
   const [selectorOpen, setSelectorOpen] = useState(false);
+  const selectorModalPresence = useAnimatedVisibility(selectorOpen, 220);
   const [selectorLoading, setSelectorLoading] = useState(false);
   const [selectorRoutes, setSelectorRoutes] = useState<RouteSelectorItem[]>([]);
   const [selectorModelSearch, setSelectorModelSearch] = useState('');
@@ -794,8 +797,9 @@ export default function Settings() {
             </button>
           </div>
 
-          {showAdvancedRouting && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className={`anim-collapse ${showAdvancedRouting ? 'is-open' : ''}`.trim()}>
+            <div className="anim-collapse-inner" style={{ paddingTop: 2 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               {([
                 ['baseWeightFactor', '基础权重因子'],
                 ['valueScoreFactor', '价值分因子'],
@@ -824,8 +828,9 @@ export default function Settings() {
                   />
                 </div>
               ))}
+              </div>
             </div>
-          )}
+          </div>
 
           <div style={{ marginTop: 12 }}>
             <button onClick={saveRouting} disabled={savingRouting} className="btn btn-primary">
@@ -880,11 +885,11 @@ export default function Settings() {
           </div>
         </div>
       </div>
-      {downstreamModalOpen && (() => {
+      {downstreamModalPresence.shouldRender && (() => {
         const modal = (
-          <div className="modal-backdrop" onClick={closeDownstreamModal}>
+          <div className={`modal-backdrop ${downstreamModalPresence.isVisible ? '' : 'is-closing'}`.trim()} onClick={closeDownstreamModal}>
             <div
-              className="modal-content"
+              className={`modal-content ${downstreamModalPresence.isVisible ? '' : 'is-closing'}`.trim()}
               style={{ maxWidth: 860 }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -979,11 +984,11 @@ export default function Settings() {
         );
         return typeof document !== 'undefined' ? createPortal(modal, document.body) : modal;
       })()}
-      {selectorOpen && (() => {
+      {selectorModalPresence.shouldRender && (() => {
         const modal = (
-          <div className="modal-backdrop" onClick={closeSelectorModal}>
+          <div className={`modal-backdrop ${selectorModalPresence.isVisible ? '' : 'is-closing'}`.trim()} onClick={closeSelectorModal}>
             <div
-              className="modal-content"
+              className={`modal-content ${selectorModalPresence.isVisible ? '' : 'is-closing'}`.trim()}
               style={{ maxWidth: 860 }}
               onClick={(e) => e.stopPropagation()}
             >

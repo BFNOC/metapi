@@ -1,9 +1,11 @@
 export type SiteForm = {
   name: string;
   url: string;
+  externalCheckinUrl: string;
   platform: string;
   apiKey: string;
   proxyUrl: string;
+  globalWeight: string;
 };
 
 export type SiteEditorState =
@@ -15,16 +17,24 @@ type SiteSaveAction =
   | { kind: 'update'; id: number; payload: SiteForm };
 
 export function emptySiteForm(): SiteForm {
-  return { name: '', url: '', platform: '', apiKey: '', proxyUrl: '' };
+  return { name: '', url: '', externalCheckinUrl: '', platform: '', apiKey: '', proxyUrl: '', globalWeight: '1' };
 }
 
-export function siteFormFromSite(site: Partial<SiteForm> & { proxyUrl?: string | null }): SiteForm {
+export function siteFormFromSite(site: Partial<SiteForm> & {
+  proxyUrl?: string | null;
+  externalCheckinUrl?: string | null;
+  globalWeight?: number | string | null;
+}): SiteForm {
+  const globalWeightRaw = Number(site.globalWeight);
+  const globalWeight = Number.isFinite(globalWeightRaw) && globalWeightRaw > 0 ? String(globalWeightRaw) : '1';
   return {
     name: site.name ?? '',
     url: site.url ?? '',
+    externalCheckinUrl: site.externalCheckinUrl ?? '',
     platform: site.platform ?? '',
     apiKey: site.apiKey ?? '',
     proxyUrl: site.proxyUrl ?? '',
+    globalWeight,
   };
 }
 

@@ -739,6 +739,7 @@ async function logProxy(
       estimatedCost,
       errorMessage: normalizedErrorMessage,
       retryCount,
+      createdAt: new Date().toISOString(),
     }).run();
   } catch (error) {
     console.warn('[proxy/chat] failed to write proxy log', error);

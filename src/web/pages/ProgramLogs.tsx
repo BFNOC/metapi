@@ -17,7 +17,7 @@ type ProgramEvent = {
   createdAt?: string | null;
 };
 
-const PAGE_SIZE = 80;
+const PAGE_SIZE = 50;
 
 const TYPE_OPTIONS = [
   { value: '', label: '全部类型' },

@@ -176,6 +176,7 @@ async function logProxy(
       estimatedCost,
       errorMessage: normalizedErrorMessage,
       retryCount,
+      createdAt: new Date().toISOString(),
     }).run();
   } catch (error) {
     console.warn('[proxy/embeddings] failed to write proxy log', error);

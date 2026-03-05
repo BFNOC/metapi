@@ -137,6 +137,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
       accountId: account.id,
       status: 'skipped',
       message: 'site disabled',
+      createdAt: new Date().toISOString(),
     }).run();
 
     if (!options?.skipEvent) {
@@ -147,6 +148,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
         level: 'info',
         relatedId: accountId,
         relatedType: 'account',
+        createdAt: new Date().toISOString(),
       }).run();
     }
 
@@ -245,6 +247,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     status: normalizedStatus,
     message: logMessage,
     reward: logReward,
+    createdAt: new Date().toISOString(),
   }).run();
 
   if (!options?.skipEvent) {
@@ -257,6 +260,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
       level: effectiveSuccess ? 'info' : 'error',
       relatedId: accountId,
       relatedType: 'account',
+      createdAt: new Date().toISOString(),
     }).run();
   }
 

@@ -274,6 +274,7 @@ async function appendTokenSyncEvent(result: SyncExecutionResult) {
       level,
       relatedId: result.accountId,
       relatedType: 'account',
+      createdAt: new Date().toISOString(),
     }).run();
   } catch {}
 }

@@ -411,8 +411,16 @@ function normalizeRunResult(result: unknown): { changes: number; lastInsertRowid
 
 const wrappedObjects = new WeakMap<object, unknown>();
 
+function shouldWrapObject(value: unknown): value is object {
+  if (!value || typeof value !== 'object') return false;
+  // Drizzle query builders are thenable objects (QueryPromise) but are not native Promises.
+  // They still need wrapping so we can provide sqlite-style `.all/.get/.run` shims.
+  if (value instanceof Promise) return false;
+  return true;
+}
+
 function wrapQueryLike<T>(value: T): T {
-  if (!value || typeof value !== 'object') return value;
+  if (!shouldWrapObject(value)) return value;
   const target = value as unknown as object;
   if (wrappedObjects.has(target)) {
     return wrappedObjects.get(target) as T;
@@ -446,7 +454,7 @@ function wrapQueryLike<T>(value: T): T {
 
       return (...args: unknown[]) => {
         const result = original.apply(innerTarget, args);
-        if (result && typeof result === 'object' && typeof (result as Promise<unknown>).then !== 'function') {
+        if (shouldWrapObject(result)) {
           return wrapQueryLike(result);
         }
         return result;
@@ -483,7 +491,7 @@ function wrapDbClient<T extends object>(
 
       return (...args: unknown[]) => {
         const result = original.apply(target, args);
-        if (result && typeof result === 'object' && typeof (result as Promise<unknown>).then !== 'function') {
+        if (shouldWrapObject(result)) {
           return wrapQueryLike(result);
         }
         return result;
@@ -636,3 +644,8 @@ export async function switchRuntimeDatabase(nextDialect: RuntimeDbDialect, nextD
     throw error;
   }
 }
+
+export const __dbProxyTestUtils = {
+  wrapQueryLike,
+  shouldWrapObject,
+};

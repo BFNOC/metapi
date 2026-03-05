@@ -244,6 +244,7 @@ export async function sitesRoutes(app: FastifyInstance) {
             level: 'warning',
             relatedId: id,
             relatedType: 'site',
+            createdAt: new Date().toISOString(),
           }).run();
         } catch {}
       } else {
@@ -260,6 +261,7 @@ export async function sitesRoutes(app: FastifyInstance) {
             level: 'info',
             relatedId: id,
             relatedType: 'site',
+            createdAt: new Date().toISOString(),
           }).run();
         } catch {}
       }

@@ -22,6 +22,7 @@ export async function reportTokenExpired(params: {
     level: 'error',
     relatedId: params.accountId,
     relatedType: 'account',
+    createdAt: new Date().toISOString(),
   }).run();
 
   await db.update(schema.accounts).set({
@@ -49,6 +50,7 @@ export async function reportProxyAllFailed(params: { model: string; reason: stri
     message: `模型=${params.model}, 原因=${params.reason}`,
     level: 'error',
     relatedType: 'route',
+    createdAt: new Date().toISOString(),
   }).run();
 
   await sendNotification(

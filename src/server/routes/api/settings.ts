@@ -7,6 +7,7 @@ import { updateBalanceRefreshCron, updateCheckinCron } from '../../services/chec
 import { sendNotification } from '../../services/notifyService.js';
 import { exportBackup, importBackup, type BackupExportType } from '../../services/backupService.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
+import { migrateCurrentDatabase, testDatabaseConnection } from '../../services/databaseMigrationService.js';
 import { extractClientIp, isIpAllowed } from '../../middleware/auth.js';
 
 type RoutingWeights = typeof config.routingWeights;
@@ -38,6 +39,12 @@ interface RuntimeSettingsBody {
   routingWeights?: Partial<RoutingWeights>;
 }
 
+interface DatabaseMigrationBody {
+  dialect?: unknown;
+  connectionString?: unknown;
+  overwrite?: unknown;
+}
+
 const PROXY_TOKEN_PREFIX = 'sk-';
 
 function isValidProxyToken(value: string): boolean {
@@ -50,8 +57,8 @@ function maskSecret(value: string): string {
   return `${value.slice(0, 4)}****${value.slice(-4)}`;
 }
 
-function upsertSetting(key: string, value: unknown) {
-  db.insert(schema.settings)
+async function upsertSetting(key: string, value: unknown) {
+  await db.insert(schema.settings)
     .values({ key, value: JSON.stringify(value) })
     .onConflictDoUpdate({
       target: schema.settings.key,
@@ -60,14 +67,14 @@ function upsertSetting(key: string, value: unknown) {
     .run();
 }
 
-function appendSettingsEvent(input: {
+async function appendSettingsEvent(input: {
   type: 'checkin' | 'balance' | 'proxy' | 'status' | 'token';
   title: string;
   message: string;
   level?: 'info' | 'warning' | 'error';
 }) {
   try {
-    db.insert(schema.events).values({
+    await db.insert(schema.events).values({
       type: input.type,
       title: input.title,
       message: input.message,
@@ -275,7 +282,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
 }
 
 export async function settingsRoutes(app: FastifyInstance) {
-  app.get('/api/settings/runtime', async (request) => {
+  await app.get('/api/settings/runtime', async (request) => {
     const currentAdminIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
     return getRuntimeSettingsResponse(currentAdminIp);
   });
@@ -595,13 +602,50 @@ export async function settingsRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get<{ Querystring: { type?: string } }>('/api/settings/backup/export', async (request, reply) => {
+  app.post<{ Body: DatabaseMigrationBody }>('/api/settings/database/test-connection', async (request, reply) => {
+    try {
+      const result = await testDatabaseConnection(request.body || {});
+      return {
+        success: true,
+        message: '目标数据库连接成功',
+        ...result,
+      };
+    } catch (err: any) {
+      return reply.code(400).send({
+        success: false,
+        message: err?.message || '数据库连接失败',
+      });
+    }
+  });
+
+  app.post<{ Body: DatabaseMigrationBody }>('/api/settings/database/migrate', async (request, reply) => {
+    try {
+      const result = await migrateCurrentDatabase(request.body || {});
+      appendSettingsEvent({
+        type: 'status',
+        title: '数据库迁移已完成',
+        message: `目标 ${result.dialect}，已迁移站点 ${result.rows.sites}、账号 ${result.rows.accounts}、令牌 ${result.rows.accountTokens}、路由 ${result.rows.tokenRoutes}、通道 ${result.rows.routeChannels}、设置 ${result.rows.settings}`,
+      });
+      return {
+        success: true,
+        message: '数据库迁移完成',
+        ...result,
+      };
+    } catch (err: any) {
+      return reply.code(400).send({
+        success: false,
+        message: err?.message || '数据库迁移失败',
+      });
+    }
+  });
+
+  await app.get<{ Querystring: { type?: string } }>('/api/settings/backup/export', async (request, reply) => {
     const rawType = String(request.query.type || 'all').trim().toLowerCase();
     const type: BackupExportType = rawType === 'accounts' || rawType === 'preferences' ? rawType : 'all';
     if (rawType && !['all', 'accounts', 'preferences'].includes(rawType)) {
       return reply.code(400).send({ success: false, message: '导出类型无效，仅支持 all/accounts/preferences' });
     }
-    return exportBackup(type);
+    return await exportBackup(type);
   });
 
   app.post<{ Body: { data?: Record<string, unknown> } }>('/api/settings/backup/import', async (request, reply) => {
@@ -611,7 +655,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
 
     try {
-      const result = importBackup(payload);
+      const result = await importBackup(payload);
       for (const item of result.appliedSettings) {
         applyImportedSettingToRuntime(item.key, item.value);
       }
@@ -653,9 +697,9 @@ export async function settingsRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/settings/maintenance/clear-cache', async (_, reply) => {
-    const deletedModelAvailability = db.delete(schema.modelAvailability).run().changes;
-    const deletedRouteChannels = db.delete(schema.routeChannels).run().changes;
-    const deletedTokenRoutes = db.delete(schema.tokenRoutes).run().changes;
+    const deletedModelAvailability = (await db.delete(schema.modelAvailability).run()).changes;
+    const deletedRouteChannels = (await db.delete(schema.routeChannels).run()).changes;
+    const deletedTokenRoutes = (await db.delete(schema.tokenRoutes).run()).changes;
 
     const { task, reused } = startBackgroundTask(
       {
@@ -686,9 +730,9 @@ export async function settingsRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/settings/maintenance/clear-usage', async () => {
-    const deletedProxyLogs = db.delete(schema.proxyLogs).run().changes;
+    const deletedProxyLogs = (await db.delete(schema.proxyLogs).run()).changes;
 
-    db.update(schema.routeChannels).set({
+    await db.update(schema.routeChannels).set({
       successCount: 0,
       failCount: 0,
       totalLatencyMs: 0,
@@ -698,7 +742,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       cooldownUntil: null,
     }).run();
 
-    db.update(schema.accounts).set({
+    await db.update(schema.accounts).set({
       balanceUsed: 0,
       updatedAt: new Date().toISOString(),
     }).run();
@@ -717,3 +761,4 @@ export async function settingsRoutes(app: FastifyInstance) {
     };
   });
 }
+

@@ -48,13 +48,13 @@ function normalizeSiteUrl(value: string): string {
   }
 }
 
-function getCachedSiteProxyRows(nowMs = Date.now()): SiteProxyRow[] {
+async function getCachedSiteProxyRows(nowMs = Date.now()): Promise<SiteProxyRow[]> {
   if ((nowMs - siteProxyCache.loadedAt) < SITE_PROXY_CACHE_TTL_MS) {
     return siteProxyCache.rows;
   }
 
   try {
-    const rows = db
+    const rows = await db
       .select({
         siteUrl: schema.sites.url,
         proxyUrl: schema.sites.proxyUrl,
@@ -141,11 +141,11 @@ export function invalidateSiteProxyCache(): void {
   siteProxyCache = { loadedAt: 0, rows: [] };
 }
 
-export function resolveSiteProxyUrlByRequestUrl(requestUrl: string): string | null {
+export async function resolveSiteProxyUrlByRequestUrl(requestUrl: string): Promise<string | null> {
   const normalizedRequestUrl = normalizeSiteUrl(requestUrl);
   if (!normalizedRequestUrl) return null;
 
-  const rows = getCachedSiteProxyRows();
+  const rows = await getCachedSiteProxyRows();
   let bestMatch: string | null = null;
   let bestMatchLength = -1;
 
@@ -169,11 +169,11 @@ export function resolveSiteProxyUrlByRequestUrl(requestUrl: string): string | nu
   return bestMatch;
 }
 
-export function withSiteProxyRequestInit(
+export async function withSiteProxyRequestInit(
   requestUrl: string,
   options?: UndiciRequestInit,
-): UndiciRequestInit {
-  const proxyUrl = resolveSiteProxyUrlByRequestUrl(requestUrl);
+): Promise<UndiciRequestInit> {
+  const proxyUrl = await resolveSiteProxyUrlByRequestUrl(requestUrl);
   if (!proxyUrl) return options ?? {};
 
   const dispatcher = getDispatcherByProxyUrl(proxyUrl);

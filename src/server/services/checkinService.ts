@@ -102,7 +102,7 @@ async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
   const result = await adapter.login(site.url, relogin.username, password);
   if (!result.success || !result.accessToken) return null;
 
-  db.update(schema.accounts)
+  await db.update(schema.accounts)
     .set({
       accessToken: result.accessToken,
       updatedAt: new Date().toISOString(),
@@ -115,7 +115,7 @@ async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
 }
 
 export async function checkinAccount(accountId: number, options?: { skipEvent?: boolean }) {
-  const rows = db
+  const rows = await db
     .select()
     .from(schema.accounts)
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
@@ -133,14 +133,14 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
       reason: '\u7ad9\u70b9\u5df2\u7981\u7528',
       source: 'checkin',
     });
-    db.insert(schema.checkinLogs).values({
+    await db.insert(schema.checkinLogs).values({
       accountId: account.id,
       status: 'skipped',
       message: 'site disabled',
     }).run();
 
     if (!options?.skipEvent) {
-      db.insert(schema.events).values({
+      await db.insert(schema.events).values({
         type: 'checkin',
         title: 'checkin skipped',
         message: `${account.username || 'ID:' + accountId} @ ${site.name}: site disabled`,
@@ -220,7 +220,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
       updates.updatedAt = new Date().toISOString();
     }
 
-    db.update(schema.accounts)
+    await db.update(schema.accounts)
       .set(updates)
       .where(eq(schema.accounts.id, accountId))
       .run();
@@ -240,7 +240,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     }
   }
 
-  db.insert(schema.checkinLogs).values({
+  await db.insert(schema.checkinLogs).values({
     accountId: account.id,
     status: normalizedStatus,
     message: logMessage,
@@ -248,7 +248,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
   }).run();
 
   if (!options?.skipEvent) {
-    db.insert(schema.events).values({
+    await db.insert(schema.events).values({
       type: 'checkin',
       title: effectiveSuccess
         ? (normalizedStatus === 'skipped' ? 'checkin skipped' : 'checkin success')
@@ -302,7 +302,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
 }
 
 export async function checkinAll() {
-  const rows = db
+  const rows = await db
     .select()
     .from(schema.accounts)
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))

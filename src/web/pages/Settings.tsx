@@ -63,6 +63,22 @@ type RouteSelectorItem = {
   enabled: boolean;
 };
 
+type DatabaseMigrationSummary = {
+  dialect: 'sqlite' | 'mysql' | 'postgres';
+  connection: string;
+  overwrite: boolean;
+  version: string;
+  timestamp: number;
+  rows: {
+    sites: number;
+    accounts: number;
+    accountTokens: number;
+    tokenRoutes: number;
+    routeChannels: number;
+    settings: number;
+  };
+};
+
 const defaultWeights: RoutingWeights = {
   baseWeightFactor: 0.5,
   valueScoreFactor: 0.5,
@@ -119,6 +135,12 @@ export default function Settings() {
   const [adminIpAllowlistText, setAdminIpAllowlistText] = useState('');
   const [clearingCache, setClearingCache] = useState(false);
   const [clearingUsage, setClearingUsage] = useState(false);
+  const [migrationDialect, setMigrationDialect] = useState<'sqlite' | 'mysql' | 'postgres'>('postgres');
+  const [migrationConnectionString, setMigrationConnectionString] = useState('');
+  const [migrationOverwrite, setMigrationOverwrite] = useState(true);
+  const [testingMigrationConnection, setTestingMigrationConnection] = useState(false);
+  const [migratingDatabase, setMigratingDatabase] = useState(false);
+  const [migrationSummary, setMigrationSummary] = useState<DatabaseMigrationSummary | null>(null);
   const [showChangeKey, setShowChangeKey] = useState(false);
   const [downstreamKeys, setDownstreamKeys] = useState<DownstreamApiKeyItem[]>([]);
   const [downstreamLoading, setDownstreamLoading] = useState(false);
@@ -557,6 +579,54 @@ export default function Settings() {
     }
   };
 
+  const handleTestExternalDatabaseConnection = async () => {
+    if (!migrationConnectionString.trim()) {
+      toast.info('请先填写目标数据库连接串');
+      return;
+    }
+
+    setTestingMigrationConnection(true);
+    try {
+      const res = await api.testExternalDatabaseConnection({
+        dialect: migrationDialect,
+        connectionString: migrationConnectionString.trim(),
+        overwrite: migrationOverwrite,
+      });
+      toast.success(`连接成功：${res.connection || migrationDialect}`);
+    } catch (err: any) {
+      toast.error(err?.message || '目标数据库连接失败');
+    } finally {
+      setTestingMigrationConnection(false);
+    }
+  };
+
+  const handleMigrateToExternalDatabase = async () => {
+    if (!migrationConnectionString.trim()) {
+      toast.info('请先填写目标数据库连接串');
+      return;
+    }
+
+    const warning = migrationOverwrite
+      ? '确认迁移并覆盖目标数据库现有数据？'
+      : '确认迁移到目标数据库（目标中已有数据将导致失败）？';
+    if (!window.confirm(warning)) return;
+
+    setMigratingDatabase(true);
+    try {
+      const res = await api.migrateExternalDatabase({
+        dialect: migrationDialect,
+        connectionString: migrationConnectionString.trim(),
+        overwrite: migrationOverwrite,
+      });
+      setMigrationSummary(res);
+      toast.success(res?.message || '数据库迁移完成');
+    } catch (err: any) {
+      toast.error(err?.message || '数据库迁移失败');
+    } finally {
+      setMigratingDatabase(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="animate-fade-in">
@@ -837,6 +907,63 @@ export default function Settings() {
               {savingRouting ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存路由策略'}
             </button>
           </div>
+        </div>
+
+        <div className="card animate-slide-up stagger-6" style={{ padding: 20 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>数据库迁移（SQLite / MySQL / PostgreSQL）</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
+            在此填写目标数据库连接串，可先测试连接，再一键把当前 SQLite 数据迁移到目标库。
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: 10, marginBottom: 10 }}>
+            <select
+              value={migrationDialect}
+              onChange={(e) => setMigrationDialect(e.target.value as 'sqlite' | 'mysql' | 'postgres')}
+              style={inputStyle}
+            >
+              <option value="postgres">PostgreSQL</option>
+              <option value="mysql">MySQL</option>
+              <option value="sqlite">SQLite</option>
+            </select>
+            <input
+              value={migrationConnectionString}
+              onChange={(e) => setMigrationConnectionString(e.target.value)}
+              placeholder={migrationDialect === 'sqlite' ? './data/target.db 或 file:///abs/path.db' : '例如：postgres://user:pass@host:5432/db'}
+              style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+            />
+          </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+            <input
+              type="checkbox"
+              checked={migrationOverwrite}
+              onChange={(e) => setMigrationOverwrite(e.target.checked)}
+              style={{ width: 14, height: 14, accentColor: 'var(--color-primary)' }}
+            />
+            允许覆盖目标数据库现有数据
+          </label>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: migrationSummary ? 12 : 0 }}>
+            <button
+              onClick={handleTestExternalDatabaseConnection}
+              disabled={testingMigrationConnection || migratingDatabase}
+              className="btn btn-ghost"
+              style={{ border: '1px solid var(--color-border)' }}
+            >
+              {testingMigrationConnection ? <><span className="spinner spinner-sm" /> 测试中...</> : '测试连接'}
+            </button>
+            <button
+              onClick={handleMigrateToExternalDatabase}
+              disabled={migratingDatabase || testingMigrationConnection}
+              className="btn btn-primary"
+            >
+              {migratingDatabase ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 迁移中...</> : '开始迁移'}
+            </button>
+          </div>
+          {migrationSummary && (
+            <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.8 }}>
+              <div>目标：{migrationSummary.dialect}（{migrationSummary.connection}）</div>
+              <div>版本：{migrationSummary.version}，时间：{new Date(migrationSummary.timestamp).toLocaleString()}</div>
+              <div>迁移结果：站点 {migrationSummary.rows.sites} / 账号 {migrationSummary.rows.accounts} / 令牌 {migrationSummary.rows.accountTokens} / 路由 {migrationSummary.rows.tokenRoutes} / 通道 {migrationSummary.rows.routeChannels} / 设置 {migrationSummary.rows.settings}</div>
+            </div>
+          )}
         </div>
 
         <div className="card animate-slide-up stagger-6" style={{ padding: 20 }}>

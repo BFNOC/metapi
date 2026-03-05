@@ -21,8 +21,8 @@ describe('siteProxy', () => {
 
   beforeEach(async () => {
     const { invalidateSiteProxyCache } = await import('./siteProxy.js');
-    db.delete(schema.accounts).run();
-    db.delete(schema.sites).run();
+    await db.delete(schema.accounts).run();
+    await db.delete(schema.sites).run();
     invalidateSiteProxyCache();
   });
 
@@ -31,7 +31,7 @@ describe('siteProxy', () => {
   });
 
   it('resolves longest matched site proxy url', async () => {
-    db.insert(schema.sites).values([
+    await db.insert(schema.sites).values([
       {
         name: 'base-site',
         url: 'https://relay.example.com',
@@ -47,14 +47,14 @@ describe('siteProxy', () => {
     ]).run();
 
     const { resolveSiteProxyUrlByRequestUrl } = await import('./siteProxy.js');
-    expect(resolveSiteProxyUrlByRequestUrl('https://relay.example.com/openai/v1/models'))
+    expect(await resolveSiteProxyUrlByRequestUrl('https://relay.example.com/openai/v1/models'))
       .toBe('http://127.0.0.1:7890');
-    expect(resolveSiteProxyUrlByRequestUrl('https://relay.example.com/v1/models'))
+    expect(await resolveSiteProxyUrlByRequestUrl('https://relay.example.com/v1/models'))
       .toBe('http://127.0.0.1:7891');
   });
 
   it('injects dispatcher when proxy exists', async () => {
-    db.insert(schema.sites).values({
+    await db.insert(schema.sites).values({
       name: 'proxy-site',
       url: 'https://proxy-site.example.com',
       platform: 'new-api',
@@ -62,7 +62,7 @@ describe('siteProxy', () => {
     }).run();
 
     const { withSiteProxyRequestInit } = await import('./siteProxy.js');
-    const requestInit = withSiteProxyRequestInit('https://proxy-site.example.com/v1/chat/completions', {
+    const requestInit = await withSiteProxyRequestInit('https://proxy-site.example.com/v1/chat/completions', {
       method: 'POST',
     });
 

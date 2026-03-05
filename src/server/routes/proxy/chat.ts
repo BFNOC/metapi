@@ -139,7 +139,7 @@ async function handleChatProxyRequest(
 
   const { requestedModel, isStream, upstreamBody, claudeOriginalBody } = parsedRequest.value!;
   const downstreamPath = downstreamFormat === 'claude' ? '/v1/messages' : '/v1/chat/completions';
-  if (!ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
+  if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
   const downstreamPolicy = getDownstreamRoutingPolicy(request);
 
   const excludeChannelIds: number[] = [];
@@ -147,12 +147,12 @@ async function handleChatProxyRequest(
 
   while (retryCount <= MAX_RETRIES) {
     let selected = retryCount === 0
-      ? tokenRouter.selectChannel(requestedModel, downstreamPolicy)
-      : tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
+      ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
+      : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
 
     if (!selected && retryCount === 0) {
       await refreshModelsAndRebuildRoutes();
-      selected = tokenRouter.selectChannel(requestedModel, downstreamPolicy);
+      selected = await tokenRouter.selectChannel(requestedModel, downstreamPolicy);
     }
 
     if (!selected) {
@@ -703,7 +703,7 @@ async function handleChatProxyRequest(
   }
 }
 
-function logProxy(
+async function logProxy(
   selected: any,
   modelRequested: string,
   status: string,
@@ -724,7 +724,7 @@ function logProxy(
       upstreamPath,
       errorMessage,
     });
-    db.insert(schema.proxyLogs).values({
+    await db.insert(schema.proxyLogs).values({
       routeId: selected.channel.routeId,
       channelId: selected.channel.id,
       accountId: selected.account.id,

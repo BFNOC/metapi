@@ -314,12 +314,12 @@ function isSettingValueAcceptable(key: string, value: unknown): boolean {
   return true;
 }
 
-function exportAccountsSection(): AccountsBackupSection {
-  const sites = db.select().from(schema.sites).orderBy(asc(schema.sites.id)).all();
-  const accounts = db.select().from(schema.accounts).orderBy(asc(schema.accounts.id)).all();
-  const accountTokens = db.select().from(schema.accountTokens).orderBy(asc(schema.accountTokens.id)).all();
-  const tokenRoutes = db.select().from(schema.tokenRoutes).orderBy(asc(schema.tokenRoutes.id)).all();
-  const routeChannels = db.select().from(schema.routeChannels).orderBy(asc(schema.routeChannels.id)).all();
+async function exportAccountsSection(): Promise<AccountsBackupSection> {
+  const sites = await db.select().from(schema.sites).orderBy(asc(schema.sites.id)).all();
+  const accounts = await db.select().from(schema.accounts).orderBy(asc(schema.accounts.id)).all();
+  const accountTokens = await db.select().from(schema.accountTokens).orderBy(asc(schema.accountTokens.id)).all();
+  const tokenRoutes = await db.select().from(schema.tokenRoutes).orderBy(asc(schema.tokenRoutes.id)).all();
+  const routeChannels = await db.select().from(schema.routeChannels).orderBy(asc(schema.routeChannels.id)).all();
 
   return {
     sites,
@@ -330,8 +330,8 @@ function exportAccountsSection(): AccountsBackupSection {
   };
 }
 
-function exportPreferencesSection(): PreferencesBackupSection {
-  const settings = db.select().from(schema.settings).all()
+async function exportPreferencesSection(): Promise<PreferencesBackupSection> {
+  const settings = (await db.select().from(schema.settings).all())
     .filter((row) => !EXCLUDED_SETTING_KEYS.has(row.key))
     .map((row) => ({
       key: row.key,
@@ -341,14 +341,14 @@ function exportPreferencesSection(): PreferencesBackupSection {
   return { settings };
 }
 
-export function exportBackup(type: BackupExportType): BackupV2 {
+export async function exportBackup(type: BackupExportType): Promise<BackupV2> {
   const now = Date.now();
   if (type === 'accounts') {
     return {
       version: BACKUP_VERSION,
       timestamp: now,
       type: 'accounts',
-      accounts: exportAccountsSection(),
+      accounts: await exportAccountsSection(),
     };
   }
 
@@ -357,15 +357,15 @@ export function exportBackup(type: BackupExportType): BackupV2 {
       version: BACKUP_VERSION,
       timestamp: now,
       type: 'preferences',
-      preferences: exportPreferencesSection(),
+      preferences: await exportPreferencesSection(),
     };
   }
 
   return {
     version: BACKUP_VERSION,
     timestamp: now,
-    accounts: exportAccountsSection(),
-    preferences: exportPreferencesSection(),
+    accounts: await exportAccountsSection(),
+    preferences: await exportPreferencesSection(),
   };
 }
 
@@ -446,20 +446,20 @@ function detectPreferencesSection(data: RawBackupData): PreferencesBackupSection
   return null;
 }
 
-function importAccountsSection(section: AccountsBackupSection) {
-  db.transaction((tx) => {
-    tx.delete(schema.routeChannels).run();
-    tx.delete(schema.tokenRoutes).run();
-    tx.delete(schema.tokenModelAvailability).run();
-    tx.delete(schema.modelAvailability).run();
-    tx.delete(schema.proxyLogs).run();
-    tx.delete(schema.checkinLogs).run();
-    tx.delete(schema.accountTokens).run();
-    tx.delete(schema.accounts).run();
-    tx.delete(schema.sites).run();
+async function importAccountsSection(section: AccountsBackupSection): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.delete(schema.routeChannels).run();
+    await tx.delete(schema.tokenRoutes).run();
+    await tx.delete(schema.tokenModelAvailability).run();
+    await tx.delete(schema.modelAvailability).run();
+    await tx.delete(schema.proxyLogs).run();
+    await tx.delete(schema.checkinLogs).run();
+    await tx.delete(schema.accountTokens).run();
+    await tx.delete(schema.accounts).run();
+    await tx.delete(schema.sites).run();
 
     for (const row of section.sites) {
-      tx.insert(schema.sites).values({
+      await tx.insert(schema.sites).values({
         id: row.id,
         name: row.name,
         url: row.url,
@@ -476,7 +476,7 @@ function importAccountsSection(section: AccountsBackupSection) {
     }
 
     for (const row of section.accounts) {
-      tx.insert(schema.accounts).values({
+      await tx.insert(schema.accounts).values({
         id: row.id,
         siteId: row.siteId,
         username: row.username,
@@ -500,7 +500,7 @@ function importAccountsSection(section: AccountsBackupSection) {
     }
 
     for (const row of section.accountTokens) {
-      tx.insert(schema.accountTokens).values({
+      await tx.insert(schema.accountTokens).values({
         id: row.id,
         accountId: row.accountId,
         name: row.name,
@@ -515,7 +515,7 @@ function importAccountsSection(section: AccountsBackupSection) {
     }
 
     for (const row of section.tokenRoutes) {
-      tx.insert(schema.tokenRoutes).values({
+      await tx.insert(schema.tokenRoutes).values({
         id: row.id,
         modelPattern: row.modelPattern,
         displayName: row.displayName ?? null,
@@ -528,7 +528,7 @@ function importAccountsSection(section: AccountsBackupSection) {
     }
 
     for (const row of section.routeChannels) {
-      tx.insert(schema.routeChannels).values({
+      await tx.insert(schema.routeChannels).values({
         id: row.id,
         routeId: row.routeId,
         accountId: row.accountId,
@@ -550,14 +550,14 @@ function importAccountsSection(section: AccountsBackupSection) {
   });
 }
 
-function importPreferencesSection(section: PreferencesBackupSection): Array<{ key: string; value: unknown }> {
+async function importPreferencesSection(section: PreferencesBackupSection): Promise<Array<{ key: string; value: unknown }>> {
   const applied: Array<{ key: string; value: unknown }> = [];
 
-  db.transaction((tx) => {
+  await db.transaction(async (tx) => {
     for (const row of section.settings) {
       if (!isSettingValueAcceptable(row.key, row.value)) continue;
 
-      tx.insert(schema.settings).values({
+      await tx.insert(schema.settings).values({
         key: row.key,
         value: stringifySettingValue(row.value),
       }).onConflictDoUpdate({
@@ -571,7 +571,7 @@ function importPreferencesSection(section: PreferencesBackupSection): Array<{ ke
   return applied;
 }
 
-export function importBackup(data: RawBackupData): BackupImportResult {
+export async function importBackup(data: RawBackupData): Promise<BackupImportResult> {
   if (!isRecord(data)) {
     throw new Error('导入数据格式错误：必须为 JSON 对象');
   }
@@ -599,7 +599,7 @@ export function importBackup(data: RawBackupData): BackupImportResult {
     if (!accountsSection) {
       throw new Error('导入数据格式错误：账号数据结构不正确');
     }
-    importAccountsSection(accountsSection);
+    await importAccountsSection(accountsSection);
     accountsImported = true;
   }
 
@@ -607,7 +607,7 @@ export function importBackup(data: RawBackupData): BackupImportResult {
     if (!preferencesSection) {
       throw new Error('导入数据格式错误：设置数据结构不正确');
     }
-    appliedSettings = importPreferencesSection(preferencesSection);
+    appliedSettings = await importPreferencesSection(preferencesSection);
     preferencesImported = true;
   }
 

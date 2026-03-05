@@ -202,6 +202,17 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify(data),
   }),
+  testExternalDatabaseConnection: (data: { dialect: 'sqlite' | 'mysql' | 'postgres'; connectionString: string; overwrite?: boolean }) =>
+    request('/api/settings/database/test-connection', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  migrateExternalDatabase: (data: { dialect: 'sqlite' | 'mysql' | 'postgres'; connectionString: string; overwrite?: boolean }) =>
+    request('/api/settings/database/migrate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      timeoutMs: 120_000,
+    }),
   getDownstreamApiKeys: () => request('/api/downstream-keys'),
   createDownstreamApiKey: (data: any) => request('/api/downstream-keys', {
     method: 'POST',

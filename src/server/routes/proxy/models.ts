@@ -9,8 +9,8 @@ export async function modelsProxyRoute(app: FastifyInstance) {
   app.get('/v1/models', async (request) => {
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
 
-    const readModels = () => {
-      const rows = db.select({ modelName: schema.modelAvailability.modelName })
+    const readModels = async () => {
+      const rows = await db.select({ modelName: schema.modelAvailability.modelName })
         .from(schema.modelAvailability)
         .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
         .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
@@ -22,23 +22,29 @@ export async function modelsProxyRoute(app: FastifyInstance) {
           ),
         )
         .all();
-      const routeAliases = db.select({ displayName: schema.tokenRoutes.displayName })
+      const routeAliases = (await db.select({ displayName: schema.tokenRoutes.displayName })
         .from(schema.tokenRoutes)
         .where(eq(schema.tokenRoutes.enabled, true))
-        .all()
+        .all())
         .map((row) => (row.displayName || '').trim())
         .filter((name) => name.length > 0);
       const deduped = Array.from(new Set([
         ...rows.map((r) => r.modelName),
         ...routeAliases,
       ])).sort();
-      return deduped.filter((modelName) => isModelAllowedByPolicyOrAllowedRoutes(modelName, downstreamPolicy));
+      const allowed: string[] = [];
+      for (const modelName of deduped) {
+        if (await isModelAllowedByPolicyOrAllowedRoutes(modelName, downstreamPolicy)) {
+          allowed.push(modelName);
+        }
+      }
+      return allowed;
     };
 
-    let models = readModels();
+    let models = await readModels();
     if (models.length === 0) {
       await refreshModelsAndRebuildRoutes();
-      models = readModels();
+      models = await readModels();
     }
 
     const wantsClaudeFormat = typeof request.headers['anthropic-version'] === 'string'

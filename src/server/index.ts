@@ -27,12 +27,12 @@ import { db, schema } from './db/index.js';
 
 // Load runtime config overrides from settings
 try {
-  const rows = db.select().from(schema.settings).all();
+  const rows = await db.select().from(schema.settings).all();
   const settingsMap = new Map(rows.map((row) => [row.key, row.value]));
 
   const parseSetting = <T>(key: string): T | undefined => {
     const raw = settingsMap.get(key);
-    if (!raw) return undefined;
+    if (typeof raw !== 'string' || !raw) return undefined;
     try {
       return JSON.parse(raw) as T;
     } catch {
@@ -195,7 +195,7 @@ if (existsSync(webDir)) {
 }
 
 // Start scheduler
-startScheduler();
+await startScheduler();
 startProxyLogRetentionService();
 app.addHook('onClose', async () => {
   stopProxyLogRetentionService();

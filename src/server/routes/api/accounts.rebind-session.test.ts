@@ -159,4 +159,135 @@ describe('accounts rebind-session api', () => {
     expect(latest?.username).toBe('linuxdo_1002');
     expect(latest?.status).toBe('active');
   });
+
+  it('stores managed sub2api refresh token fields when provided during rebind', async () => {
+    verifyTokenMock.mockResolvedValueOnce({
+      tokenType: 'session',
+      userInfo: { username: 'sub2_user' },
+    });
+
+    const site = db.insert(schema.sites).values({
+      name: 'Sub2 Rebind Site',
+      url: 'https://sub2.example.com',
+      platform: 'sub2api',
+    }).returning().get();
+
+    const account = db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'sub2_user',
+      accessToken: 'old-access-token',
+      status: 'expired',
+      extraConfig: JSON.stringify({
+        sub2apiAuth: {
+          refreshToken: 'old-refresh-token',
+          tokenExpiresAt: 1750000000000,
+        },
+      }),
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${account.id}/rebind-session`,
+      payload: {
+        accessToken: 'new-session-token',
+        refreshToken: 'new-refresh-token',
+        tokenExpiresAt: 1760000000000,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const latest = db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
+    const parsedExtra = JSON.parse(String(latest?.extraConfig || '{}')) as {
+      sub2apiAuth?: { refreshToken?: string; tokenExpiresAt?: number };
+    };
+    expect(parsedExtra.sub2apiAuth?.refreshToken).toBe('new-refresh-token');
+    expect(parsedExtra.sub2apiAuth?.tokenExpiresAt).toBe(1760000000000);
+  });
+
+  it('keeps existing sub2api refresh token when rebind payload refreshToken is empty', async () => {
+    verifyTokenMock.mockResolvedValueOnce({
+      tokenType: 'session',
+      userInfo: { username: 'sub2_user' },
+    });
+
+    const site = db.insert(schema.sites).values({
+      name: 'Sub2 Rebind Site',
+      url: 'https://sub2.example.com',
+      platform: 'sub2api',
+    }).returning().get();
+
+    const account = db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'sub2_user',
+      accessToken: 'old-access-token',
+      status: 'expired',
+      extraConfig: JSON.stringify({
+        sub2apiAuth: {
+          refreshToken: 'kept-refresh-token',
+          tokenExpiresAt: 1750000000000,
+        },
+      }),
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${account.id}/rebind-session`,
+      payload: {
+        accessToken: 'new-session-token',
+        refreshToken: '',
+        tokenExpiresAt: 1760000000000,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const latest = db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
+    const parsedExtra = JSON.parse(String(latest?.extraConfig || '{}')) as {
+      sub2apiAuth?: { refreshToken?: string; tokenExpiresAt?: number };
+    };
+    expect(parsedExtra.sub2apiAuth?.refreshToken).toBe('kept-refresh-token');
+    expect(parsedExtra.sub2apiAuth?.tokenExpiresAt).toBe(1760000000000);
+  });
+
+  it('ignores managed sub2api refresh token fields for non-sub2api rebind', async () => {
+    verifyTokenMock.mockResolvedValueOnce({
+      tokenType: 'session',
+      userInfo: { username: 'linuxdo_1003' },
+    });
+
+    const site = db.insert(schema.sites).values({
+      name: 'Rebind Site',
+      url: 'https://rebind.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'linuxdo_1001',
+      accessToken: 'old-access-token',
+      status: 'expired',
+      extraConfig: JSON.stringify({ platformUserId: 1001 }),
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${account.id}/rebind-session`,
+      payload: {
+        accessToken: 'new-session-token',
+        refreshToken: 'should-be-ignored',
+        tokenExpiresAt: 1760000000000,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const latest = db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
+    const parsedExtra = JSON.parse(String(latest?.extraConfig || '{}')) as {
+      sub2apiAuth?: { refreshToken?: string; tokenExpiresAt?: number };
+      platformUserId?: number;
+    };
+    expect(parsedExtra.platformUserId).toBe(1001);
+    expect(parsedExtra.sub2apiAuth).toBeUndefined();
+  });
 });

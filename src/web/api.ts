@@ -110,7 +110,7 @@ export const api = {
   addAccount: (data: any) => request('/api/accounts', { method: 'POST', body: JSON.stringify(data) }),
   loginAccount: (data: { siteId: number; username: string; password: string }) => request('/api/accounts/login', { method: 'POST', body: JSON.stringify(data) }),
   verifyToken: (data: { siteId: number; accessToken: string; platformUserId?: number; credentialMode?: 'auto' | 'session' | 'apikey' }) => request('/api/accounts/verify-token', { method: 'POST', body: JSON.stringify(data) }),
-  rebindAccountSession: (id: number, data: { accessToken: string; platformUserId?: number }) =>
+  rebindAccountSession: (id: number, data: { accessToken: string; platformUserId?: number; refreshToken?: string; tokenExpiresAt?: number }) =>
     request(`/api/accounts/${id}/rebind-session`, { method: 'POST', body: JSON.stringify(data) }),
   updateAccount: (id: number, data: any) => request(`/api/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteAccount: (id: number) => request(`/api/accounts/${id}`, { method: 'DELETE' }),

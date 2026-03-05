@@ -594,7 +594,7 @@ export async function accountsRoutes(app: FastifyInstance) {
     };
   });
 
-  app.post<{ Params: { id: string }; Body: { accessToken: string; platformUserId?: number } }>(
+  app.post<{ Params: { id: string }; Body: { accessToken: string; platformUserId?: number; refreshToken?: string; tokenExpiresAt?: number | string } }>(
     '/api/accounts/:id/rebind-session',
     async (request, reply) => {
       const accountId = Number.parseInt(request.params.id, 10);
@@ -671,6 +671,18 @@ export async function accountsRoutes(app: FastifyInstance) {
       const extraConfigPatch: Record<string, unknown> = { credentialMode: 'session' };
       if (resolvedPlatformUserId) {
         extraConfigPatch.platformUserId = resolvedPlatformUserId;
+      }
+      if ((site.platform || '').toLowerCase() === 'sub2api') {
+        const existingManagedAuth = getSub2ApiAuthFromExtraConfig(account.extraConfig);
+        const requestedRefreshToken = normalizeManagedRefreshToken(request.body?.refreshToken);
+        const requestedTokenExpiresAt = normalizeManagedTokenExpiresAt(request.body?.tokenExpiresAt);
+        const nextRefreshToken = requestedRefreshToken || existingManagedAuth?.refreshToken;
+        const nextTokenExpiresAt = requestedTokenExpiresAt ?? existingManagedAuth?.tokenExpiresAt;
+        if (nextRefreshToken) {
+          extraConfigPatch.sub2apiAuth = nextTokenExpiresAt
+            ? { refreshToken: nextRefreshToken, tokenExpiresAt: nextTokenExpiresAt }
+            : { refreshToken: nextRefreshToken };
+        }
       }
       updates.extraConfig = mergeAccountExtraConfig(account.extraConfig, extraConfigPatch);
 

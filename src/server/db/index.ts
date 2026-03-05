@@ -9,7 +9,7 @@ import { config } from '../config.js';
 import { mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
 
-type RuntimeDbDialect = 'sqlite' | 'mysql' | 'postgres';
+export type RuntimeDbDialect = 'sqlite' | 'mysql' | 'postgres';
 type SqlMethod = 'all' | 'get' | 'run' | 'values' | 'execute';
 
 const TABLES_WITH_NUMERIC_ID = new Set([
@@ -26,7 +26,7 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'events',
 ]);
 
-export const runtimeDbDialect: RuntimeDbDialect = config.dbType;
+export let runtimeDbDialect: RuntimeDbDialect = config.dbType;
 
 let sqliteConnection: Database.Database | null = null;
 let mysqlPool: mysql.Pool | null = null;
@@ -590,7 +590,13 @@ function initDb(): AppDb {
   return initSqliteDb();
 }
 
-export const db: any = initDb();
+let activeDb: AppDb = initDb();
+
+export const db: any = new Proxy({}, {
+  get(_target, prop) {
+    return (activeDb as any)?.[prop as keyof typeof activeDb];
+  },
+});
 export { schema };
 
 export async function closeDbConnections(): Promise<void> {
@@ -605,5 +611,28 @@ export async function closeDbConnections(): Promise<void> {
   if (sqliteConnection) {
     sqliteConnection.close();
     sqliteConnection = null;
+  }
+}
+
+export async function switchRuntimeDatabase(nextDialect: RuntimeDbDialect, nextDbUrl: string): Promise<void> {
+  const previousDialect = runtimeDbDialect;
+  const previousDbUrl = config.dbUrl;
+  const previousConfigDialect = config.dbType;
+
+  await closeDbConnections();
+
+  runtimeDbDialect = nextDialect;
+  config.dbType = nextDialect;
+  config.dbUrl = nextDbUrl;
+
+  try {
+    activeDb = initDb();
+  } catch (error) {
+    await closeDbConnections();
+    runtimeDbDialect = previousDialect;
+    config.dbType = previousConfigDialect;
+    config.dbUrl = previousDbUrl;
+    activeDb = initDb();
+    throw error;
   }
 }

@@ -202,6 +202,12 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify(data),
   }),
+  getRuntimeDatabaseConfig: () => request('/api/settings/database/runtime'),
+  updateRuntimeDatabaseConfig: (data: { dialect: 'sqlite' | 'mysql' | 'postgres'; connectionString: string }) =>
+    request('/api/settings/database/runtime', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
   testExternalDatabaseConnection: (data: { dialect: 'sqlite' | 'mysql' | 'postgres'; connectionString: string; overwrite?: boolean }) =>
     request('/api/settings/database/test-connection', {
       method: 'POST',

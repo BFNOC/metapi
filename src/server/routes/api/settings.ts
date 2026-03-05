@@ -1,13 +1,19 @@
 ﻿import { FastifyInstance } from 'fastify';
 import cron from 'node-cron';
 import { config } from '../../config.js';
-import { db, schema } from '../../db/index.js';
+import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { updateBalanceRefreshCron, updateCheckinCron } from '../../services/checkinScheduler.js';
 import { sendNotification } from '../../services/notifyService.js';
 import { exportBackup, importBackup, type BackupExportType } from '../../services/backupService.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
-import { migrateCurrentDatabase, testDatabaseConnection } from '../../services/databaseMigrationService.js';
+import {
+  maskConnectionString,
+  migrateCurrentDatabase,
+  normalizeMigrationInput,
+  testDatabaseConnection,
+  type MigrationDialect,
+} from '../../services/databaseMigrationService.js';
 import { extractClientIp, isIpAllowed } from '../../middleware/auth.js';
 
 type RoutingWeights = typeof config.routingWeights;
@@ -45,7 +51,14 @@ interface DatabaseMigrationBody {
   overwrite?: unknown;
 }
 
+type RuntimeDatabaseConfig = {
+  dialect: MigrationDialect;
+  connectionString: string;
+};
+
 const PROXY_TOKEN_PREFIX = 'sk-';
+const DB_TYPE_SETTING_KEY = 'db_type';
+const DB_URL_SETTING_KEY = 'db_url';
 
 function isValidProxyToken(value: string): boolean {
   return value.startsWith(PROXY_TOKEN_PREFIX) && value.length >= 6;
@@ -278,6 +291,66 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     adminIpAllowlist: config.adminIpAllowlist,
     currentAdminIp,
     proxyTokenMasked: maskSecret(config.proxyToken),
+  };
+}
+
+function parseJsonValue(raw: unknown): unknown {
+  if (typeof raw !== 'string' || !raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+function maskRuntimeConnection(dialect: MigrationDialect, connectionString: string): string {
+  const normalized = connectionString.trim();
+  if (dialect === 'sqlite' && !normalized) return '(default sqlite path)';
+  return maskConnectionString(normalized);
+}
+
+async function loadSavedRuntimeDatabaseConfig(): Promise<RuntimeDatabaseConfig | null> {
+  const settingsRows = await db.select().from(schema.settings).all();
+  const map = new Map(settingsRows.map((row) => [row.key, row.value]));
+  const rawDialect = parseJsonValue(map.get(DB_TYPE_SETTING_KEY));
+  const rawConnection = parseJsonValue(map.get(DB_URL_SETTING_KEY));
+  if (typeof rawDialect !== 'string' || typeof rawConnection !== 'string') {
+    return null;
+  }
+
+  try {
+    const normalized = normalizeMigrationInput({
+      dialect: rawDialect,
+      connectionString: rawConnection,
+    });
+    return {
+      dialect: normalized.dialect,
+      connectionString: normalized.connectionString,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildRuntimeDatabaseState(saved: RuntimeDatabaseConfig | null) {
+  const activeDialect = runtimeDbDialect;
+  const activeConnection = (config.dbUrl || '').trim();
+  const restartRequired = !!saved && (
+    saved.dialect !== activeDialect || saved.connectionString.trim() !== activeConnection
+  );
+
+  return {
+    active: {
+      dialect: activeDialect,
+      connection: maskRuntimeConnection(activeDialect, activeConnection),
+    },
+    saved: saved
+      ? {
+        dialect: saved.dialect,
+        connection: maskRuntimeConnection(saved.dialect, saved.connectionString),
+      }
+      : null,
+    restartRequired,
   };
 }
 
@@ -600,6 +673,44 @@ export async function settingsRoutes(app: FastifyInstance) {
       message: '运行时设置已更新',
       ...getRuntimeSettingsResponse(currentRequestIp),
     };
+  });
+
+  app.get('/api/settings/database/runtime', async () => {
+    const saved = await loadSavedRuntimeDatabaseConfig();
+    return {
+      success: true,
+      ...buildRuntimeDatabaseState(saved),
+    };
+  });
+
+  app.put<{ Body: DatabaseMigrationBody }>('/api/settings/database/runtime', async (request, reply) => {
+    try {
+      const normalized = normalizeMigrationInput(request.body || {});
+      await upsertSetting(DB_TYPE_SETTING_KEY, normalized.dialect);
+      await upsertSetting(DB_URL_SETTING_KEY, normalized.connectionString);
+
+      await appendSettingsEvent({
+        type: 'status',
+        title: '数据库运行配置已更新',
+        message: `已保存运行数据库配置：${normalized.dialect}（重启后生效）`,
+      });
+
+      const saved: RuntimeDatabaseConfig = {
+        dialect: normalized.dialect,
+        connectionString: normalized.connectionString,
+      };
+
+      return {
+        success: true,
+        message: '数据库运行配置已保存，重启容器后生效',
+        ...buildRuntimeDatabaseState(saved),
+      };
+    } catch (err: any) {
+      return reply.code(400).send({
+        success: false,
+        message: err?.message || '数据库运行配置保存失败',
+      });
+    }
   });
 
   app.post<{ Body: DatabaseMigrationBody }>('/api/settings/database/test-connection', async (request, reply) => {

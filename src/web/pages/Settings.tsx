@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import ChangeKeyModal from '../components/ChangeKeyModal.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { InlineBrandIcon, getBrand, useIconCdn } from '../components/BrandIcon.js';
+import ModernSelect from '../components/ModernSelect.js';
 import {
   applyRoutingProfilePreset,
   resolveRoutingProfilePreset,
@@ -16,6 +17,7 @@ import { tr } from '../i18n.js';
 
 const PROXY_TOKEN_PREFIX = 'sk-';
 const ROUTE_BRAND_ICON_PREFIX = 'brand:';
+type DbDialect = 'sqlite' | 'mysql' | 'postgres';
 
 type RuntimeSettings = {
   checkinCron: string;
@@ -64,7 +66,7 @@ type RouteSelectorItem = {
 };
 
 type DatabaseMigrationSummary = {
-  dialect: 'sqlite' | 'mysql' | 'postgres';
+  dialect: DbDialect;
   connection: string;
   overwrite: boolean;
   version: string;
@@ -79,6 +81,26 @@ type DatabaseMigrationSummary = {
   };
 };
 
+type RuntimeDatabaseState = {
+  active: {
+    dialect: DbDialect;
+    connection: string;
+  };
+  saved: {
+    dialect: DbDialect;
+    connection: string;
+  } | null;
+  restartRequired: boolean;
+};
+
+type ShorthandConnection = {
+  host: string;
+  user: string;
+  password: string;
+  port: string;
+  database: string;
+};
+
 const defaultWeights: RoutingWeights = {
   baseWeightFactor: 0.5,
   valueScoreFactor: 0.5,
@@ -86,6 +108,29 @@ const defaultWeights: RoutingWeights = {
   balanceWeight: 0.3,
   usageWeight: 0.3,
 };
+
+function getDialectDefaults(dialect: DbDialect) {
+  if (dialect === 'mysql') {
+    return { port: '3306', database: 'mysql' };
+  }
+  if (dialect === 'postgres') {
+    return { port: '5432', database: 'postgres' };
+  }
+  return { port: '', database: '' };
+}
+
+function buildShorthandConnectionString(dialect: DbDialect, input: ShorthandConnection): string {
+  if (dialect === 'sqlite') return '';
+  const host = input.host.trim();
+  const user = input.user.trim();
+  const password = input.password;
+  if (!host || !user || !password) return '';
+  const defaults = getDialectDefaults(dialect);
+  const port = (input.port || defaults.port).trim() || defaults.port;
+  const database = (input.database || defaults.database).trim() || defaults.database;
+  const protocol = dialect === 'mysql' ? 'mysql' : 'postgres';
+  return `${protocol}://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
+}
 
 function isRegexModelPattern(pattern: string): boolean {
   return pattern.trim().toLowerCase().startsWith('re:');
@@ -135,12 +180,23 @@ export default function Settings() {
   const [adminIpAllowlistText, setAdminIpAllowlistText] = useState('');
   const [clearingCache, setClearingCache] = useState(false);
   const [clearingUsage, setClearingUsage] = useState(false);
-  const [migrationDialect, setMigrationDialect] = useState<'sqlite' | 'mysql' | 'postgres'>('postgres');
+  const [migrationDialect, setMigrationDialect] = useState<DbDialect>('postgres');
   const [migrationConnectionString, setMigrationConnectionString] = useState('');
+  const [connectionMode, setConnectionMode] = useState<'shorthand' | 'advanced'>('shorthand');
+  const [showShorthandOptional, setShowShorthandOptional] = useState(false);
+  const [shorthandConnection, setShorthandConnection] = useState<ShorthandConnection>({
+    host: '',
+    user: '',
+    password: '',
+    port: '5432',
+    database: 'postgres',
+  });
   const [migrationOverwrite, setMigrationOverwrite] = useState(true);
   const [testingMigrationConnection, setTestingMigrationConnection] = useState(false);
   const [migratingDatabase, setMigratingDatabase] = useState(false);
+  const [savingRuntimeDatabase, setSavingRuntimeDatabase] = useState(false);
   const [migrationSummary, setMigrationSummary] = useState<DatabaseMigrationSummary | null>(null);
+  const [runtimeDatabaseState, setRuntimeDatabaseState] = useState<RuntimeDatabaseState | null>(null);
   const [showChangeKey, setShowChangeKey] = useState(false);
   const [downstreamKeys, setDownstreamKeys] = useState<DownstreamApiKeyItem[]>([]);
   const [downstreamLoading, setDownstreamLoading] = useState(false);
@@ -201,6 +257,29 @@ export default function Settings() {
     });
   }, [groupRouteOptions, selectorGroupSearch]);
 
+  const generatedConnectionString = useMemo(() => (
+    buildShorthandConnectionString(migrationDialect, shorthandConnection)
+  ), [migrationDialect, shorthandConnection]);
+
+  const effectiveMigrationConnectionString = useMemo(() => {
+    if (migrationDialect === 'sqlite') return migrationConnectionString.trim();
+    if (connectionMode === 'advanced') return migrationConnectionString.trim();
+    return generatedConnectionString.trim();
+  }, [connectionMode, generatedConnectionString, migrationConnectionString, migrationDialect]);
+
+  useEffect(() => {
+    const defaults = getDialectDefaults(migrationDialect);
+    if (migrationDialect === 'sqlite') {
+      setConnectionMode('advanced');
+      return;
+    }
+    setShorthandConnection((prev) => ({
+      ...prev,
+      port: defaults.port,
+      database: defaults.database,
+    }));
+  }, [migrationDialect]);
+
   const inputStyle: React.CSSProperties = {
     width: '100%',
     padding: '10px 14px',
@@ -232,7 +311,7 @@ export default function Settings() {
       const items = Array.isArray(res?.items) ? res.items : [];
       setDownstreamKeys(items);
     } catch (err: any) {
-      toast.error(err?.message || '加载下游 API Key 失败');
+      toast.error(err?.message || '鍔犺浇涓嬫父 API Key 澶辫触');
     } finally {
       setDownstreamLoading(false);
     }
@@ -250,7 +329,7 @@ export default function Settings() {
         enabled: !!row.enabled,
       })));
     } catch (err: any) {
-      toast.error(err?.message || '加载路由列表失败');
+      toast.error(err?.message || '鍔犺浇璺敱鍒楄〃澶辫触');
     } finally {
       setSelectorLoading(false);
     }
@@ -259,11 +338,12 @@ export default function Settings() {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const [authInfo, runtimeInfo, downstreamInfo, routeRows] = await Promise.all([
+      const [authInfo, runtimeInfo, downstreamInfo, routeRows, runtimeDatabaseInfo] = await Promise.all([
         api.getAuthInfo(),
         api.getRuntimeSettings(),
         api.getDownstreamApiKeys(),
         api.getRoutes(),
+        api.getRuntimeDatabaseConfig(),
       ]);
       setMaskedToken(authInfo.masked || '****');
       setRuntime({
@@ -295,8 +375,24 @@ export default function Settings() {
         displayIcon: row.displayIcon,
         enabled: !!row.enabled,
       })));
+      if (runtimeDatabaseInfo?.active?.dialect) {
+        setMigrationDialect(runtimeDatabaseInfo.active.dialect as DbDialect);
+      }
+      setRuntimeDatabaseState({
+        active: {
+          dialect: (runtimeDatabaseInfo?.active?.dialect || 'sqlite') as DbDialect,
+          connection: String(runtimeDatabaseInfo?.active?.connection || ''),
+        },
+        saved: runtimeDatabaseInfo?.saved
+          ? {
+            dialect: runtimeDatabaseInfo.saved.dialect as DbDialect,
+            connection: String(runtimeDatabaseInfo.saved.connection || ''),
+          }
+          : null,
+        restartRequired: !!runtimeDatabaseInfo?.restartRequired,
+      });
     } catch (err: any) {
-      toast.error(err?.message || '加载设置失败');
+      toast.error(err?.message || '鍔犺浇璁剧疆澶辫触');
     } finally {
       setLoading(false);
     }
@@ -321,9 +417,9 @@ export default function Settings() {
         checkinCron: runtime.checkinCron,
         balanceRefreshCron: runtime.balanceRefreshCron,
       });
-      toast.success('定时任务设置已保存');
+      toast.success('Schedule settings saved');
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || '淇濆瓨澶辫触');
     } finally {
       setSavingSchedule(false);
     }
@@ -332,7 +428,7 @@ export default function Settings() {
   const saveProxyToken = async () => {
     const suffix = proxyTokenSuffix.trim();
     if (!suffix) {
-      toast.info(tr('请输入 sk- 后的令牌内容'));
+      toast.info(tr('璇疯緭鍏?sk- 鍚庣殑浠ょ墝鍐呭'));
       return;
     }
     setSavingToken(true);
@@ -340,9 +436,9 @@ export default function Settings() {
       const res = await api.updateRuntimeSettings({ proxyToken: `${PROXY_TOKEN_PREFIX}${suffix}` });
       setRuntime((prev) => ({ ...prev, proxyTokenMasked: res.proxyTokenMasked || prev.proxyTokenMasked }));
       setProxyTokenSuffix('');
-      toast.success(tr('下游访问令牌已更新'));
+      toast.success('Proxy token updated');
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || '淇濆瓨澶辫触');
     } finally {
       setSavingToken(false);
     }
@@ -401,15 +497,15 @@ export default function Settings() {
     const name = downstreamCreate.name.trim();
     const rawKey = downstreamCreate.key.trim();
     if (!name) {
-      toast.info('请填写名称');
+      toast.info('Please enter a name');
       return;
     }
     if (!rawKey) {
-      toast.info('请填写 API Key');
+      toast.info('璇峰～鍐?API Key');
       return;
     }
     if (!rawKey.startsWith(PROXY_TOKEN_PREFIX)) {
-      toast.info('API Key 必须以 sk- 开头');
+      toast.info('API Key must start with sk-');
       return;
     }
 
@@ -428,16 +524,16 @@ export default function Settings() {
 
       if (editingDownstreamId) {
         await api.updateDownstreamApiKey(editingDownstreamId, payload);
-        toast.success('下游 API Key 已更新');
+        toast.success('Downstream API Key updated');
       } else {
         await api.createDownstreamApiKey(payload);
-        toast.success('下游 API Key 已创建');
+        toast.success('Downstream API Key created');
       }
       setDownstreamModalOpen(false);
       resetDownstreamForm();
       await loadDownstreamKeys();
     } catch (err: any) {
-      toast.error(err?.message || '保存下游 API Key 失败');
+      toast.error(err?.message || '淇濆瓨涓嬫父 API Key 澶辫触');
     } finally {
       setDownstreamSaving(false);
     }
@@ -480,7 +576,7 @@ export default function Settings() {
     await runDownstreamOp(item.id, async () => {
       await api.updateDownstreamApiKey(item.id, { enabled: !item.enabled });
       await loadDownstreamKeys();
-      toast.success(item.enabled ? '已禁用' : '已启用');
+      toast.success(item.enabled ? 'Disabled' : 'Enabled');
     });
   };
 
@@ -488,12 +584,12 @@ export default function Settings() {
     await runDownstreamOp(item.id, async () => {
       await api.resetDownstreamApiKeyUsage(item.id);
       await loadDownstreamKeys();
-      toast.success('已重置用量');
+      toast.success('Usage reset');
     });
   };
 
   const deleteDownstreamKey = async (item: DownstreamApiKeyItem) => {
-    if (!window.confirm(`确认删除 API Key：${item.name}？`)) return;
+    if (!window.confirm('Confirm delete API Key?')) return;
     await runDownstreamOp(item.id, async () => {
       await api.deleteDownstreamApiKey(item.id);
       if (editingDownstreamId === item.id) {
@@ -501,7 +597,7 @@ export default function Settings() {
         resetDownstreamForm();
       }
       await loadDownstreamKeys();
-      toast.success('已删除');
+      toast.success('Deleted');
     });
   };
 
@@ -512,9 +608,9 @@ export default function Settings() {
         routingWeights: runtime.routingWeights,
         routingFallbackUnitCost: runtime.routingFallbackUnitCost,
       });
-      toast.success('路由权重已保存');
+      toast.success('Routing weights saved');
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || '淇濆瓨澶辫触');
     } finally {
       setSavingRouting(false);
     }
@@ -544,9 +640,9 @@ export default function Settings() {
           ? res.currentAdminIp
           : prev.currentAdminIp,
       }));
-      toast.success('安全设置已保存');
+      toast.success('Security settings saved');
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || '淇濆瓨澶辫触');
     } finally {
       setSavingSecurity(false);
     }
@@ -554,34 +650,34 @@ export default function Settings() {
 
 
   const handleClearCache = async () => {
-    if (!window.confirm('确认清理模型缓存并重建路由？')) return;
+    if (!window.confirm('纭娓呯悊妯″瀷缂撳瓨骞堕噸寤鸿矾鐢憋紵')) return;
     setClearingCache(true);
     try {
       const res = await api.clearRuntimeCache();
-      toast.success(`缓存已清理（模型缓存 ${res.deletedModelAvailability || 0} 条）`);
+      toast.success(`缂撳瓨宸叉竻鐞嗭紙妯″瀷缂撳瓨 ${res.deletedModelAvailability || 0} 鏉★級`);
     } catch (err: any) {
-      toast.error(err?.message || '清理缓存失败');
+      toast.error(err?.message || '娓呯悊缂撳瓨澶辫触');
     } finally {
       setClearingCache(false);
     }
   };
 
   const handleClearUsage = async () => {
-    if (!window.confirm('确认清理占用统计与使用日志？')) return;
+    if (!window.confirm('纭娓呯悊鍗犵敤缁熻涓庝娇鐢ㄦ棩蹇楋紵')) return;
     setClearingUsage(true);
     try {
       const res = await api.clearUsageData();
-      toast.success(`占用统计已清理（日志 ${res.deletedProxyLogs || 0} 条）`);
+      toast.success(`鍗犵敤缁熻宸叉竻鐞嗭紙鏃ュ織 ${res.deletedProxyLogs || 0} 鏉★級`);
     } catch (err: any) {
-      toast.error(err?.message || '清理占用失败');
+      toast.error(err?.message || '娓呯悊鍗犵敤澶辫触');
     } finally {
       setClearingUsage(false);
     }
   };
 
   const handleTestExternalDatabaseConnection = async () => {
-    if (!migrationConnectionString.trim()) {
-      toast.info('请先填写目标数据库连接串');
+    if (!effectiveMigrationConnectionString) {
+      toast.info('Please fill target database connection first');
       return;
     }
 
@@ -589,41 +685,74 @@ export default function Settings() {
     try {
       const res = await api.testExternalDatabaseConnection({
         dialect: migrationDialect,
-        connectionString: migrationConnectionString.trim(),
+        connectionString: effectiveMigrationConnectionString,
         overwrite: migrationOverwrite,
       });
-      toast.success(`连接成功：${res.connection || migrationDialect}`);
+      toast.success(`Connection success: ${res.connection || migrationDialect}`);
     } catch (err: any) {
-      toast.error(err?.message || '目标数据库连接失败');
+      toast.error(err?.message || 'Target database connection failed');
     } finally {
       setTestingMigrationConnection(false);
     }
   };
 
   const handleMigrateToExternalDatabase = async () => {
-    if (!migrationConnectionString.trim()) {
-      toast.info('请先填写目标数据库连接串');
+    if (!effectiveMigrationConnectionString) {
+      toast.info('Please fill target database connection first');
       return;
     }
 
     const warning = migrationOverwrite
-      ? '确认迁移并覆盖目标数据库现有数据？'
-      : '确认迁移到目标数据库（目标中已有数据将导致失败）？';
+      ? 'Confirm migration and overwrite existing data in target database?'
+      : 'Confirm migration to target database? If target has data, migration may fail.';
     if (!window.confirm(warning)) return;
 
     setMigratingDatabase(true);
     try {
       const res = await api.migrateExternalDatabase({
         dialect: migrationDialect,
-        connectionString: migrationConnectionString.trim(),
+        connectionString: effectiveMigrationConnectionString,
         overwrite: migrationOverwrite,
       });
       setMigrationSummary(res);
-      toast.success(res?.message || '数据库迁移完成');
+      toast.success(res?.message || 'Database migration completed');
     } catch (err: any) {
-      toast.error(err?.message || '数据库迁移失败');
+      toast.error(err?.message || 'Database migration failed');
     } finally {
       setMigratingDatabase(false);
+    }
+  };
+
+  const handleSaveRuntimeDatabaseConfig = async () => {
+    if (!effectiveMigrationConnectionString) {
+      toast.info('Please fill target database connection first');
+      return;
+    }
+
+    setSavingRuntimeDatabase(true);
+    try {
+      const res = await api.updateRuntimeDatabaseConfig({
+        dialect: migrationDialect,
+        connectionString: effectiveMigrationConnectionString,
+      });
+      setRuntimeDatabaseState({
+        active: {
+          dialect: (res?.active?.dialect || 'sqlite') as DbDialect,
+          connection: String(res?.active?.connection || ''),
+        },
+        saved: res?.saved
+          ? {
+            dialect: res.saved.dialect as DbDialect,
+            connection: String(res.saved.connection || ''),
+          }
+          : null,
+        restartRequired: !!res?.restartRequired,
+      });
+      toast.success(res?.message || 'Runtime database config saved');
+    } catch (err: any) {
+      toast.error(err?.message || 'Runtime database config save failed');
+    } finally {
+      setSavingRuntimeDatabase(false);
     }
   };
 
@@ -639,7 +768,7 @@ export default function Settings() {
   return (
     <div className="animate-fade-in">
       <div className="page-header">
-        <h2 className="page-title">{tr('系统设置')}</h2>
+        <h2 className="page-title">{tr('绯荤粺璁剧疆')}</h2>
       </div>
 
       <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -648,7 +777,7 @@ export default function Settings() {
           <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 12 }}>
             {maskedToken || '****'}
           </code>
-          <button onClick={() => setShowChangeKey(true)} className="btn btn-primary">修改登录令牌</button>
+          <button onClick={() => setShowChangeKey(true)} className="btn btn-primary">淇敼鐧诲綍浠ょ墝</button>
           <ChangeKeyModal
             open={showChangeKey}
             onClose={() => {
@@ -659,10 +788,10 @@ export default function Settings() {
         </div>
 
         <div className="card animate-slide-up stagger-2" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>定时任务</div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>瀹氭椂浠诲姟</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到 Cron</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>绛惧埌 Cron</div>
               <input
                 value={runtime.checkinCron}
                 onChange={(e) => setRuntime((prev) => ({ ...prev, checkinCron: e.target.value }))}
@@ -670,7 +799,7 @@ export default function Settings() {
               />
             </div>
             <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>余额刷新 Cron</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>浣欓鍒锋柊 Cron</div>
               <input
                 value={runtime.balanceRefreshCron}
                 onChange={(e) => setRuntime((prev) => ({ ...prev, balanceRefreshCron: e.target.value }))}
@@ -680,15 +809,15 @@ export default function Settings() {
           </div>
           <div style={{ marginTop: 12 }}>
             <button onClick={saveSchedule} disabled={savingSchedule} className="btn btn-primary">
-              {savingSchedule ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存定时任务'}
+              {savingSchedule ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 淇濆瓨涓?..</> : '淇濆瓨瀹氭椂浠诲姟'}
             </button>
           </div>
         </div>
 
         <div className="card animate-slide-up stagger-3" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{tr('下游访问令牌（PROXY_TOKEN）')}</div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>下游访问令牌（PROXY_TOKEN）</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            {tr('用于下游站点或客户端访问本服务代理接口。前缀 sk- 固定不可修改，只需填写后缀。')}
+            用于下游站点或客户端访问本服务代理接口。前缀 sk- 固定不可修改，只需填写后缀。
           </div>
           <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 10 }}>
             当前：{runtime.proxyTokenMasked || '未设置'}
@@ -719,7 +848,7 @@ export default function Settings() {
               type="password"
               value={proxyTokenSuffix}
               onChange={(e) => setProxyTokenSuffix(normalizeProxyTokenSuffix(e.target.value))}
-              placeholder={tr('请输入 sk- 后的令牌内容')}
+              placeholder={tr('璇疯緭鍏?sk- 鍚庣殑浠ょ墝鍐呭')}
               style={{
                 flex: 1,
                 border: 'none',
@@ -733,28 +862,28 @@ export default function Settings() {
             />
           </div>
           <button onClick={saveProxyToken} disabled={savingToken} className="btn btn-primary">
-            {savingToken ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : tr('更新下游访问令牌')}
+            {savingToken ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 淇濆瓨涓?..</> : tr('鏇存柊涓嬫父璁块棶浠ょ墝')}
           </button>
         </div>
 
         <div className="card animate-slide-up stagger-4" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>下游 API Key 策略（按项目/分组）</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            每个下游 Key 可独立配置过期、额度，并通过勾选界面限制可访问的模型与群组。
+            姣忎釜涓嬫父 Key 鍙嫭绔嬮厤缃繃鏈熴€侀搴︼紝骞堕€氳繃鍕鹃€夌晫闈㈤檺鍒跺彲璁块棶鐨勬ā鍨嬩笌缇ょ粍銆?
           </div>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
             <button onClick={openCreateDownstreamModal} className="btn btn-primary">
-              + 新增 API Key
+              + 鏂板 API Key
             </button>
             <button onClick={loadDownstreamKeys} disabled={downstreamLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              {downstreamLoading ? '刷新中...' : '刷新列表'}
+              {downstreamLoading ? '鍒锋柊涓?..' : '鍒锋柊鍒楄〃'}
             </button>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {downstreamKeys.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无下游 API Key</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>鏆傛棤涓嬫父 API Key</div>
             ) : downstreamKeys.map((item) => {
               const opLoading = !!downstreamOps[item.id];
               const quotaText = `${item.usedRequests}${item.maxRequests !== null ? `/${item.maxRequests}` : ''}`;
@@ -772,30 +901,30 @@ export default function Settings() {
                         background: item.enabled ? 'var(--color-success-bg)' : 'var(--color-danger-bg)',
                         color: item.enabled ? 'var(--color-success)' : 'var(--color-danger)',
                       }}>
-                        {item.enabled ? '启用' : '禁用'}
+                        {item.enabled ? '鍚敤' : '绂佺敤'}
                       </span>
                     </div>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                       <button onClick={() => beginEditDownstream(item)} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-                        编辑
+                        缂栬緫
                       </button>
                       <button onClick={() => toggleDownstreamEnabled(item)} disabled={opLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-                        {item.enabled ? '禁用' : '启用'}
+                        {item.enabled ? '绂佺敤' : '鍚敤'}
                       </button>
                       <button onClick={() => resetDownstreamUsage(item)} disabled={opLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-                        重置用量
+                        閲嶇疆鐢ㄩ噺
                       </button>
                       <button onClick={() => deleteDownstreamKey(item)} disabled={opLoading} className="btn btn-link btn-link-warning">
-                        删除
+                        鍒犻櫎
                       </button>
                     </div>
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 6, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                    <span>请求用量: {quotaText}</span>
-                    <span>费用用量: {costText}</span>
-                    <span>过期: {item.expiresAt ? new Date(item.expiresAt).toLocaleString() : '永久'}</span>
-                    <span>模型规则: {item.supportedModels.length || 0}</span>
-                    <span>群组限制: {item.allowedRouteIds.length || 0}</span>
+                    <span>璇锋眰鐢ㄩ噺: {quotaText}</span>
+                    <span>璐圭敤鐢ㄩ噺: {costText}</span>
+                    <span>杩囨湡: {item.expiresAt ? new Date(item.expiresAt).toLocaleString() : '姘镐箙'}</span>
+                    <span>妯″瀷瑙勫垯: {item.supportedModels.length || 0}</span>
+                    <span>缇ょ粍闄愬埗: {item.allowedRouteIds.length || 0}</span>
                   </div>
                 </div>
               );
@@ -804,13 +933,13 @@ export default function Settings() {
         </div>
 
         <div className="card animate-slide-up stagger-5" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>路由策略</div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>璺敱绛栫暐</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            先选择预设策略，只有需要精调时再展开高级参数。
+            鍏堥€夋嫨棰勮绛栫暐锛屽彧鏈夐渶瑕佺簿璋冩椂鍐嶅睍寮€楂樼骇鍙傛暟銆?
           </div>
           <div style={{ marginBottom: 12, maxWidth: 280 }}>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-              无实测/配置/目录价时默认单价
+              鏃犲疄娴?閰嶇疆/鐩綍浠锋椂榛樿鍗曚环
             </div>
             <input
               type="number"
@@ -836,7 +965,7 @@ export default function Settings() {
                 color: activeRoutingProfile === 'balanced' ? 'var(--color-primary)' : undefined,
               }}
             >
-              均衡
+              鍧囪　
             </button>
             <button
               onClick={() => applyRoutingPreset('stable')}
@@ -846,7 +975,7 @@ export default function Settings() {
                 color: activeRoutingProfile === 'stable' ? 'var(--color-primary)' : undefined,
               }}
             >
-              稳定优先
+              绋冲畾浼樺厛
             </button>
             <button
               onClick={() => applyRoutingPreset('cost')}
@@ -856,14 +985,14 @@ export default function Settings() {
                 color: activeRoutingProfile === 'cost' ? 'var(--color-primary)' : undefined,
               }}
             >
-              成本优先
+              鎴愭湰浼樺厛
             </button>
             <button
               onClick={() => setShowAdvancedRouting((prev) => !prev)}
               className="btn btn-ghost"
               style={{ border: '1px solid var(--color-border)' }}
             >
-              {showAdvancedRouting ? '收起高级参数' : '展开高级参数'}
+              {showAdvancedRouting ? '鏀惰捣楂樼骇鍙傛暟' : '灞曞紑楂樼骇鍙傛暟'}
             </button>
           </div>
 
@@ -871,11 +1000,11 @@ export default function Settings() {
             <div className="anim-collapse-inner" style={{ paddingTop: 2 }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               {([
-                ['baseWeightFactor', '基础权重因子'],
-                ['valueScoreFactor', '价值分因子'],
-                ['costWeight', '成本权重'],
-                ['balanceWeight', '余额权重'],
-                ['usageWeight', '使用频次权重'],
+                ['baseWeightFactor', '鍩虹鏉冮噸鍥犲瓙'],
+                ['valueScoreFactor', '浠峰€煎垎鍥犲瓙'],
+                ['costWeight', '鎴愭湰鏉冮噸'],
+                ['balanceWeight', '浣欓鏉冮噸'],
+                ['usageWeight', '浣跨敤棰戞鏉冮噸'],
               ] as Array<[keyof RoutingWeights, string]>).map(([key, label]) => (
                 <div key={key}>
                   <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>{label}</div>
@@ -904,7 +1033,7 @@ export default function Settings() {
 
           <div style={{ marginTop: 12 }}>
             <button onClick={saveRouting} disabled={savingRouting} className="btn btn-primary">
-              {savingRouting ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存路由策略'}
+              {savingRouting ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 淇濆瓨涓?..</> : '淇濆瓨璺敱绛栫暐'}
             </button>
           </div>
         </div>
@@ -912,25 +1041,102 @@ export default function Settings() {
         <div className="card animate-slide-up stagger-6" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>数据库迁移（SQLite / MySQL / PostgreSQL）</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            在此填写目标数据库连接串，可先测试连接，再一键把当前 SQLite 数据迁移到目标库。
+            可先测试连接，再迁移数据；迁移完成后可保存为运行数据库配置（重启容器后生效）。
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: 10, marginBottom: 10 }}>
-            <select
+
+          <div style={{ display: 'grid', gridTemplateColumns: '180px 1fr', gap: 10, marginBottom: 10, alignItems: 'center' }}>
+            <ModernSelect
               value={migrationDialect}
-              onChange={(e) => setMigrationDialect(e.target.value as 'sqlite' | 'mysql' | 'postgres')}
-              style={inputStyle}
-            >
-              <option value="postgres">PostgreSQL</option>
-              <option value="mysql">MySQL</option>
-              <option value="sqlite">SQLite</option>
-            </select>
+              onChange={(value) => setMigrationDialect(value as DbDialect)}
+              options={[
+                { value: 'postgres', label: 'PostgreSQL' },
+                { value: 'mysql', label: 'MySQL' },
+                { value: 'sqlite', label: 'SQLite' },
+              ]}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+              {migrationDialect !== 'sqlite' && (
+                <button
+                  className="btn btn-ghost"
+                  style={{ border: '1px solid var(--color-border)' }}
+                  onClick={() => setConnectionMode((prev) => (prev === 'shorthand' ? 'advanced' : 'shorthand'))}
+                >
+                  {connectionMode === 'shorthand' ? '高级输入连接串' : '使用半自动简写'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {migrationDialect === 'sqlite' ? (
             <input
               value={migrationConnectionString}
               onChange={(e) => setMigrationConnectionString(e.target.value)}
-              placeholder={migrationDialect === 'sqlite' ? './data/target.db 或 file:///abs/path.db' : '例如：postgres://user:pass@host:5432/db'}
-              style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+              placeholder="./data/target.db or file:///abs/path.db"
+              style={{ ...inputStyle, fontFamily: 'var(--font-mono)', marginBottom: 10 }}
             />
-          </div>
+          ) : connectionMode === 'advanced' ? (
+            <input
+              value={migrationConnectionString}
+              onChange={(e) => setMigrationConnectionString(e.target.value)}
+              placeholder={migrationDialect === 'mysql'
+                ? 'mysql://user:pass@host:3306/db'
+                : 'postgres://user:pass@host:5432/db'}
+              style={{ ...inputStyle, fontFamily: 'var(--font-mono)', marginBottom: 10 }}
+            />
+          ) : (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 8 }}>
+                <input
+                  value={shorthandConnection.host}
+                  onChange={(e) => setShorthandConnection((prev) => ({ ...prev, host: e.target.value }))}
+                  placeholder="Host (required)"
+                  style={inputStyle}
+                />
+                <input
+                  value={shorthandConnection.user}
+                  onChange={(e) => setShorthandConnection((prev) => ({ ...prev, user: e.target.value }))}
+                  placeholder="User (required)"
+                  style={inputStyle}
+                />
+                <input
+                  value={shorthandConnection.password}
+                  onChange={(e) => setShorthandConnection((prev) => ({ ...prev, password: e.target.value }))}
+                  placeholder="Password (required)"
+                  type="password"
+                  style={inputStyle}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <button
+                  className="btn btn-ghost"
+                  style={{ border: '1px solid var(--color-border)' }}
+                  onClick={() => setShowShorthandOptional((prev) => !prev)}
+                >
+                  {showShorthandOptional ? '收起端口/库名' : '展开端口/库名'}
+                </button>
+              </div>
+              {showShorthandOptional && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 8 }}>
+                  <input
+                    value={shorthandConnection.port}
+                    onChange={(e) => setShorthandConnection((prev) => ({ ...prev, port: e.target.value }))}
+                    placeholder={getDialectDefaults(migrationDialect).port}
+                    style={inputStyle}
+                  />
+                  <input
+                    value={shorthandConnection.database}
+                    onChange={(e) => setShorthandConnection((prev) => ({ ...prev, database: e.target.value }))}
+                    placeholder={getDialectDefaults(migrationDialect).database}
+                    style={inputStyle}
+                  />
+                </div>
+              )}
+              <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)' }}>
+                {generatedConnectionString || 'Fill host/user/password to generate connection string'}
+              </code>
+            </div>
+          )}
+
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
             <input
               type="checkbox"
@@ -940,10 +1146,11 @@ export default function Settings() {
             />
             允许覆盖目标数据库现有数据
           </label>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: migrationSummary ? 12 : 0 }}>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
             <button
               onClick={handleTestExternalDatabaseConnection}
-              disabled={testingMigrationConnection || migratingDatabase}
+              disabled={testingMigrationConnection || migratingDatabase || savingRuntimeDatabase}
               className="btn btn-ghost"
               style={{ border: '1px solid var(--color-border)' }}
             >
@@ -951,12 +1158,36 @@ export default function Settings() {
             </button>
             <button
               onClick={handleMigrateToExternalDatabase}
-              disabled={migratingDatabase || testingMigrationConnection}
+              disabled={migratingDatabase || testingMigrationConnection || savingRuntimeDatabase}
               className="btn btn-primary"
             >
               {migratingDatabase ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 迁移中...</> : '开始迁移'}
             </button>
+            <button
+              onClick={handleSaveRuntimeDatabaseConfig}
+              disabled={savingRuntimeDatabase || migratingDatabase || testingMigrationConnection}
+              className="btn btn-ghost"
+              style={{ border: '1px solid var(--color-border)' }}
+            >
+              {savingRuntimeDatabase ? <><span className="spinner spinner-sm" /> 保存中...</> : '保存为运行数据库（重启后生效）'}
+            </button>
           </div>
+
+          {runtimeDatabaseState && (
+            <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.8, marginBottom: migrationSummary ? 12 : 0 }}>
+              <div>当前运行：{runtimeDatabaseState.active.dialect}（{runtimeDatabaseState.active.connection || '(empty)' }）</div>
+              <div>
+                已保存待生效：
+                {runtimeDatabaseState.saved
+                  ? ` ${runtimeDatabaseState.saved.dialect}（${runtimeDatabaseState.saved.connection}）`
+                  : ' 未保存'}
+              </div>
+              {runtimeDatabaseState.restartRequired && (
+                <div style={{ color: 'var(--color-warning)' }}>检测到待生效数据库配置，请重启容器使其生效。</div>
+              )}
+            </div>
+          )}
+
           {migrationSummary && (
             <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.8 }}>
               <div>目标：{migrationSummary.dialect}（{migrationSummary.connection}）</div>
@@ -967,7 +1198,7 @@ export default function Settings() {
         </div>
 
         <div className="card animate-slide-up stagger-6" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>维护工具</div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>缁存姢宸ュ叿</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button onClick={handleClearCache} disabled={clearingCache} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
               {clearingCache ? <><span className="spinner spinner-sm" /> 清理中...</> : '清除缓存并重建路由'}
@@ -981,24 +1212,24 @@ export default function Settings() {
         <div className="card animate-slide-up stagger-7" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>会话与安全</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            登录会话默认 12 小时自动过期。可选配置管理端 IP 白名单（每行一个 IP）。
+            鐧诲綍浼氳瘽榛樿 12 灏忔椂鑷姩杩囨湡銆傚彲閫夐厤缃鐞嗙 IP 鐧藉悕鍗曪紙姣忚涓€涓?IP锛夈€?
           </div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-            {tr('当前识别到的管理端 IP（由服务端判定）：')}
+            当前识别到的管理端 IP（由服务端判定）：
           </div>
           <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 10 }}>
-            {runtime.currentAdminIp || tr('未知')}
+            {runtime.currentAdminIp || tr('鏈煡')}
           </code>
           <textarea
             value={adminIpAllowlistText}
             onChange={(e) => setAdminIpAllowlistText(e.target.value)}
-            placeholder={'例如：\n127.0.0.1\n192.168.1.10'}
+            placeholder={'渚嬪锛歕n127.0.0.1\n192.168.1.10'}
             rows={4}
             style={{ ...inputStyle, fontFamily: 'var(--font-mono)', resize: 'vertical', marginBottom: 10 }}
           />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button onClick={saveSecuritySettings} disabled={savingSecurity} className="btn btn-primary">
-              {savingSecurity ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存安全设置'}
+              {savingSecurity ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 淇濆瓨涓?..</> : '淇濆瓨瀹夊叏璁剧疆'}
             </button>
             <button
               onClick={() => {
@@ -1007,7 +1238,7 @@ export default function Settings() {
               }}
               className="btn btn-danger"
             >
-              退出登录
+              閫€鍑虹櫥褰?
             </button>
           </div>
         </div>
@@ -1021,14 +1252,14 @@ export default function Settings() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="modal-header">
-                {editingDownstreamId ? '编辑下游 API Key' : '新增下游 API Key'}
+                {editingDownstreamId ? '缂栬緫涓嬫父 API Key' : '鏂板涓嬫父 API Key'}
               </div>
               <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
                   <input
                     value={downstreamCreate.name}
                     onChange={(e) => setDownstreamCreate((prev) => ({ ...prev, name: e.target.value }))}
-                    placeholder="名称（例如：cc-project）"
+                    placeholder="Name (e.g. cc-project)"
                     style={inputStyle}
                   />
                   <input
@@ -1040,7 +1271,7 @@ export default function Settings() {
                   <input
                     value={downstreamCreate.maxCost}
                     onChange={(e) => setDownstreamCreate((prev) => ({ ...prev, maxCost: e.target.value }))}
-                    placeholder="最大费用（可选）"
+                    placeholder="鏈€澶ц垂鐢紙鍙€夛級"
                     type="number"
                     min={0}
                     step={0.000001}
@@ -1049,7 +1280,7 @@ export default function Settings() {
                   <input
                     value={downstreamCreate.maxRequests}
                     onChange={(e) => setDownstreamCreate((prev) => ({ ...prev, maxRequests: e.target.value }))}
-                    placeholder="最大请求数（可选）"
+                    placeholder="鏈€澶ц姹傛暟锛堝彲閫夛級"
                     type="number"
                     min={0}
                     step={1}
@@ -1059,20 +1290,20 @@ export default function Settings() {
                     value={downstreamCreate.expiresAt}
                     onChange={(e) => setDownstreamCreate((prev) => ({ ...prev, expiresAt: e.target.value }))}
                     type="datetime-local"
-                    placeholder="过期时间（可选）"
+                    placeholder="杩囨湡鏃堕棿锛堝彲閫夛級"
                     style={inputStyle}
                   />
                   <input
                     value={downstreamCreate.description}
                     onChange={(e) => setDownstreamCreate((prev) => ({ ...prev, description: e.target.value }))}
-                    placeholder="备注（可选）"
+                    placeholder="澶囨敞锛堝彲閫夛級"
                     style={inputStyle}
                   />
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                    已选模型 {downstreamCreate.selectedModels.length} 个，已选群组 {downstreamCreate.selectedGroupRouteIds.length} 个
+                    宸查€夋ā鍨?{downstreamCreate.selectedModels.length} 涓紝宸查€夌兢缁?{downstreamCreate.selectedGroupRouteIds.length} 涓?
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <button
@@ -1085,25 +1316,25 @@ export default function Settings() {
                       className="btn btn-ghost"
                       style={{ border: '1px solid var(--color-border)' }}
                     >
-                      勾选模型和群组
+                      鍕鹃€夋ā鍨嬪拰缇ょ粍
                     </button>
                     {(downstreamCreate.selectedModels.length > 0 || downstreamCreate.selectedGroupRouteIds.length > 0) && (
                       <button
                         onClick={() => setDownstreamCreate((prev) => ({ ...prev, selectedModels: [], selectedGroupRouteIds: [] }))}
                         className="btn btn-link btn-link-warning"
                       >
-                        清空选择
+                        娓呯┖閫夋嫨
                       </button>
                     )}
                   </div>
                 </div>
               </div>
               <div className="modal-footer">
-                <button onClick={closeDownstreamModal} className="btn btn-ghost">取消</button>
+                <button onClick={closeDownstreamModal} className="btn btn-ghost">鍙栨秷</button>
                 <button onClick={saveDownstreamKey} disabled={downstreamSaving} className="btn btn-primary">
                   {downstreamSaving
-                    ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</>
-                    : (editingDownstreamId ? '更新 API Key' : '新增 API Key')}
+                    ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 淇濆瓨涓?..</>
+                    : (editingDownstreamId ? '鏇存柊 API Key' : '鏂板 API Key')}
                 </button>
               </div>
             </div>
@@ -1119,28 +1350,28 @@ export default function Settings() {
               style={{ maxWidth: 860 }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="modal-header">勾选模型和群组</div>
+              <div className="modal-header">鍕鹃€夋ā鍨嬪拰缇ょ粍</div>
               <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                  选择结果会保存到当前下游 API Key：精确模型用于模型白名单，群组用于路由范围限制。
+                  閫夋嫨缁撴灉浼氫繚瀛樺埌褰撳墠涓嬫父 API Key锛氱簿纭ā鍨嬬敤浜庢ā鍨嬬櫧鍚嶅崟锛岀兢缁勭敤浜庤矾鐢辫寖鍥撮檺鍒躲€?
                 </div>
                 {selectorLoading ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-muted)' }}>
                     <span className="spinner spinner-sm" />
-                    加载路由中...
+                    鍔犺浇璺敱涓?..
                   </div>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
                     <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                        精确模型 ({selectorModelSearch.trim()
+                        绮剧‘妯″瀷 ({selectorModelSearch.trim()
                           ? `${filteredExactModelOptions.length}/${exactModelOptions.length}`
                           : exactModelOptions.length})
                       </div>
                       <input
                         value={selectorModelSearch}
                         onChange={(e) => setSelectorModelSearch(e.target.value)}
-                        placeholder="搜索精确模型（支持模糊匹配）"
+                        placeholder="鎼滅储绮剧‘妯″瀷锛堟敮鎸佹ā绯婂尮閰嶏級"
                         style={{ ...inputStyle, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}
                       />
                       <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1227,14 +1458,14 @@ export default function Settings() {
 
                     <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                        群组 ({selectorGroupSearch.trim()
+                        缇ょ粍 ({selectorGroupSearch.trim()
                           ? `${filteredGroupRouteOptions.length}/${groupRouteOptions.length}`
                           : groupRouteOptions.length})
                       </div>
                       <input
                         value={selectorGroupSearch}
                         onChange={(e) => setSelectorGroupSearch(e.target.value)}
-                        placeholder="搜索群组（名称/匹配规则）"
+                        placeholder="Search groups (name / pattern)"
                         style={{ ...inputStyle, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}
                       />
                       <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1326,7 +1557,7 @@ export default function Settings() {
                                         color: 'var(--color-danger)',
                                       }}
                                     >
-                                      已禁用
+                                      宸茬鐢?
                                     </span>
                                   )}
                                 </code>
@@ -1343,7 +1574,7 @@ export default function Settings() {
                 )}
               </div>
               <div className="modal-footer">
-                <button onClick={closeSelectorModal} className="btn btn-ghost">关闭</button>
+                <button onClick={closeSelectorModal} className="btn btn-ghost">鍏抽棴</button>
               </div>
             </div>
           </div>
@@ -1353,3 +1584,4 @@ export default function Settings() {
     </div>
   );
 }
+

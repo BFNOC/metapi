@@ -736,7 +736,7 @@ export function normalizeUpstreamStreamEvent(
     const delta = isRecord(choice?.delta) ? choice.delta : {};
     const deltaParsed = extractTextAndReasoning(delta.content ?? delta);
 
-    const contentDelta =
+    const rawContentDelta =
       deltaParsed.content
       || (typeof choice?.message?.content === 'string' ? choice.message.content : '')
       || '';
@@ -746,6 +746,14 @@ export function normalizeUpstreamStreamEvent(
       || (typeof (delta as any).reasoning === 'string' ? (delta as any).reasoning : '')
       || deltaParsed.reasoning
       || '';
+
+    // Some upstream providers (e.g. certain OpenAI-compatible aggregators) emit thinking
+    // tokens with the same text duplicated in both delta.content and delta.reasoning_content.
+    // When the two values are identical it means content is just echoing the reasoning —
+    // suppress it so internal thinking is never leaked to downstream consumers.
+    const contentDelta = (reasoningDelta && rawContentDelta === reasoningDelta)
+      ? ''
+      : rawContentDelta;
 
     const rawToolCalls = Array.isArray((delta as any).tool_calls)
       ? ((delta as any).tool_calls as unknown[])

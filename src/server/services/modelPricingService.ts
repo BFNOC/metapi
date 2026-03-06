@@ -37,6 +37,14 @@ interface PricingData {
   groupRatio: Record<string, number>;
 }
 
+export interface ProxyBillingPricingOverride {
+  modelRatio: number;
+  completionRatio: number;
+  cacheRatio?: number;
+  cacheCreationRatio?: number;
+  groupRatio?: number;
+}
+
 interface PricingCacheEntry {
   fetchedAt: number;
   ttlMs: number;
@@ -68,6 +76,7 @@ interface EstimateProxyCostInput {
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
   promptTokensIncludeCache?: boolean | null;
+  billingPricingOverride?: ProxyBillingPricingOverride | null;
 }
 
 interface ModelGroupPricing {
@@ -573,6 +582,26 @@ function calculatePerCallPricing(
   return { total: 0 };
 }
 
+function buildPricingOverrideModel(
+  modelName: string,
+  pricingOverride: ProxyBillingPricingOverride,
+): { model: PricingModel; groupRatio: Record<string, number> } {
+  const groupRatio = normalizeRatio(pricingOverride.groupRatio, 1);
+  return {
+    model: {
+      modelName,
+      quotaType: 0,
+      modelRatio: normalizeRatio(pricingOverride.modelRatio, 1),
+      completionRatio: normalizeRatio(pricingOverride.completionRatio, 1),
+      cacheRatio: normalizeRatio(pricingOverride.cacheRatio, 1),
+      cacheCreationRatio: normalizeRatio(pricingOverride.cacheCreationRatio, 1),
+      modelPrice: null,
+      enableGroups: [DEFAULT_GROUP],
+    },
+    groupRatio: { [DEFAULT_GROUP]: groupRatio },
+  };
+}
+
 function normalizeUsageBreakdownInput(usage: {
   promptTokens: number;
   completionTokens: number;
@@ -744,8 +773,21 @@ export async function estimateProxyCost(input: EstimateProxyCostInput): Promise<
   const promptTokens = toPositiveInt(input.promptTokens);
   const completionTokens = toPositiveInt(input.completionTokens);
   const totalTokens = toPositiveInt(input.totalTokens || (promptTokens + completionTokens));
+  const usage = {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cacheReadTokens: input.cacheReadTokens,
+    cacheCreationTokens: input.cacheCreationTokens,
+    promptTokensIncludeCache: input.promptTokensIncludeCache,
+  };
 
   try {
+    if (input.billingPricingOverride) {
+      const pricingOverride = buildPricingOverrideModel(input.modelName, input.billingPricingOverride);
+      return calculateModelUsageCost(pricingOverride.model, usage, pricingOverride.groupRatio);
+    }
+
     const pricingData = await getPricingDataCached(input);
     if (!pricingData) {
       return fallbackTokenCost(totalTokens, input.site.platform);
@@ -756,14 +798,7 @@ export async function estimateProxyCost(input: EstimateProxyCostInput): Promise<
       return fallbackTokenCost(totalTokens, input.site.platform);
     }
 
-    return calculateModelUsageCost(model, {
-      promptTokens,
-      completionTokens,
-      totalTokens,
-      cacheReadTokens: input.cacheReadTokens,
-      cacheCreationTokens: input.cacheCreationTokens,
-      promptTokensIncludeCache: input.promptTokensIncludeCache,
-    }, pricingData.groupRatio);
+    return calculateModelUsageCost(model, usage, pricingData.groupRatio);
   } catch {
     return fallbackTokenCost(totalTokens, input.site.platform);
   }
@@ -784,22 +819,28 @@ export async function buildProxyBillingDetails(input: EstimateProxyCostInput): P
   const promptTokens = toPositiveInt(input.promptTokens);
   const completionTokens = toPositiveInt(input.completionTokens);
   const totalTokens = toPositiveInt(input.totalTokens || (promptTokens + completionTokens));
+  const usage = {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cacheReadTokens: input.cacheReadTokens,
+    cacheCreationTokens: input.cacheCreationTokens,
+    promptTokensIncludeCache: input.promptTokensIncludeCache,
+  };
 
   try {
+    if (input.billingPricingOverride) {
+      const pricingOverride = buildPricingOverrideModel(input.modelName, input.billingPricingOverride);
+      return calculateModelUsageBreakdown(pricingOverride.model, usage, pricingOverride.groupRatio);
+    }
+
     const pricingData = await getPricingDataCached(input);
     if (!pricingData) return null;
 
     const model = resolveModel(input.modelName, pricingData);
     if (!model || model.quotaType === 1) return null;
 
-    return calculateModelUsageBreakdown(model, {
-      promptTokens,
-      completionTokens,
-      totalTokens,
-      cacheReadTokens: input.cacheReadTokens,
-      cacheCreationTokens: input.cacheCreationTokens,
-      promptTokensIncludeCache: input.promptTokensIncludeCache,
-    }, pricingData.groupRatio);
+    return calculateModelUsageBreakdown(model, usage, pricingData.groupRatio);
   } catch {
     return null;
   }

@@ -5,7 +5,6 @@ import { fetch } from 'undici';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
-import { buildProxyBillingDetails, estimateProxyCost } from '../../services/modelPricingService.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageFallbackService.js';
 import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
@@ -38,6 +37,7 @@ import {
 import { composeProxyLogMessage } from './logPathMeta.js';
 import { executeEndpointFlow, withUpstreamPath } from './endpointFlow.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
+import { resolveProxyLogBilling } from './proxyBilling.js';
 
 const MAX_RETRIES = 2;
 const CLAUDE_SSE_EVENT_NAMES = new Set([
@@ -429,33 +429,13 @@ async function handleChatProxyRequest(
             },
           });
 
-          let estimatedCost = await estimateProxyCost({
+          const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
             site: selected.site,
             account: selected.account,
             modelName,
-            promptTokens: resolvedUsage.promptTokens,
-            completionTokens: resolvedUsage.completionTokens,
-            totalTokens: resolvedUsage.totalTokens,
-            cacheReadTokens: parsedUsage.cacheReadTokens,
-            cacheCreationTokens: parsedUsage.cacheCreationTokens,
-            promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
+            parsedUsage,
+            resolvedUsage,
           });
-          let billingDetails = await buildProxyBillingDetails({
-            site: selected.site,
-            account: selected.account,
-            modelName,
-            promptTokens: resolvedUsage.promptTokens,
-            completionTokens: resolvedUsage.completionTokens,
-            totalTokens: resolvedUsage.totalTokens,
-            cacheReadTokens: parsedUsage.cacheReadTokens,
-            cacheCreationTokens: parsedUsage.cacheCreationTokens,
-            promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
-          });
-
-          if (resolvedUsage.estimatedCostFromQuota > 0 && (resolvedUsage.recoveredFromSelfLog || estimatedCost <= 0)) {
-            estimatedCost = resolvedUsage.estimatedCostFromQuota;
-            billingDetails = null;
-          }
 
           tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
           recordDownstreamCostUsage(request, estimatedCost);
@@ -609,33 +589,13 @@ async function handleChatProxyRequest(
           },
         });
 
-        let estimatedCost = await estimateProxyCost({
+        const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
           site: selected.site,
           account: selected.account,
           modelName,
-          promptTokens: resolvedUsage.promptTokens,
-          completionTokens: resolvedUsage.completionTokens,
-          totalTokens: resolvedUsage.totalTokens,
-          cacheReadTokens: parsedUsage.cacheReadTokens,
-          cacheCreationTokens: parsedUsage.cacheCreationTokens,
-          promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
+          parsedUsage,
+          resolvedUsage,
         });
-        let billingDetails = await buildProxyBillingDetails({
-          site: selected.site,
-          account: selected.account,
-          modelName,
-          promptTokens: resolvedUsage.promptTokens,
-          completionTokens: resolvedUsage.completionTokens,
-          totalTokens: resolvedUsage.totalTokens,
-          cacheReadTokens: parsedUsage.cacheReadTokens,
-          cacheCreationTokens: parsedUsage.cacheCreationTokens,
-          promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
-        });
-
-        if (resolvedUsage.estimatedCostFromQuota > 0 && (resolvedUsage.recoveredFromSelfLog || estimatedCost <= 0)) {
-          estimatedCost = resolvedUsage.estimatedCostFromQuota;
-          billingDetails = null;
-        }
 
         tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
         recordDownstreamCostUsage(request, estimatedCost);
@@ -687,33 +647,13 @@ async function handleChatProxyRequest(
         },
       });
 
-      let estimatedCost = await estimateProxyCost({
+      const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
         site: selected.site,
         account: selected.account,
         modelName,
-        promptTokens: resolvedUsage.promptTokens,
-        completionTokens: resolvedUsage.completionTokens,
-        totalTokens: resolvedUsage.totalTokens,
-        cacheReadTokens: parsedUsage.cacheReadTokens,
-        cacheCreationTokens: parsedUsage.cacheCreationTokens,
-        promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
+        parsedUsage,
+        resolvedUsage,
       });
-      let billingDetails = await buildProxyBillingDetails({
-        site: selected.site,
-        account: selected.account,
-        modelName,
-        promptTokens: resolvedUsage.promptTokens,
-        completionTokens: resolvedUsage.completionTokens,
-        totalTokens: resolvedUsage.totalTokens,
-        cacheReadTokens: parsedUsage.cacheReadTokens,
-        cacheCreationTokens: parsedUsage.cacheCreationTokens,
-        promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
-      });
-
-      if (resolvedUsage.estimatedCostFromQuota > 0 && (resolvedUsage.recoveredFromSelfLog || estimatedCost <= 0)) {
-        estimatedCost = resolvedUsage.estimatedCostFromQuota;
-        billingDetails = null;
-      }
 
       tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
       recordDownstreamCostUsage(request, estimatedCost);

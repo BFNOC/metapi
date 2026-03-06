@@ -5,7 +5,6 @@ import { tokenRouter } from '../../services/tokenRouter.js';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
-import { buildProxyBillingDetails, estimateProxyCost } from '../../services/modelPricingService.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageFallbackService.js';
 import { mergeProxyUsage, parseProxyUsage, pullSseDataEvents } from '../../services/proxyUsageParser.js';
@@ -13,6 +12,7 @@ import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordD
 import { withExplicitProxyRequestInit } from '../../services/siteProxy.js';
 import { composeProxyLogMessage } from './logPathMeta.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
+import { resolveProxyLogBilling } from './proxyBilling.js';
 
 const MAX_RETRIES = 2;
 
@@ -160,32 +160,13 @@ export async function completionsProxyRoute(app: FastifyInstance) {
               totalTokens: parsedUsage.totalTokens,
             },
           });
-          let estimatedCost = await estimateProxyCost({
+          const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
             site: selected.site,
             account: selected.account,
             modelName: selected.actualModel || requestedModel,
-            promptTokens: resolvedUsage.promptTokens,
-            completionTokens: resolvedUsage.completionTokens,
-            totalTokens: resolvedUsage.totalTokens,
-            cacheReadTokens: parsedUsage.cacheReadTokens,
-            cacheCreationTokens: parsedUsage.cacheCreationTokens,
-            promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
+            parsedUsage,
+            resolvedUsage,
           });
-          let billingDetails = await buildProxyBillingDetails({
-            site: selected.site,
-            account: selected.account,
-            modelName: selected.actualModel || requestedModel,
-            promptTokens: resolvedUsage.promptTokens,
-            completionTokens: resolvedUsage.completionTokens,
-            totalTokens: resolvedUsage.totalTokens,
-            cacheReadTokens: parsedUsage.cacheReadTokens,
-            cacheCreationTokens: parsedUsage.cacheCreationTokens,
-            promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
-          });
-          if (resolvedUsage.estimatedCostFromQuota > 0 && (resolvedUsage.recoveredFromSelfLog || estimatedCost <= 0)) {
-            estimatedCost = resolvedUsage.estimatedCostFromQuota;
-            billingDetails = null;
-          }
           tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
           recordDownstreamCostUsage(request, estimatedCost);
           logProxy(
@@ -213,32 +194,13 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             totalTokens: parsedUsage.totalTokens,
           },
         });
-        let estimatedCost = await estimateProxyCost({
+        const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
           site: selected.site,
           account: selected.account,
           modelName: selected.actualModel || requestedModel,
-          promptTokens: resolvedUsage.promptTokens,
-          completionTokens: resolvedUsage.completionTokens,
-          totalTokens: resolvedUsage.totalTokens,
-          cacheReadTokens: parsedUsage.cacheReadTokens,
-          cacheCreationTokens: parsedUsage.cacheCreationTokens,
-          promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
+          parsedUsage,
+          resolvedUsage,
         });
-        let billingDetails = await buildProxyBillingDetails({
-          site: selected.site,
-          account: selected.account,
-          modelName: selected.actualModel || requestedModel,
-          promptTokens: resolvedUsage.promptTokens,
-          completionTokens: resolvedUsage.completionTokens,
-          totalTokens: resolvedUsage.totalTokens,
-          cacheReadTokens: parsedUsage.cacheReadTokens,
-          cacheCreationTokens: parsedUsage.cacheCreationTokens,
-          promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
-        });
-        if (resolvedUsage.estimatedCostFromQuota > 0 && (resolvedUsage.recoveredFromSelfLog || estimatedCost <= 0)) {
-          estimatedCost = resolvedUsage.estimatedCostFromQuota;
-          billingDetails = null;
-        }
 
         tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
         recordDownstreamCostUsage(request, estimatedCost);

@@ -35,6 +35,7 @@ describe('proxyUsageFallbackService', () => {
         quota: 3300,
         createdAtMs: 1_700_000_123_000,
         requestTimeMs: 1450,
+        billingMeta: null,
       },
     ]);
   });

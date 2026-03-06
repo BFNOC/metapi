@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { ModelBadge } from '../components/BrandIcon.js';
@@ -266,7 +266,7 @@ export default function ProxyLogs() {
                 <th style={{ width: 28 }} />
                 <th>时间</th>
                 <th>模型</th>
-                <th>状态</th>
+                <th>{tr('状态')}</th>
                 <th style={{ textAlign: 'center' }}>用时</th>
                 <th style={{ textAlign: 'right' }}>输入</th>
                 <th style={{ textAlign: 'right' }}>输出</th>
@@ -327,13 +327,13 @@ export default function ProxyLogs() {
                       </span>
                     </td>
                     <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
-                      {log.promptTokens?.toLocaleString() || '—'}
+                      {log.promptTokens?.toLocaleString() || '-'}
                     </td>
                     <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
-                      {log.completionTokens?.toLocaleString() || '—'}
+                      {log.completionTokens?.toLocaleString() || '-'}
                     </td>
                     <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
-                      {typeof log.estimatedCost === 'number' ? `$${log.estimatedCost.toFixed(6)}` : '—'}
+                      {typeof log.estimatedCost === 'number' ? `$${log.estimatedCost.toFixed(6)}` : '-'}
                     </td>
                     <td style={{ textAlign: 'center' }}>
                       {log.retryCount > 0 ? (
@@ -356,17 +356,17 @@ export default function ProxyLogs() {
                           lineHeight: 1.9,
                           color: 'var(--color-text-secondary)',
                         }}>
-                          {/* 日志详情 section */}
+                          {/* 鏃ュ織璇︽儏 section */}
                           <div style={{ display: 'flex', gap: 6 }}>
                             <span style={{ fontWeight: 600, color: 'var(--color-warning)', flexShrink: 0 }}>日志详情</span>
                             <div>
                               <div>
                                 请求模型: <strong style={{ color: 'var(--color-text-primary)' }}>{log.modelRequested}</strong>
                                 {log.modelActual && log.modelActual !== log.modelRequested && (
-                                  <> → 实际模型: <strong style={{ color: 'var(--color-text-primary)' }}>{log.modelActual}</strong></>
+                                  <>{' -> '}实际模型: <strong style={{ color: 'var(--color-text-primary)' }}>{log.modelActual}</strong></>
                                 )}
                                 ，状态: <strong style={{ color: log.status === 'success' ? 'var(--color-success)' : 'var(--color-danger)' }}>{log.status === 'success' ? '成功' : '失败'}</strong>
-                                ，用时 <strong style={{ color: latencyColor(log.latencyMs) }}>{formatLatency(log.latencyMs)}</strong>
+                                ，用时: <strong style={{ color: latencyColor(log.latencyMs) }}>{formatLatency(log.latencyMs)}</strong>
                                 ，站点: <strong style={{ color: 'var(--color-text-primary)' }}>{log.siteName || '未知站点'}</strong>
                                 ，账号: <strong style={{ color: 'var(--color-text-primary)' }}>{log.username || '未知账号'}</strong>
                               </div>
@@ -390,7 +390,7 @@ export default function ProxyLogs() {
                             </div>
                           )}
 
-                          {/* 计费过程 section */}
+                          {/* 璁¤垂杩囩▼ section */}
                           <div style={{ display: 'flex', gap: 6 }}>
                             <span style={{ fontWeight: 600, color: 'var(--color-info)', flexShrink: 0 }}>计费过程</span>
                             {billingProcessLines.length > 0 ? (
@@ -412,7 +412,7 @@ export default function ProxyLogs() {
                             )}
                           </div>
 
-                          {/* 下游请求路径 */}
+                          {/* 涓嬫父璇锋眰璺緞 */}
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                             <span style={{ fontWeight: 600, color: 'var(--color-primary)', flexShrink: 0 }}>下游请求路径</span>
                             {pathMeta.downstreamPath ? (
@@ -428,7 +428,7 @@ export default function ProxyLogs() {
                             )}
                           </div>
 
-                          {/* 上游请求路径 */}
+                          {/* 涓婃父璇锋眰璺緞 */}
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                             <span style={{ fontWeight: 600, color: 'var(--color-primary)', flexShrink: 0 }}>上游请求路径</span>
                             {pathMeta.upstreamPath ? (
@@ -444,7 +444,7 @@ export default function ProxyLogs() {
                             )}
                           </div>
 
-                          {/* 错误信息 */}
+                          {/* 閿欒淇℃伅 */}
                           {pathMeta.errorMessage.trim().length > 0 && (
                             <div style={{ display: 'flex', gap: 6 }}>
                               <span style={{ fontWeight: 600, color: 'var(--color-danger)', flexShrink: 0 }}>错误信息</span>
@@ -512,3 +512,4 @@ export default function ProxyLogs() {
     </div>
   );
 }
+

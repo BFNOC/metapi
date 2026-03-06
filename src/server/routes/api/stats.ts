@@ -200,7 +200,11 @@ export async function statsRoutes(app: FastifyInstance) {
         .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
         .orderBy(desc(schema.proxyLogs.createdAt))
         .limit(limit).offset(offset).all()
-    ), { includeBillingDetails: true });
+    ), { includeBillingDetails: true }) as Array<{
+      proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
+      accounts: { username?: string | null } | null;
+      sites: { name?: string | null; url?: string | null } | null;
+    }>;
 
     return rows.map((row) => ({
       ...row.proxy_logs,

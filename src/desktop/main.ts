@@ -18,6 +18,7 @@ import {
   createDesktopHealthUrl,
   createDesktopServerUrl,
   isFatalServerExit,
+  resolveDesktopServerWorkingDir,
   waitForServerReady,
 } from './runtime.js';
 
@@ -195,7 +196,11 @@ async function startManagedBackend() {
   });
 
   const child = spawn(process.execPath, [serverEntryPath], {
-    cwd: app.getAppPath(),
+    cwd: resolveDesktopServerWorkingDir({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged,
+    }),
     env: {
       ...env,
       ELECTRON_RUN_AS_NODE: '1',

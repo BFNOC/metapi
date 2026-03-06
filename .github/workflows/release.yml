@@ -38,6 +38,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Upload built dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: metapi-dist-${{ github.sha }}
+          path: dist
+          if-no-files-found: error
+
   build-packages:
     name: Build Desktop Package (${{ matrix.os }})
     needs: verify
@@ -101,6 +108,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Download built dist
+        uses: actions/download-artifact@v4
+        with:
+          name: metapi-dist-${{ github.sha }}
+          path: .
+
       - name: Prefetch AppImage tools
         if: runner.os == 'Linux'
         shell: bash
@@ -132,7 +145,7 @@ jobs:
           if ($env:WIN_CSC_KEY_PASSWORD_INPUT) { $env:WIN_CSC_KEY_PASSWORD = $env:WIN_CSC_KEY_PASSWORD_INPUT }
           for ($attempt = 1; $attempt -le 2; $attempt++) {
             Write-Host "Desktop build attempt $attempt/2"
-            npm run dist:desktop
+            npm run package:desktop
             if ($LASTEXITCODE -eq 0) {
               break
             }
@@ -157,7 +170,7 @@ jobs:
           set -euo pipefail
           for attempt in 1 2; do
             echo "Desktop build attempt ${attempt}/2"
-            if npm run dist:desktop; then
+            if npm run package:desktop; then
               break
             fi
             if [ "$attempt" -eq 2 ]; then
@@ -186,7 +199,7 @@ jobs:
           if [ -n "${APPLE_TEAM_ID_INPUT:-}" ]; then export APPLE_TEAM_ID="$APPLE_TEAM_ID_INPUT"; fi
           for attempt in 1 2; do
             echo "Desktop build attempt ${attempt}/2"
-            if npm run dist:desktop; then
+            if npm run package:desktop; then
               break
             fi
             if [ "$attempt" -eq 2 ]; then

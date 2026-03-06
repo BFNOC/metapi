@@ -3,6 +3,7 @@ import {
   buildDesktopServerEnv,
   createDesktopServerUrl,
   isFatalServerExit,
+  resolveDesktopServerWorkingDir,
   waitForServerReady,
 } from './runtime.js';
 
@@ -28,6 +29,20 @@ describe('desktop runtime helpers', () => {
 
   it('creates the browser URL from the local desktop port', () => {
     expect(createDesktopServerUrl(4312)).toBe('http://127.0.0.1:4312');
+  });
+
+  it('uses resources path as backend cwd for packaged desktop builds', () => {
+    expect(resolveDesktopServerWorkingDir({
+      appPath: 'C:/Users/test/AppData/Local/Programs/Metapi/resources/app.asar',
+      resourcesPath: 'C:/Users/test/AppData/Local/Programs/Metapi/resources',
+      isPackaged: true,
+    })).toBe('C:/Users/test/AppData/Local/Programs/Metapi/resources');
+
+    expect(resolveDesktopServerWorkingDir({
+      appPath: '/workspace/metapi',
+      resourcesPath: '/tmp/electron/resources',
+      isPackaged: false,
+    })).toBe('/workspace/metapi');
   });
 
   it('waits until the health probe returns ok', async () => {

@@ -17,6 +17,12 @@ type ServerExitState = {
   signal: NodeJS.Signals | null;
 };
 
+type DesktopServerWorkingDirInput = {
+  appPath: string;
+  resourcesPath: string;
+  isPackaged: boolean;
+};
+
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 const DEFAULT_READY_INTERVAL_MS = 250;
 
@@ -41,6 +47,10 @@ export function createDesktopServerUrl(port: number): string {
 
 export function createDesktopHealthUrl(port: number): string {
   return `${createDesktopServerUrl(port)}/api/desktop/health`;
+}
+
+export function resolveDesktopServerWorkingDir(input: DesktopServerWorkingDirInput): string {
+  return input.isPackaged ? input.resourcesPath : input.appPath;
 }
 
 export async function waitForServerReady(input: WaitForServerReadyInput): Promise<void> {

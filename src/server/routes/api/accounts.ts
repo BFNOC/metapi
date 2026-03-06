@@ -409,7 +409,7 @@ export async function accountsRoutes(app: FastifyInstance) {
 
     // Get platform adapter
     const adapter = getAdapter(site.platform);
-    if (!adapter) return { success: false, message: `婵炴垶鎸哥粔鐢稿极椤曗偓楠炴劖鎷呴悜妯兼殸濡ょ姷鍋涢崯鑳亹? ${site.platform}` };
+    if (!adapter) return { success: false, message: `不支持的平台: ${site.platform}` };
 
     // Login to the target site
     const loginResult = await adapter.login(site.url, username, password);
@@ -523,10 +523,13 @@ export async function accountsRoutes(app: FastifyInstance) {
     }
 
     const adapter = getAdapter(site.platform);
-    if (!adapter) return { success: false, message: `婵炴垶鎸哥粔鐢稿极椤曗偓楠炴劖鎷呴悜妯兼殸濡ょ姷鍋涢崯鑳亹? ${site.platform}` };
+    if (!adapter) return { success: false, message: `不支持的平台: ${site.platform}` };
 
     const normalizedPlatform = String(adapter.platformName || site.platform || '').trim().toLowerCase();
-    const hasProvidedUserId = Number.isFinite(platformUserId) && platformUserId > 0;
+    const parsedPlatformUserId = typeof platformUserId === 'number' && Number.isFinite(platformUserId) && platformUserId > 0
+      ? Math.trunc(platformUserId)
+      : undefined;
+    const hasProvidedUserId = parsedPlatformUserId !== undefined;
     const skipRawShieldDetection = normalizedPlatform === 'new-api' || normalizedPlatform === 'anyrouter';
     const diagnoseVerificationFailure = async (): Promise<VerifyFailureReason> => {
       const parseFailureReason = (bodyText: string, contentType: string): VerifyFailureReason => {
@@ -563,7 +566,7 @@ export async function accountsRoutes(app: FastifyInstance) {
           candidates.add(`token=${raw}`);
         }
 
-        const diagnosticUserId = hasProvidedUserId ? String(platformUserId) : '0';
+        const diagnosticUserId = hasProvidedUserId ? String(parsedPlatformUserId) : '0';
         const headerVariants: Record<string, string>[] = [
           { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'New-Api-User': diagnosticUserId },
         ];
@@ -624,7 +627,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       return null;
     };
 
-    if (!platformUserId && (normalizedPlatform === 'new-api' || normalizedPlatform === 'anyrouter')) {
+    if (!hasProvidedUserId && (normalizedPlatform === 'new-api' || normalizedPlatform === 'anyrouter')) {
       const preflightReason = await diagnoseVerificationFailure();
       if (preflightReason === 'needs-user-id') {
         return buildVerificationFailureResponse(preflightReason);
@@ -634,7 +637,7 @@ export async function accountsRoutes(app: FastifyInstance) {
     if (credentialMode === 'apikey') {
       try {
         const models = await withTimeout(
-          () => adapter.getModels(site.url, accessToken, platformUserId),
+          () => adapter.getModels(site.url, accessToken, parsedPlatformUserId),
           ACCOUNT_VERIFY_TIMEOUT_MS,
           `Token verification timed out (${Math.max(1, Math.round(ACCOUNT_VERIFY_TIMEOUT_MS / 1000))}s)`,
         );
@@ -666,7 +669,7 @@ export async function accountsRoutes(app: FastifyInstance) {
     let result: any;
     try {
       result = await withTimeout(
-        () => adapter.verifyToken(site.url, accessToken, platformUserId),
+        () => adapter.verifyToken(site.url, accessToken, parsedPlatformUserId),
         ACCOUNT_VERIFY_TIMEOUT_MS,
         `Token verification timed out (${Math.max(1, Math.round(ACCOUNT_VERIFY_TIMEOUT_MS / 1000))}s)`,
       );
@@ -742,7 +745,7 @@ export async function accountsRoutes(app: FastifyInstance) {
           candidates.add(`token=${raw}`);
         }
 
-        const diagnosticUserId = hasProvidedUserId ? String(platformUserId) : '0';
+        const diagnosticUserId = hasProvidedUserId ? String(parsedPlatformUserId) : '0';
         const headerVariants: Record<string, string>[] = [
           { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'New-Api-User': diagnosticUserId },
         ];
@@ -1250,5 +1253,4 @@ export async function accountsRoutes(app: FastifyInstance) {
     }
   });
 }
-
 

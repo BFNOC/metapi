@@ -48,6 +48,7 @@ describe('Accounts rebind panel focus', () => {
         balanceUsed: 0,
         todayReward: 0,
         todaySpend: 0,
+        accessToken: 'session-token',
         status: 'expired',
         checkinEnabled: true,
         siteId: 10,

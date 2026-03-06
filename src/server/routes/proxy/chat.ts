@@ -5,7 +5,7 @@ import { fetch } from 'undici';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
-import { estimateProxyCost } from '../../services/modelPricingService.js';
+import { buildProxyBillingDetails, estimateProxyCost } from '../../services/modelPricingService.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageFallbackService.js';
 import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
@@ -347,7 +347,14 @@ async function handleChatProxyRequest(
 
         const streamContext = createStreamTransformContext(modelName);
         const claudeContext = createClaudeDownstreamContext();
-        let parsedUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        let parsedUsage: ReturnType<typeof parseProxyUsage> = {
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+          promptTokensIncludeCache: null,
+        };
 
         const writeLines = (lines: string[]) => {
           for (const line of lines) {
@@ -429,10 +436,25 @@ async function handleChatProxyRequest(
             promptTokens: resolvedUsage.promptTokens,
             completionTokens: resolvedUsage.completionTokens,
             totalTokens: resolvedUsage.totalTokens,
+            cacheReadTokens: parsedUsage.cacheReadTokens,
+            cacheCreationTokens: parsedUsage.cacheCreationTokens,
+            promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
+          });
+          let billingDetails = await buildProxyBillingDetails({
+            site: selected.site,
+            account: selected.account,
+            modelName,
+            promptTokens: resolvedUsage.promptTokens,
+            completionTokens: resolvedUsage.completionTokens,
+            totalTokens: resolvedUsage.totalTokens,
+            cacheReadTokens: parsedUsage.cacheReadTokens,
+            cacheCreationTokens: parsedUsage.cacheCreationTokens,
+            promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
           });
 
           if (resolvedUsage.estimatedCostFromQuota > 0 && (resolvedUsage.recoveredFromSelfLog || estimatedCost <= 0)) {
             estimatedCost = resolvedUsage.estimatedCostFromQuota;
+            billingDetails = null;
           }
 
           tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
@@ -450,6 +472,7 @@ async function handleChatProxyRequest(
             resolvedUsage.completionTokens,
             resolvedUsage.totalTokens,
             estimatedCost,
+            billingDetails,
             successfulUpstreamPath,
           );
           return;
@@ -593,10 +616,25 @@ async function handleChatProxyRequest(
           promptTokens: resolvedUsage.promptTokens,
           completionTokens: resolvedUsage.completionTokens,
           totalTokens: resolvedUsage.totalTokens,
+          cacheReadTokens: parsedUsage.cacheReadTokens,
+          cacheCreationTokens: parsedUsage.cacheCreationTokens,
+          promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
+        });
+        let billingDetails = await buildProxyBillingDetails({
+          site: selected.site,
+          account: selected.account,
+          modelName,
+          promptTokens: resolvedUsage.promptTokens,
+          completionTokens: resolvedUsage.completionTokens,
+          totalTokens: resolvedUsage.totalTokens,
+          cacheReadTokens: parsedUsage.cacheReadTokens,
+          cacheCreationTokens: parsedUsage.cacheCreationTokens,
+          promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
         });
 
         if (resolvedUsage.estimatedCostFromQuota > 0 && (resolvedUsage.recoveredFromSelfLog || estimatedCost <= 0)) {
           estimatedCost = resolvedUsage.estimatedCostFromQuota;
+          billingDetails = null;
         }
 
         tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
@@ -614,6 +652,7 @@ async function handleChatProxyRequest(
           resolvedUsage.completionTokens,
           resolvedUsage.totalTokens,
           estimatedCost,
+          billingDetails,
           successfulUpstreamPath,
         );
         return;
@@ -655,10 +694,25 @@ async function handleChatProxyRequest(
         promptTokens: resolvedUsage.promptTokens,
         completionTokens: resolvedUsage.completionTokens,
         totalTokens: resolvedUsage.totalTokens,
+        cacheReadTokens: parsedUsage.cacheReadTokens,
+        cacheCreationTokens: parsedUsage.cacheCreationTokens,
+        promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
+      });
+      let billingDetails = await buildProxyBillingDetails({
+        site: selected.site,
+        account: selected.account,
+        modelName,
+        promptTokens: resolvedUsage.promptTokens,
+        completionTokens: resolvedUsage.completionTokens,
+        totalTokens: resolvedUsage.totalTokens,
+        cacheReadTokens: parsedUsage.cacheReadTokens,
+        cacheCreationTokens: parsedUsage.cacheCreationTokens,
+        promptTokensIncludeCache: parsedUsage.promptTokensIncludeCache,
       });
 
       if (resolvedUsage.estimatedCostFromQuota > 0 && (resolvedUsage.recoveredFromSelfLog || estimatedCost <= 0)) {
         estimatedCost = resolvedUsage.estimatedCostFromQuota;
+        billingDetails = null;
       }
 
       tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
@@ -676,6 +730,7 @@ async function handleChatProxyRequest(
         resolvedUsage.completionTokens,
         resolvedUsage.totalTokens,
         estimatedCost,
+        billingDetails,
         successfulUpstreamPath,
       );
 
@@ -717,6 +772,7 @@ async function logProxy(
   completionTokens = 0,
   totalTokens = 0,
   estimatedCost = 0,
+  billingDetails: unknown = null,
   upstreamPath: string | null = null,
 ) {
   try {
@@ -739,6 +795,7 @@ async function logProxy(
       completionTokens,
       totalTokens,
       estimatedCost,
+      billingDetails: billingDetails ? JSON.stringify(billingDetails) : null,
       errorMessage: normalizedErrorMessage,
       retryCount,
       createdAt,

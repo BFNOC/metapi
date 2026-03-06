@@ -84,11 +84,41 @@ describe('Dashboard site speed buttons', () => {
       const speedButton = root!.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && collectText(node).includes('娴嬮€?')
+        && collectText(node).trim() === '测速'
       ));
 
       await act(async () => {
         await speedButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(globalThis.document.getElementById).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('updates bulk site speed status without imperative document lookups', async () => {
+    let root: ReturnType<typeof create> | null = null;
+
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <Dashboard />
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const bulkSpeedButton = root!.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '一键测速'
+      ));
+
+      await act(async () => {
+        await bulkSpeedButton.props.onClick();
       });
       await flushMicrotasks();
 

@@ -29,6 +29,12 @@ function ChartFallback({ height = 280 }: { height?: number }) {
   );
 }
 
+type SiteSpeedState =
+  | { status: 'loading' }
+  | { status: 'timeout' }
+  | { status: 'done'; ms: number }
+  | undefined;
+
 export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminName?: string }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -38,9 +44,16 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
   const [siteTrend, setSiteTrend] = useState<any[]>([]);
   const [siteLoading, setSiteLoading] = useState(true);
   const [sites, setSites] = useState<any[]>([]);
+  const [siteSpeedStates, setSiteSpeedStates] = useState<Record<string, SiteSpeedState>>({});
   const [trendDays, setTrendDays] = useState(7);
   const toast = useToast();
   const normalizedAdminName = (adminName || '').trim() || '\u7ba1\u7406\u5458';
+
+  const getSiteSpeedKey = (site: any, idx: number) => String(site?.id ?? idx);
+
+  const setSiteSpeedState = (siteKey: string, nextState: SiteSpeedState) => {
+    setSiteSpeedStates((current) => ({ ...current, [siteKey]: nextState }));
+  };
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -72,6 +85,7 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
       setSiteTrend(trendRes.trend || []);
       const siteRows = Array.isArray(sitesRes) ? sitesRes : (sitesRes?.sites || []);
       setSites(siteRows.filter((site: any) => site?.status !== 'disabled'));
+      setSiteSpeedStates({});
     } catch (err) {
       console.error('Failed to load site stats:', err);
     } finally {
@@ -196,8 +210,8 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
   const proxy24hTotal = safeNumber(data?.proxy24h?.total);
   const totalTokens = safeNumber(data?.proxy24h?.totalTokens);
 
-  const latencyDot = (ms: number) => {
-    const color = ms <= 500
+  const getLatencyColor = (ms: number) => (
+    ms <= 500
       ? 'var(--color-success)'
       : ms <= 1000
         ? 'color-mix(in srgb, var(--color-success) 60%, var(--color-warning))'
@@ -207,8 +221,42 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
             ? 'color-mix(in srgb, var(--color-warning) 60%, var(--color-danger))'
             : ms < 3000
               ? 'color-mix(in srgb, var(--color-warning) 30%, var(--color-danger))'
-              : 'var(--color-danger)';
-    return `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};box-shadow:0 0 4px ${color};animation:pulse 1.5s ease-in-out infinite;margin-right:3px;vertical-align:middle"></span><span style="color:${color};font-weight:600">${ms}ms</span>`;
+              : 'var(--color-danger)'
+  );
+
+  const renderSiteSpeedLabel = (site: any, idx: number) => {
+    const siteKey = getSiteSpeedKey(site, idx);
+    const speedState = siteSpeedStates[siteKey];
+
+    if (!speedState || speedState.status === 'loading') {
+      return speedState ? '...' : '测速';
+    }
+
+    if (speedState.status === 'timeout') {
+      return '超时';
+    }
+
+    const ms = speedState.ms;
+    const color = getLatencyColor(ms);
+
+    return (
+      <>
+        <span
+          style={{
+            display: 'inline-block',
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: color,
+            boxShadow: `0 0 4px ${color}`,
+            animation: 'pulse 1.5s ease-in-out infinite',
+            marginRight: 3,
+            verticalAlign: 'middle',
+          }}
+        />
+        <span style={{ color, fontWeight: 600 }}>{ms}ms</span>
+      </>
+    );
   };
 
   return (
@@ -406,19 +454,16 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
                 className="btn btn-ghost"
                 style={{ fontSize: 11, padding: '3px 10px', border: '1px solid var(--color-border)', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: 4 }}
                 onClick={async () => {
-                  for (const s of sites) {
-                    const el = document.getElementById(`speed-${s.id}`);
-                    if (el) el.textContent = '...';
-                  }
-                  await Promise.all(sites.map(async (s: any) => {
-                    const el = document.getElementById(`speed-${s.id}`);
+                  await Promise.all(sites.map(async (s: any, idx: number) => {
+                    const siteKey = getSiteSpeedKey(s, idx);
+                    setSiteSpeedState(siteKey, { status: 'loading' });
                     try {
                       const start = performance.now();
                       await fetch(`${s.url}/v1/models`, { method: 'GET', mode: 'no-cors' });
                       const ms = Math.round(performance.now() - start);
-                      if (el) el.innerHTML = latencyDot(ms);
+                      setSiteSpeedState(siteKey, { status: 'done', ms });
                     } catch {
-                      if (el) el.textContent = '超时';
+                      setSiteSpeedState(siteKey, { status: 'timeout' });
                     }
                   }));
                   toast.success('全部测速完成');
@@ -439,22 +484,22 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
                       className="btn btn-ghost"
                       style={{ fontSize: 11, padding: '2px 8px', border: '1px solid var(--color-border)', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: 3 }}
                       onClick={async () => {
-                        const btn = document.getElementById(`speed-${site.id || idx}`);
-                        if (btn) btn.textContent = '...';
+                        const siteKey = getSiteSpeedKey(site, idx);
+                        setSiteSpeedState(siteKey, { status: 'loading' });
                         try {
                           const start = performance.now();
                           await fetch(`${site.url}/v1/models`, { method: 'GET', mode: 'no-cors' });
                           const ms = Math.round(performance.now() - start);
-                          if (btn) btn.innerHTML = latencyDot(ms);
+                          setSiteSpeedState(siteKey, { status: 'done', ms });
                           toast.success(`${site.name}: ${ms}ms`);
                         } catch {
-                          if (btn) btn.textContent = '超时';
+                          setSiteSpeedState(siteKey, { status: 'timeout' });
                           toast.error(`${site.name}: 测速失败`);
                         }
                       }}
                     >
                       <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                      <span id={`speed-${site.id || idx}`}>测速</span>
+                      <span>{renderSiteSpeedLabel(site, idx)}</span>
                     </button>
                     <a
                       href={site.url}

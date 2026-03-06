@@ -210,7 +210,7 @@ describe('NewApiAdapter', () => {
       if (req.url === '/api/user/self') {
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${BALANCE_FAIL_TOKEN}`) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: '閺冪姵娼堟潻娑滎攽濮濄倖鎼锋担婊愮礉閺堫亞娅ヨぐ鏇氱瑬閺堫亝褰佹笟?access token' }));
+          res.end(JSON.stringify({ success: false, message: '无权进行此操作，access token 无效' }));
           return;
         }
 
@@ -222,7 +222,7 @@ describe('NewApiAdapter', () => {
           )
         ) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: '閺冪姵娼堟潻娑滎攽濮濄倖鎼锋担婊愮礉閺堫亞娅ヨぐ鏇氱瑬閺堫亝褰佹笟?access token' }));
+          res.end(JSON.stringify({ success: false, message: '无权进行此操作，access token 无效' }));
           return;
         }
 
@@ -316,12 +316,12 @@ describe('NewApiAdapter', () => {
         }
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${CHECKIN_ALREADY_TOKEN}`) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: '浠婂ぉ宸茬粡绛惧埌杩囧暒' }));
+          res.end(JSON.stringify({ success: false, message: '今天已经签到过啦' }));
           return;
         }
         if (typeof req.headers.cookie === 'string' && req.headers.cookie.includes(`session=${CHECKIN_ALREADY_TOKEN}`)) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: '鏃犳潈杩涜姝ゆ搷浣滐紝鏈櫥褰曚笖鏈彁渚?access token' }));
+          res.end(JSON.stringify({ success: false, message: '无权进行此操作，未登录且未提供 access token' }));
           return;
         }
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${COOKIE_SHIELDED_TOKEN}`) {
@@ -349,7 +349,7 @@ describe('NewApiAdapter', () => {
       if (req.url === '/api/user/sign_in') {
         if (typeof req.headers.cookie === 'string' && req.headers.cookie.includes(`session=${CHECKIN_ALREADY_TOKEN}`)) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: '鏃犳潈杩涜姝ゆ搷浣滐紝鏈櫥褰曚笖鏈彁渚?access token' }));
+          res.end(JSON.stringify({ success: false, message: '无权进行此操作，未登录且未提供 access token' }));
           return;
         }
       }
@@ -510,7 +510,7 @@ describe('NewApiAdapter', () => {
     const result = await adapter.checkin(baseUrl, CHECKIN_ALREADY_TOKEN, 11494);
 
     expect(result.success).toBe(false);
-    expect(result.message).toBe('浠婂ぉ宸茬粡绛惧埌杩囧暒');
+    expect(result.message).toBe('今天已经签到过啦');
   });
 
   it('sends all compatibility user-id headers when userId is known', async () => {

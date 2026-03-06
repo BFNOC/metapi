@@ -263,6 +263,17 @@ function ensureDownstreamApiKeySchema() {
   `);
 }
 
+function ensureProxyLogBillingDetailsSchema() {
+  const sqlite = requireSqliteConnection();
+  if (!tableExists('proxy_logs')) {
+    return;
+  }
+
+  if (!tableColumnExists('proxy_logs', 'billing_details')) {
+    sqlite.exec('ALTER TABLE proxy_logs ADD COLUMN billing_details text;');
+  }
+}
+
 async function sqliteProxyQuery(sqlText: string, params: unknown[], method: SqlMethod) {
   const sqlite = requireSqliteConnection();
   const statement = sqlite.prepare(sqlText);
@@ -518,6 +529,7 @@ function initSqliteDb() {
   ensureSiteGlobalWeightSchema();
   ensureRouteGroupingSchema();
   ensureDownstreamApiKeySchema();
+  ensureProxyLogBillingDetailsSchema();
 
   const rawDb = drizzleSqliteProxy(
     (sqlText, params, method) => sqliteProxyQuery(sqlText, params, method as SqlMethod),

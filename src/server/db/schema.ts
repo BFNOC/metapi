@@ -155,6 +155,7 @@ export const proxyLogs = sqliteTable('proxy_logs', {
   completionTokens: integer('completion_tokens'),
   totalTokens: integer('total_tokens'),
   estimatedCost: real('estimated_cost'),
+  billingDetails: text('billing_details'),
   errorMessage: text('error_message'),
   retryCount: integer('retry_count').default(0),
   createdAt: text('created_at').default(sql`(datetime('now'))`),

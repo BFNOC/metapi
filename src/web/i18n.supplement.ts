@@ -74,7 +74,6 @@ export const zhToEnSupplemental: Record<string, string> = {
   '站点未开启签到': 'Check-in is not enabled on this site',
   '无需重试（非故障）': 'No retry needed (not a failure)',
   '该站点未提供签到端点，账号会被自动跳过。': 'This site does not expose a check-in endpoint, so the account is skipped automatically.',
-  '婵炴垶鎸哥粔鐢稿极椤曗偓楠炴劖鎷呴悜妯兼殸濡ょ姷鍋涢崯鑳亹? ${site.platform}': '婵炴垶铸鎸哥粔颢综合极椤曗偓nan炴劖鎷呴悜榯cum殸濡ょ姷草涢崯鑳亹? ${site.platform}',
   '超时': 'time out',
   '成本权重': 'cost weight',
   '成功': 'success',

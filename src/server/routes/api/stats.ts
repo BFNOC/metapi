@@ -25,6 +25,16 @@ function parseBooleanFlag(raw?: string): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
+function parseProxyLogBillingDetails(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
 const MODELS_MARKETPLACE_BASE_TTL_MS = 15_000;
 const MODELS_MARKETPLACE_PRICING_TTL_MS = 90_000;
 
@@ -187,6 +197,7 @@ export async function statsRoutes(app: FastifyInstance) {
 
     return rows.map((row) => ({
       ...row.proxy_logs,
+      billingDetails: parseProxyLogBillingDetails(row.proxy_logs.billingDetails),
       username: row.accounts?.username || null,
       siteName: row.sites?.name || null,
       siteUrl: row.sites?.url || null,

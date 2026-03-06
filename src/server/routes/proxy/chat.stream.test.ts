@@ -10,6 +10,7 @@ const refreshModelsAndRebuildRoutesMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
 const estimateProxyCostMock = vi.fn(async (_arg?: any) => 0);
+const buildProxyBillingDetailsMock = vi.fn(async (_arg?: any) => null);
 const fetchModelPricingCatalogMock = vi.fn(async (_arg?: any): Promise<any> => null);
 const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) => ({
   ...usage,
@@ -50,6 +51,7 @@ vi.mock('../../services/alertRules.js', () => ({
 
 vi.mock('../../services/modelPricingService.js', () => ({
   estimateProxyCost: (arg: any) => estimateProxyCostMock(arg),
+  buildProxyBillingDetails: (arg: any) => buildProxyBillingDetailsMock(arg),
   fetchModelPricingCatalog: (arg: any) => fetchModelPricingCatalogMock(arg),
 }));
 
@@ -92,6 +94,7 @@ describe('chat proxy stream behavior', () => {
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
     estimateProxyCostMock.mockClear();
+    buildProxyBillingDetailsMock.mockClear();
     fetchModelPricingCatalogMock.mockReset();
     resolveProxyUsageWithSelfLogFallbackMock.mockClear();
     dbInsertMock.mockClear();

@@ -13,6 +13,11 @@ import { getRunningTaskByDedupeKey, startBackgroundTask } from '../../services/b
 import { parseCheckinRewardAmount } from '../../services/checkinRewardParser.js';
 import { estimateRewardWithTodayIncomeFallback } from '../../services/todayIncomeRewardService.js';
 import {
+  getProxyLogBaseSelectFields,
+  parseProxyLogBillingDetails,
+  withProxyLogSelectFields,
+} from '../../services/proxyLogStore.js';
+import {
   formatUtcSqlDateTime,
   getLocalDayRangeUtc,
   getLocalRangeStartUtc,
@@ -23,16 +28,6 @@ function parseBooleanFlag(raw?: string): boolean {
   if (!raw) return false;
   const normalized = raw.trim().toLowerCase();
   return normalized === '1' || normalized === 'true' || normalized === 'yes';
-}
-
-function parseProxyLogBillingDetails(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'string' || value.trim().length === 0) return null;
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
-  } catch {
-    return null;
-  }
 }
 
 const MODELS_MARKETPLACE_BASE_TTL_MS = 15_000;
@@ -79,6 +74,8 @@ function proxyCostSqlExpression() {
 }
 
 export async function statsRoutes(app: FastifyInstance) {
+  const proxyLogBaseFields = getProxyLogBaseSelectFields();
+
   // Dashboard summary
   app.get('/api/stats/dashboard', async () => {
     const accountRows = await db.select().from(schema.accounts)
@@ -119,7 +116,11 @@ export async function statsRoutes(app: FastifyInstance) {
     const nowTs = Date.now();
     const last24hDate = formatUtcSqlDateTime(new Date(nowTs - 86400000));
     const last7dDate = getLocalRangeStartUtc(7);
-    const recentProxyLogs = (await db.select().from(schema.proxyLogs)
+    const recentProxyLogs = (await db.select({
+      proxy_logs: proxyLogBaseFields,
+      accounts: schema.accounts,
+      sites: schema.sites,
+    }).from(schema.proxyLogs)
       .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
       .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(and(gte(schema.proxyLogs.createdAt, last7dDate), eq(schema.sites.status, 'active')))
@@ -189,11 +190,17 @@ export async function statsRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/stats/proxy-logs', async (request) => {
     const limit = parseInt(request.query.limit || '50', 10);
     const offset = parseInt(request.query.offset || '0', 10);
-    const rows = await db.select().from(schema.proxyLogs)
-      .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
-      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .orderBy(desc(schema.proxyLogs.createdAt))
-      .limit(limit).offset(offset).all();
+    const rows = await withProxyLogSelectFields(({ fields }) => (
+      db.select({
+        proxy_logs: fields,
+        accounts: schema.accounts,
+        sites: schema.sites,
+      }).from(schema.proxyLogs)
+        .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
+        .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+        .orderBy(desc(schema.proxyLogs.createdAt))
+        .limit(limit).offset(offset).all()
+    ), { includeBillingDetails: true });
 
     return rows.map((row) => ({
       ...row.proxy_logs,
@@ -273,7 +280,7 @@ export async function statsRoutes(app: FastifyInstance) {
       .all();
 
     const last7d = getLocalRangeStartUtc(7);
-    const recentLogs = await db.select().from(schema.proxyLogs)
+    const recentLogs = await db.select(proxyLogBaseFields).from(schema.proxyLogs)
       .where(gte(schema.proxyLogs.createdAt, last7d))
       .all();
 
@@ -807,7 +814,11 @@ export async function statsRoutes(app: FastifyInstance) {
     const days = Math.max(1, parseInt(request.query.days || '7', 10));
     const sinceDate = getLocalRangeStartUtc(days);
 
-    const rows = await db.select().from(schema.proxyLogs)
+    const rows = await db.select({
+      proxy_logs: proxyLogBaseFields,
+      accounts: schema.accounts,
+      sites: schema.sites,
+    }).from(schema.proxyLogs)
       .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
       .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(and(gte(schema.proxyLogs.createdAt, sinceDate), eq(schema.sites.status, 'active')))
@@ -863,7 +874,11 @@ export async function statsRoutes(app: FastifyInstance) {
       accountIds = new Set(siteAccounts.map((a) => a.id));
     }
 
-    const rows = await db.select().from(schema.proxyLogs)
+    const rows = await db.select({
+      proxy_logs: proxyLogBaseFields,
+      accounts: schema.accounts,
+      sites: schema.sites,
+    }).from(schema.proxyLogs)
       .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
       .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(and(gte(schema.proxyLogs.createdAt, sinceDate), eq(schema.sites.status, 'active')))

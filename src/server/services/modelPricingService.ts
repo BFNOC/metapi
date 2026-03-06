@@ -1,5 +1,9 @@
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withSiteProxyRequestInit } from './siteProxy.js';
+import {
+  buildNewApiCookieCandidates,
+  fetchJsonWithShieldCookieRetry,
+} from './platforms/newApiShield.js';
 
 const PRICE_CACHE_TTL_MS = 10 * 60 * 1000;
 const PRICE_CACHE_FAILURE_TTL_MS = 60 * 1000;
@@ -376,7 +380,15 @@ function buildTokenCandidates(input: EstimateProxyCostInput): string[] {
   return Array.from(new Set(candidates));
 }
 
-async function fetchCommonPricing(baseUrl: string, token?: string): Promise<PricingData | null> {
+async function fetchCommonPricing(baseUrl: string, token?: string, sitePlatform?: string): Promise<PricingData | null> {
+  const normalizedPlatform = (sitePlatform || '').trim().toLowerCase();
+  const shouldTryShieldCookie = !!token && (normalizedPlatform === 'anyrouter' || token.includes('='));
+  if (shouldTryShieldCookie) {
+    const payload = await fetchJsonViaNewApiShield(`${baseUrl}/api/pricing`, token!);
+    const data = normalizeCommonPricingPayload(payload);
+    if (data) return data;
+  }
+
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   const payload = await fetchJson(`${baseUrl}/api/pricing`, { headers });
@@ -436,8 +448,8 @@ async function fetchPricingData(input: EstimateProxyCostInput): Promise<PricingD
   const tokenCandidates = buildTokenCandidates(input);
 
   const fetcher = input.site.platform === 'one-hub' || input.site.platform === 'done-hub'
-    ? fetchOneHubPricing
-    : fetchCommonPricing;
+    ? (baseUrl: string, token?: string) => fetchOneHubPricing(baseUrl, token)
+    : (baseUrl: string, token?: string) => fetchCommonPricing(baseUrl, token, input.site.platform);
 
   for (const token of tokenCandidates) {
     try {
@@ -755,6 +767,17 @@ export async function estimateProxyCost(input: EstimateProxyCostInput): Promise<
   } catch {
     return fallbackTokenCost(totalTokens, input.site.platform);
   }
+}
+
+async function fetchJsonViaNewApiShield(url: string, token: string): Promise<unknown> {
+  for (const cookie of buildNewApiCookieCandidates(token)) {
+    const result = await fetchJsonWithShieldCookieRetry(url, {
+      headers: { Cookie: cookie },
+    });
+    if (result.data) return result.data;
+  }
+
+  return null;
 }
 
 export async function buildProxyBillingDetails(input: EstimateProxyCostInput): Promise<ProxyBillingDetails | null> {

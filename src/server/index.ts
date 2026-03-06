@@ -25,7 +25,7 @@ import { repairStoredCreatedAtValues } from './services/storedTimestampRepairSer
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { normalize, resolve, sep } from 'path';
-import { db, runtimeDbDialect, schema, switchRuntimeDatabase, type RuntimeDbDialect } from './db/index.js';
+import { db, ensureProxyLogBillingDetailsColumn, runtimeDbDialect, schema, switchRuntimeDatabase, type RuntimeDbDialect } from './db/index.js';
 
 function toSettingsMap(rows: Array<{ key: string; value: string }>) {
   return new Map(rows.map((row) => [row.key, row.value]));
@@ -189,6 +189,7 @@ try {
   const finalRows = await db.select().from(schema.settings).all();
   const finalMap = toSettingsMap(finalRows);
   applyRuntimeSettings(finalMap);
+  await ensureProxyLogBillingDetailsColumn();
   await repairStoredCreatedAtValues();
 
   console.log('Loaded runtime settings overrides');

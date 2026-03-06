@@ -31,6 +31,7 @@ export let runtimeDbDialect: RuntimeDbDialect = config.dbType;
 let sqliteConnection: Database.Database | null = null;
 let mysqlPool: mysql.Pool | null = null;
 let pgPool: pg.Pool | null = null;
+let proxyLogBillingDetailsColumnAvailable: boolean | null = null;
 
 function resolveSqlitePath(): string {
   const raw = (config.dbUrl || '').trim();
@@ -272,6 +273,84 @@ function ensureProxyLogBillingDetailsSchema() {
   if (!tableColumnExists('proxy_logs', 'billing_details')) {
     sqlite.exec('ALTER TABLE proxy_logs ADD COLUMN billing_details text;');
   }
+
+  proxyLogBillingDetailsColumnAvailable = true;
+}
+
+function normalizeSchemaErrorMessage(error: unknown): string {
+  if (typeof error === 'object' && error && 'message' in error) {
+    return String((error as { message?: unknown }).message || '');
+  }
+  return String(error || '');
+}
+
+function isDuplicateColumnError(error: unknown): boolean {
+  const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
+  return lowered.includes('duplicate column') || lowered.includes('already exists');
+}
+
+export async function hasProxyLogBillingDetailsColumn(): Promise<boolean> {
+  if (proxyLogBillingDetailsColumnAvailable !== null) {
+    return proxyLogBillingDetailsColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'sqlite') {
+    proxyLogBillingDetailsColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'billing_details');
+    return proxyLogBillingDetailsColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'mysql') {
+    if (!mysqlPool) return false;
+    const [rows] = await mysqlPool.query('SHOW COLUMNS FROM `proxy_logs` LIKE ?', ['billing_details']);
+    proxyLogBillingDetailsColumnAvailable = Array.isArray(rows) && rows.length > 0;
+    return proxyLogBillingDetailsColumnAvailable;
+  }
+
+  if (!pgPool) return false;
+  const result = await pgPool.query(
+    'SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2 LIMIT 1',
+    ['proxy_logs', 'billing_details'],
+  );
+  proxyLogBillingDetailsColumnAvailable = Number(result.rowCount || 0) > 0;
+  return proxyLogBillingDetailsColumnAvailable;
+}
+
+export async function ensureProxyLogBillingDetailsColumn(): Promise<boolean> {
+  if (runtimeDbDialect === 'sqlite') {
+    ensureProxyLogBillingDetailsSchema();
+    proxyLogBillingDetailsColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'billing_details');
+    return proxyLogBillingDetailsColumnAvailable;
+  }
+
+  if (await hasProxyLogBillingDetailsColumn()) {
+    return true;
+  }
+
+  try {
+    if (runtimeDbDialect === 'mysql') {
+      if (!mysqlPool) return false;
+      await mysqlPool.query('ALTER TABLE `proxy_logs` ADD COLUMN `billing_details` TEXT NULL');
+    } else {
+      if (!pgPool) return false;
+      await pgPool.query('ALTER TABLE "proxy_logs" ADD COLUMN "billing_details" TEXT');
+    }
+    proxyLogBillingDetailsColumnAvailable = true;
+    return true;
+  } catch (error) {
+    if (isDuplicateColumnError(error)) {
+      proxyLogBillingDetailsColumnAvailable = true;
+      return true;
+    }
+    proxyLogBillingDetailsColumnAvailable = false;
+    console.warn('[db] failed to ensure proxy_logs.billing_details column', error);
+    return false;
+  }
+}
+
+function resetSchemaCapabilityCache() {
+  proxyLogBillingDetailsColumnAvailable = null;
 }
 
 async function sqliteProxyQuery(sqlText: string, params: unknown[], method: SqlMethod) {
@@ -628,6 +707,7 @@ export const db: any = new Proxy({}, {
 export { schema };
 
 export async function closeDbConnections(): Promise<void> {
+  resetSchemaCapabilityCache();
   if (mysqlPool) {
     await mysqlPool.end();
     mysqlPool = null;

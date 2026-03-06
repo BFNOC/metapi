@@ -1,8 +1,11 @@
 import { FastifyInstance } from 'fastify';
 import { db, schema } from '../../db/index.js';
 import { and, like, desc, eq } from 'drizzle-orm';
+import { getProxyLogBaseSelectFields } from '../../services/proxyLogStore.js';
 
 export async function searchRoutes(app: FastifyInstance) {
+  const proxyLogBaseFields = getProxyLogBaseSelectFields();
+
   app.post<{ Body: { query: string; limit?: number } }>('/api/search', async (request) => {
     const { query, limit = 20 } = request.body;
     if (!query || query.trim().length === 0) {
@@ -40,7 +43,7 @@ export async function searchRoutes(app: FastifyInstance) {
       .map(r => ({ ...r.checkin_logs, account: r.accounts }));
 
     // Search proxy logs (by model name)
-    const proxyLogs = await db.select().from(schema.proxyLogs)
+    const proxyLogs = await db.select(proxyLogBaseFields).from(schema.proxyLogs)
       .where(like(schema.proxyLogs.modelRequested, q))
       .orderBy(desc(schema.proxyLogs.createdAt))
       .limit(perCategory).all();

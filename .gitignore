@@ -1,9 +1,11 @@
 node_modules/
 dist/
+release/
 data/*
 !data/.gitkeep
 .env
 *.log
+*.tar.gz
 logs/
 tmp/*
 !tmp/.gitkeep

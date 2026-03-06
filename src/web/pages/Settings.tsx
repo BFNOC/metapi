@@ -85,10 +85,12 @@ type RuntimeDatabaseState = {
   active: {
     dialect: DbDialect;
     connection: string;
+    ssl: boolean;
   };
   saved: {
     dialect: DbDialect;
     connection: string;
+    ssl: boolean;
   } | null;
   restartRequired: boolean;
 };
@@ -200,6 +202,7 @@ export default function Settings() {
     database: 'postgres',
   });
   const [migrationOverwrite, setMigrationOverwrite] = useState(true);
+  const [migrationSsl, setMigrationSsl] = useState(false);
   const [testingMigrationConnection, setTestingMigrationConnection] = useState(false);
   const [migratingDatabase, setMigratingDatabase] = useState(false);
   const [savingRuntimeDatabase, setSavingRuntimeDatabase] = useState(false);
@@ -391,11 +394,13 @@ export default function Settings() {
         active: {
           dialect: (runtimeDatabaseInfo?.active?.dialect || 'sqlite') as DbDialect,
           connection: String(runtimeDatabaseInfo?.active?.connection || ''),
+          ssl: !!runtimeDatabaseInfo?.active?.ssl,
         },
         saved: runtimeDatabaseInfo?.saved
           ? {
             dialect: runtimeDatabaseInfo.saved.dialect as DbDialect,
             connection: String(runtimeDatabaseInfo.saved.connection || ''),
+            ssl: !!runtimeDatabaseInfo.saved.ssl,
           }
           : null,
         restartRequired: !!runtimeDatabaseInfo?.restartRequired,
@@ -701,7 +706,7 @@ export default function Settings() {
       const res = await api.testExternalDatabaseConnection({
         dialect: migrationDialect,
         connectionString: effectiveMigrationConnectionString,
-        overwrite: migrationOverwrite,
+        ssl: migrationSsl,
       });
       toast.success(`Connection success: ${res.connection || migrationDialect}`);
     } catch (err: any) {
@@ -734,6 +739,7 @@ export default function Settings() {
         dialect: migrationDialect,
         connectionString: effectiveMigrationConnectionString,
         overwrite: migrationOverwrite,
+        ssl: migrationSsl,
       });
       setMigrationSummary(res);
       toast.success(res?.message || 'Database migration completed');
@@ -761,16 +767,19 @@ export default function Settings() {
       const res = await api.updateRuntimeDatabaseConfig({
         dialect: migrationDialect,
         connectionString: effectiveMigrationConnectionString,
+        ssl: migrationSsl,
       });
       setRuntimeDatabaseState({
         active: {
           dialect: (res?.active?.dialect || 'sqlite') as DbDialect,
           connection: String(res?.active?.connection || ''),
+          ssl: !!res?.active?.ssl,
         },
         saved: res?.saved
           ? {
             dialect: res.saved.dialect as DbDialect,
             connection: String(res.saved.connection || ''),
+            ssl: !!res.saved.ssl,
           }
           : null,
         restartRequired: !!res?.restartRequired,
@@ -1164,6 +1173,18 @@ export default function Settings() {
             </div>
           )}
 
+          {migrationDialect !== 'sqlite' && (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+              <input
+                type="checkbox"
+                checked={migrationSsl}
+                onChange={(e) => setMigrationSsl(e.target.checked)}
+                style={{ width: 14, height: 14, accentColor: 'var(--color-primary)' }}
+              />
+              启用 SSL/TLS 加密连接
+            </label>
+          )}
+
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
             <input
               type="checkbox"
@@ -1202,11 +1223,11 @@ export default function Settings() {
 
           {runtimeDatabaseState && (
             <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.8, marginBottom: migrationSummary ? 12 : 0 }}>
-              <div>当前运行：{runtimeDatabaseState.active.dialect}（{runtimeDatabaseState.active.connection || '(empty)' }）</div>
+              <div>当前运行：{runtimeDatabaseState.active.dialect}（{runtimeDatabaseState.active.connection || '(empty)' }）{runtimeDatabaseState.active.ssl && ' [SSL]'}</div>
               <div>
                 已保存待生效：
                 {runtimeDatabaseState.saved
-                  ? ` ${runtimeDatabaseState.saved.dialect}（${runtimeDatabaseState.saved.connection}）`
+                  ? ` ${runtimeDatabaseState.saved.dialect}（${runtimeDatabaseState.saved.connection}）${runtimeDatabaseState.saved.ssl ? ' [SSL]' : ''}`
                   : ' 未保存'}
               </div>
               {runtimeDatabaseState.restartRequired && (

@@ -50,16 +50,19 @@ interface DatabaseMigrationBody {
   dialect?: unknown;
   connectionString?: unknown;
   overwrite?: unknown;
+  ssl?: unknown;
 }
 
 type RuntimeDatabaseConfig = {
   dialect: MigrationDialect;
   connectionString: string;
+  ssl: boolean;
 };
 
 const PROXY_TOKEN_PREFIX = 'sk-';
 const DB_TYPE_SETTING_KEY = 'db_type';
 const DB_URL_SETTING_KEY = 'db_url';
+const DB_SSL_SETTING_KEY = 'db_ssl';
 
 function isValidProxyToken(value: string): boolean {
   return value.startsWith(PROXY_TOKEN_PREFIX) && value.length >= 6;
@@ -316,6 +319,7 @@ async function loadSavedRuntimeDatabaseConfig(): Promise<RuntimeDatabaseConfig |
   const map = new Map(settingsRows.map((row) => [row.key, row.value]));
   const rawDialect = parseJsonValue(map.get(DB_TYPE_SETTING_KEY));
   const rawConnection = parseJsonValue(map.get(DB_URL_SETTING_KEY));
+  const rawSsl = parseJsonValue(map.get(DB_SSL_SETTING_KEY));
   if (typeof rawDialect !== 'string' || typeof rawConnection !== 'string') {
     return null;
   }
@@ -324,10 +328,12 @@ async function loadSavedRuntimeDatabaseConfig(): Promise<RuntimeDatabaseConfig |
     const normalized = normalizeMigrationInput({
       dialect: rawDialect,
       connectionString: rawConnection,
+      ssl: rawSsl,
     });
     return {
       dialect: normalized.dialect,
       connectionString: normalized.connectionString,
+      ssl: normalized.ssl,
     };
   } catch {
     return null;
@@ -337,19 +343,24 @@ async function loadSavedRuntimeDatabaseConfig(): Promise<RuntimeDatabaseConfig |
 function buildRuntimeDatabaseState(saved: RuntimeDatabaseConfig | null) {
   const activeDialect = runtimeDbDialect;
   const activeConnection = (config.dbUrl || '').trim();
+  const activeSsl = config.dbSsl;
   const restartRequired = !!saved && (
-    saved.dialect !== activeDialect || saved.connectionString.trim() !== activeConnection
+    saved.dialect !== activeDialect ||
+    saved.connectionString.trim() !== activeConnection ||
+    saved.ssl !== activeSsl
   );
 
   return {
     active: {
       dialect: activeDialect,
       connection: maskRuntimeConnection(activeDialect, activeConnection),
+      ssl: activeSsl,
     },
     saved: saved
       ? {
         dialect: saved.dialect,
         connection: maskRuntimeConnection(saved.dialect, saved.connectionString),
+        ssl: saved.ssl,
       }
       : null,
     restartRequired,
@@ -690,16 +701,18 @@ export async function settingsRoutes(app: FastifyInstance) {
       const normalized = normalizeMigrationInput(request.body || {});
       await upsertSetting(DB_TYPE_SETTING_KEY, normalized.dialect);
       await upsertSetting(DB_URL_SETTING_KEY, normalized.connectionString);
+      await upsertSetting(DB_SSL_SETTING_KEY, normalized.ssl);
 
       await appendSettingsEvent({
         type: 'status',
         title: '数据库运行配置已更新',
-        message: `已保存运行数据库配置：${normalized.dialect}（重启后生效）`,
+        message: `已保存运行数据库配置：${normalized.dialect}${normalized.ssl ? ' (SSL)' : ''}（重启后生效）`,
       });
 
       const saved: RuntimeDatabaseConfig = {
         dialect: normalized.dialect,
         connectionString: normalized.connectionString,
+        ssl: normalized.ssl,
       };
 
       return {

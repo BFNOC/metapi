@@ -352,6 +352,7 @@ export const zhToEnSupplemental: Record<string, string> = {
   '其他': 'other',
   '其他未归类的模型': 'Other uncategorized models',
   '启用': 'enable',
+  '启用 SSL/TLS 加密连接': 'Enable SSL/TLS encrypted connection',
   '启用站点后再试': 'Try again after enabling the site',
   '签到': 'Sign in',
   '签到 Cron': 'Sign in Cron',

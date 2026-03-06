@@ -207,6 +207,53 @@ describe('accounts health refresh runtime state', () => {
     }
   }, 1000);
 
+  it('skips runtime refresh for proxy-only accounts', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Proxy Site',
+      url: 'https://proxy.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: null,
+      accessToken: 'api-key-token',
+      status: 'expired',
+      extraConfig: JSON.stringify({
+        credentialMode: 'apikey',
+      }),
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/health/refresh',
+      payload: { accountId: account.id, wait: true },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      success: boolean;
+      summary: {
+        total: number;
+        skipped: number;
+        failed: number;
+      };
+      results: Array<{ status: string; state: string; message: string }>;
+    };
+
+    expect(body.success).toBe(true);
+    expect(body.summary).toMatchObject({
+      total: 1,
+      skipped: 1,
+      failed: 0,
+    });
+    expect(body.results[0]).toMatchObject({
+      status: 'skipped',
+      state: 'unknown',
+    });
+    expect(refreshBalanceMock).not.toHaveBeenCalled();
+  });
+
   it('finishes the background refresh-all task after the 10 second site timeout instead of staying in progress', async () => {
     vi.useFakeTimers();
     try {

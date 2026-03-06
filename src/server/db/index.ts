@@ -532,7 +532,11 @@ function initMysqlDb(): AppDb {
   if (!config.dbUrl) {
     throw new Error('DB_URL is required when DB_TYPE=mysql');
   }
-  mysqlPool = mysql.createPool(config.dbUrl);
+  const poolOptions: mysql.PoolOptions = { uri: config.dbUrl };
+  if (config.dbSsl) {
+    poolOptions.ssl = { rejectUnauthorized: false };
+  }
+  mysqlPool = mysql.createPool(poolOptions);
 
   const rawDb = drizzleMysqlProxy(
     (sqlText, params, method) => mysqlProxyQuery(mysqlPool!, sqlText, params, method as SqlMethod),
@@ -564,7 +568,11 @@ function initPostgresDb(): AppDb {
   if (!config.dbUrl) {
     throw new Error('DB_URL is required when DB_TYPE=postgres');
   }
-  pgPool = new pg.Pool({ connectionString: config.dbUrl });
+  const poolOptions: pg.PoolConfig = { connectionString: config.dbUrl };
+  if (config.dbSsl) {
+    poolOptions.ssl = { rejectUnauthorized: false };
+  }
+  pgPool = new pg.Pool(poolOptions);
 
   const rawDb = drizzlePgProxy(
     (sqlText, params, method) => pgProxyQuery(pgPool!, sqlText, params, method as SqlMethod),
@@ -622,16 +630,20 @@ export async function closeDbConnections(): Promise<void> {
   }
 }
 
-export async function switchRuntimeDatabase(nextDialect: RuntimeDbDialect, nextDbUrl: string): Promise<void> {
+export async function switchRuntimeDatabase(nextDialect: RuntimeDbDialect, nextDbUrl: string, nextDbSsl?: boolean): Promise<void> {
   const previousDialect = runtimeDbDialect;
   const previousDbUrl = config.dbUrl;
   const previousConfigDialect = config.dbType;
+  const previousDbSsl = config.dbSsl;
 
   await closeDbConnections();
 
   runtimeDbDialect = nextDialect;
   config.dbType = nextDialect;
   config.dbUrl = nextDbUrl;
+  if (nextDbSsl !== undefined) {
+    config.dbSsl = nextDbSsl;
+  }
 
   try {
     activeDb = initDb();
@@ -640,6 +652,7 @@ export async function switchRuntimeDatabase(nextDialect: RuntimeDbDialect, nextD
     runtimeDbDialect = previousDialect;
     config.dbType = previousConfigDialect;
     config.dbUrl = previousDbUrl;
+    config.dbSsl = previousDbSsl;
     activeDb = initDb();
     throw error;
   }

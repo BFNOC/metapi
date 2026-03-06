@@ -22,6 +22,7 @@ import { startScheduler } from './services/checkinScheduler.js';
 import { startProxyLogRetentionService, stopProxyLogRetentionService } from './services/proxyLogRetentionService.js';
 import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
+import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { normalize, resolve, sep } from 'path';
 import { db, runtimeDbDialect, schema, switchRuntimeDatabase, type RuntimeDbDialect } from './db/index.js';
@@ -74,14 +75,19 @@ function validateSavedDbUrl(dialect: RuntimeDbDialect, value: unknown): string |
   return null;
 }
 
-function extractSavedRuntimeDatabaseConfig(settingsMap: Map<string, string>): { dialect: RuntimeDbDialect; dbUrl: string } | null {
+function extractSavedRuntimeDatabaseConfig(settingsMap: Map<string, string>): { dialect: RuntimeDbDialect; dbUrl: string; ssl: boolean } | null {
   const rawType = parseSettingFromMap<unknown>(settingsMap, 'db_type');
   const rawUrl = parseSettingFromMap<unknown>(settingsMap, 'db_url');
+  const rawSsl = parseSettingFromMap<boolean>(settingsMap, 'db_ssl');
   const dialect = normalizeSavedDbType(rawType);
   if (!dialect) return null;
   const dbUrl = validateSavedDbUrl(dialect, rawUrl);
   if (!dbUrl) return null;
-  return { dialect, dbUrl };
+  return {
+    dialect,
+    dbUrl,
+    ssl: typeof rawSsl === 'boolean' ? rawSsl : false,
+  };
 }
 
 function applyRuntimeSettings(settingsMap: Map<string, string>) {
@@ -171,9 +177,9 @@ try {
   const initialMap = toSettingsMap(initialRows);
   const savedDbConfig = extractSavedRuntimeDatabaseConfig(initialMap);
   const activeDbUrl = (config.dbUrl || '').trim();
-  if (savedDbConfig && (savedDbConfig.dialect !== runtimeDbDialect || savedDbConfig.dbUrl !== activeDbUrl)) {
+  if (savedDbConfig && (savedDbConfig.dialect !== runtimeDbDialect || savedDbConfig.dbUrl !== activeDbUrl || savedDbConfig.ssl !== config.dbSsl)) {
     try {
-      await switchRuntimeDatabase(savedDbConfig.dialect, savedDbConfig.dbUrl);
+      await switchRuntimeDatabase(savedDbConfig.dialect, savedDbConfig.dbUrl, savedDbConfig.ssl);
       console.log(`Loaded runtime DB config from settings: ${savedDbConfig.dialect}`);
     } catch (error) {
       console.warn(`Failed to switch runtime DB from settings: ${(error as Error)?.message || 'unknown error'}`);
@@ -194,12 +200,13 @@ await app.register(cors);
 
 // Auth middleware for /api routes
 app.addHook('onRequest', async (request, reply) => {
-  if (request.url.startsWith('/api/')) {
+  if (request.url.startsWith('/api/') && !isPublicApiRoute(request.url)) {
     await authMiddleware(request, reply);
   }
 });
 
 // Register API routes
+await app.register(registerDesktopRoutes);
 await app.register(sitesRoutes);
 await app.register(accountsRoutes);
 await app.register(checkinRoutes);
@@ -254,11 +261,10 @@ app.addHook('onClose', async () => {
 
 // Start server
 try {
-  const listenHost = '0.0.0.0';
-  await app.listen({ port: config.port, host: listenHost });
+  await app.listen({ port: config.port, host: config.listenHost });
   const summaryLines = buildStartupSummaryLines({
     port: config.port,
-    host: listenHost,
+    host: config.listenHost,
     authToken: config.authToken,
     proxyToken: config.proxyToken,
   });

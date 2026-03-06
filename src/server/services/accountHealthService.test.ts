@@ -20,6 +20,21 @@ describe('accountHealthService', () => {
     expect(health.state).toBe('unhealthy');
   });
 
+  it('does not reuse expired session-token health for proxy-only accounts', () => {
+    const health = buildRuntimeHealthForAccount({
+      accountStatus: 'expired',
+      siteStatus: 'active',
+      extraConfig: null,
+      sessionCapable: false,
+    });
+
+    expect(health).toMatchObject({
+      state: 'unknown',
+      source: 'none',
+    });
+    expect(health.reason).not.toContain('访问令牌已过期');
+  });
+
   it('returns stored runtime health from extra config when available', () => {
     const health = buildRuntimeHealthForAccount({
       accountStatus: 'active',

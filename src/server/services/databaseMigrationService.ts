@@ -11,12 +11,14 @@ export interface DatabaseMigrationInput {
   dialect?: unknown;
   connectionString?: unknown;
   overwrite?: unknown;
+  ssl?: unknown;
 }
 
 export interface NormalizedDatabaseMigrationInput {
   dialect: MigrationDialect;
   connectionString: string;
   overwrite: boolean;
+  ssl: boolean;
 }
 
 type BackupSnapshot = {
@@ -173,6 +175,7 @@ export function normalizeMigrationInput(input: DatabaseMigrationInput): Normaliz
     dialect,
     connectionString,
     overwrite: input.overwrite === undefined ? true : asBoolean(input.overwrite, true),
+    ssl: asBoolean(input.ssl, false),
   };
 }
 
@@ -224,8 +227,12 @@ async function toBackupSnapshot(): Promise<BackupSnapshot> {
   };
 }
 
-async function createPostgresClient(connectionString: string): Promise<SqlClient> {
-  const client = new pg.Client({ connectionString });
+async function createPostgresClient(connectionString: string, ssl: boolean): Promise<SqlClient> {
+  const clientOptions: pg.ClientConfig = { connectionString };
+  if (ssl) {
+    clientOptions.ssl = { rejectUnauthorized: false };
+  }
+  const client = new pg.Client(clientOptions);
   await client.connect();
 
   return {
@@ -244,8 +251,12 @@ async function createPostgresClient(connectionString: string): Promise<SqlClient
   };
 }
 
-async function createMySqlClient(connectionString: string): Promise<SqlClient> {
-  const connection = await mysql.createConnection(connectionString);
+async function createMySqlClient(connectionString: string, ssl: boolean): Promise<SqlClient> {
+  const connectionOptions: mysql.ConnectionOptions = { uri: connectionString };
+  if (ssl) {
+    connectionOptions.ssl = { rejectUnauthorized: false };
+  }
+  const connection = await mysql.createConnection(connectionOptions);
 
   return {
     dialect: 'mysql',
@@ -291,8 +302,8 @@ async function createSqliteClient(connectionString: string): Promise<SqlClient> 
 }
 
 async function createClient(input: NormalizedDatabaseMigrationInput): Promise<SqlClient> {
-  if (input.dialect === 'postgres') return createPostgresClient(input.connectionString);
-  if (input.dialect === 'mysql') return createMySqlClient(input.connectionString);
+  if (input.dialect === 'postgres') return createPostgresClient(input.connectionString, input.ssl);
+  if (input.dialect === 'mysql') return createMySqlClient(input.connectionString, input.ssl);
   return createSqliteClient(input.connectionString);
 }
 

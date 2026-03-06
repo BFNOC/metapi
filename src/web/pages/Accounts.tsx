@@ -5,6 +5,11 @@ import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { getAccountsAddPanelStyle } from './helpers/accountsPanelStyle.js';
+import {
+  buildAddAccountPrereqHint,
+  buildVerifyFailureHint,
+  normalizeVerifyFailureMessage,
+} from './helpers/accountVerifyFeedback.js';
 import { clearFocusParams, readFocusAccountIntent } from './helpers/navigationFocus.js';
 import { tr } from '../i18n.js';
 import { buildCustomReorderUpdates, sortItemsForDisplay, type SortMode } from './helpers/listSorting.js';
@@ -80,6 +85,8 @@ export default function Accounts() {
     () => sortItemsForDisplay(accounts, sortMode, (account) => account.balance || 0),
     [accounts, sortMode],
   );
+  const verifyFailureHint = buildVerifyFailureHint(verifyResult);
+  const addAccountPrereqHint = buildAddAccountPrereqHint(verifyResult);
 
   useEffect(() => {
     return () => {
@@ -134,11 +141,11 @@ export default function Accounts() {
           toast.success(`Session 验证成功: ${result.userInfo?.username || '未知用户'}`);
         }
       } else {
-        toast.error(result.message || 'Token 无效');
+        toast.error(normalizeVerifyFailureMessage(result.message || 'Token 无效'));
       }
     } catch (e: any) {
-      toast.error(e.message || '验证失败');
-      setVerifyResult({ success: false, message: e.message });
+      toast.error(normalizeVerifyFailureMessage(e?.message));
+      setVerifyResult({ success: false, message: e?.message });
     } finally {
       setVerifying(false);
     }
@@ -223,9 +230,10 @@ export default function Accounts() {
   };
 
   const resolveRuntimeHealth = (account: any) => {
+    const capabilities = resolveAccountCapabilities(account);
     const fallbackState = account.status === 'disabled' || account.site?.status === 'disabled'
       ? 'disabled'
-      : (account.status === 'expired' ? 'unhealthy' : 'unknown');
+      : (!capabilities.proxyOnly && account.status === 'expired' ? 'unhealthy' : 'unknown');
     const state = account.runtimeHealth?.state || fallbackState;
     const cfg = runtimeHealthMap[state] || runtimeHealthMap.unknown;
     const reason = account.runtimeHealth?.reason
@@ -378,11 +386,11 @@ export default function Accounts() {
       } else if (result.success && result.tokenType !== 'session') {
         toast.error('当前是 API Key，不是 Session Token');
       } else {
-        toast.error(result.message || 'Token 无效');
+        toast.error(normalizeVerifyFailureMessage(result.message || 'Token 无效'));
       }
     } catch (e: any) {
-      toast.error(e.message || '验证失败');
-      setRebindVerifyResult({ success: false, message: e.message });
+      toast.error(normalizeVerifyFailureMessage(e?.message));
+      setRebindVerifyResult({ success: false, message: e?.message });
     } finally {
       setRebindVerifying(false);
     }
@@ -436,7 +444,7 @@ export default function Accounts() {
       setHighlightAccountId((current) => (current === accountId ? null : current));
     }, 2200);
 
-    if (openRebind && target.status === 'expired') {
+    if (openRebind && target.status === 'expired' && !resolveAccountCapabilities(target).proxyOnly) {
       setShowAdd(false);
       if (!rebindTarget || rebindTarget.id !== target.id) {
         openRebindPanel(target);
@@ -645,9 +653,11 @@ export default function Accounts() {
               {verifyResult && !verifyResult.success && !verifyResult.needsUserId && (
                 <div className="alert alert-error animate-scale-in">
                   <div className="alert-title">
-                    {verifyResult.message || 'Token 无效或已过期'}
+                    {normalizeVerifyFailureMessage(verifyResult.message) || 'Token 无效或已过期'}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>请检查 Token 是否正确</div>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
+                    {verifyFailureHint || '请检查 Token 是否正确'}
+                  </div>
                 </div>
               )}
 
@@ -663,7 +673,7 @@ export default function Accounts() {
               </div>
               {!verifyResult?.success && (
                 <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                  请先点击“验证 Token”，验证成功后才能添加账号
+                  {addAccountPrereqHint}
                 </div>
               )}
             </div>
@@ -949,7 +959,7 @@ export default function Accounts() {
                             {actionLoading[`checkin-${a.id}`] ? <span className="spinner spinner-sm" /> : '签到'}
                           </button>
                         )}
-                        {a.status === 'expired' && (
+                        {a.status === 'expired' && !capabilities.proxyOnly && (
                           <button
                             onClick={() => openRebindPanel(a)}
                             className="btn btn-link btn-link-warning"

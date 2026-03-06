@@ -86,6 +86,7 @@ export function buildRuntimeHealthForAccount(input: {
   accountStatus?: string | null;
   siteStatus?: string | null;
   extraConfig?: string | null;
+  sessionCapable?: boolean;
 }): RuntimeHealthInfo {
   const accountStatus = (input.accountStatus || 'active').toLowerCase();
   const siteStatus = (input.siteStatus || 'active').toLowerCase();
@@ -99,7 +100,7 @@ export function buildRuntimeHealthForAccount(input: {
     };
   }
 
-  if (accountStatus === 'expired') {
+  if (accountStatus === 'expired' && input.sessionCapable !== false) {
     return {
       state: 'unhealthy',
       reason: '访问令牌已过期',

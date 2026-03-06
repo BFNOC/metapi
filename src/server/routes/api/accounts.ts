@@ -47,6 +47,8 @@ type AccountCapabilities = {
   proxyOnly: boolean;
 };
 
+type VerifyFailureReason = 'needs-user-id' | 'invalid-user-id' | 'shield-blocked' | null;
+
 function hasSessionTokenValue(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -126,6 +128,8 @@ type LoginFailureInfo = {
 };
 
 const ACCOUNT_HEALTH_REFRESH_TIMEOUT_MS = 10_000;
+const ACCOUNT_VERIFY_TIMEOUT_MS = 10_000;
+const ACCOUNT_VERIFY_DIAG_TIMEOUT_MS = 2_500;
 
 function normalizeLoginFailure(message: string | null | undefined): LoginFailureInfo {
   const raw = (message || '').trim();
@@ -184,10 +188,51 @@ async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number, timeoutMe
   }
 }
 
+function isVerificationTimeoutError(error: unknown): boolean {
+  const name = typeof error === 'object' && error && 'name' in error
+    ? String((error as { name?: unknown }).name || '')
+    : '';
+  const message = typeof error === 'object' && error && 'message' in error
+    ? String((error as { message?: unknown }).message || '')
+    : String(error || '');
+  const lowered = `${name} ${message}`.toLowerCase();
+  return lowered.includes('timeout') || lowered.includes('timed out') || lowered.includes('abort');
+}
+
+function resolveUserIdFailureReason(message: string, hasProvidedUserId: boolean): VerifyFailureReason {
+  const lowered = String(message || '').trim().toLowerCase();
+  if (!lowered) return null;
+
+  if (
+    lowered.includes('mismatch')
+    || lowered.includes('not match')
+    || lowered.includes('invalid user id')
+    || lowered.includes('wrong user id')
+  ) {
+    return 'invalid-user-id';
+  }
+
+  if (
+    lowered.includes('missing new-api-user')
+    || lowered.includes('new-api-user required')
+    || lowered.includes('requires user id')
+    || lowered.includes('missing user id')
+  ) {
+    return 'needs-user-id';
+  }
+
+  if (lowered.includes('new-api-user') || lowered.includes('user id')) {
+    return hasProvidedUserId ? 'invalid-user-id' : 'needs-user-id';
+  }
+
+  return null;
+}
+
 async function refreshRuntimeHealthForRow(row: AccountWithSiteRow): Promise<AccountHealthRefreshResult> {
   const accountId = row.accounts.id;
   const username = row.accounts.username;
   const siteName = row.sites.name;
+  const capabilities = buildCapabilitiesForAccount(row.accounts);
 
   if ((row.accounts.status || 'active') === 'disabled' || (row.sites.status || 'active') === 'disabled') {
     setAccountRuntimeHealth(accountId, {
@@ -205,6 +250,17 @@ async function refreshRuntimeHealthForRow(row: AccountWithSiteRow): Promise<Acco
     };
   }
 
+  if (capabilities.proxyOnly) {
+    return {
+      accountId,
+      username,
+      siteName,
+      status: 'skipped',
+      state: 'unknown',
+      message: '仅代理账号不支持会话健康检查',
+    };
+  }
+
   try {
     await withTimeout(
       () => refreshBalance(accountId),
@@ -218,6 +274,7 @@ async function refreshRuntimeHealthForRow(row: AccountWithSiteRow): Promise<Acco
       accountStatus: refreshedAccount?.status || row.accounts.status,
       siteStatus: row.sites.status,
       extraConfig: refreshedAccount?.extraConfig ?? row.accounts.extraConfig,
+      sessionCapable: capabilities.canRefreshBalance,
     });
 
     return {
@@ -333,6 +390,10 @@ export async function accountsRoutes(app: FastifyInstance) {
           accountStatus: r.accounts.status,
           siteStatus: r.sites.status,
           extraConfig: r.accounts.extraConfig,
+          sessionCapable: buildCapabilitiesFromCredentialMode(
+            credentialMode,
+            hasSessionTokenValue(r.accounts.accessToken),
+          ).canRefreshBalance,
         }),
       };
     });
@@ -464,9 +525,119 @@ export async function accountsRoutes(app: FastifyInstance) {
     const adapter = getAdapter(site.platform);
     if (!adapter) return { success: false, message: `婵炴垶鎸哥粔鐢稿极椤曗偓楠炴劖鎷呴悜妯兼殸濡ょ姷鍋涢崯鑳亹? ${site.platform}` };
 
+    const normalizedPlatform = String(adapter.platformName || site.platform || '').trim().toLowerCase();
+    const hasProvidedUserId = Number.isFinite(platformUserId) && platformUserId > 0;
+    const skipRawShieldDetection = normalizedPlatform === 'new-api' || normalizedPlatform === 'anyrouter';
+    const diagnoseVerificationFailure = async (): Promise<VerifyFailureReason> => {
+      const parseFailureReason = (bodyText: string, contentType: string): VerifyFailureReason => {
+        const text = bodyText || '';
+        const ct = (contentType || '').toLowerCase();
+        if (
+          !skipRawShieldDetection
+          && ct.includes('text/html')
+          && /var\s+arg1\s*=|acw_sc__v2|cdn_sec_tc|<script/i.test(text)
+        ) {
+          return 'shield-blocked';
+        }
+
+        try {
+          const body = JSON.parse(text) as any;
+          const message = typeof body?.message === 'string' ? body.message : '';
+          const userIdReason = resolveUserIdFailureReason(message, hasProvidedUserId);
+          if (userIdReason) return userIdReason;
+          if (!skipRawShieldDetection && /shield|challenge|captcha|acw_sc__v2|arg1/i.test(message)) {
+            return 'shield-blocked';
+          }
+        } catch { }
+
+        return null;
+      };
+
+      try {
+        const { fetch } = await import('undici');
+        const candidates = new Set<string>();
+        const raw = accessToken.startsWith('Bearer ') ? accessToken.slice(7).trim() : accessToken;
+        if (raw) {
+          if (raw.includes('=')) candidates.add(raw);
+          candidates.add(`session=${raw}`);
+          candidates.add(`token=${raw}`);
+        }
+
+        const diagnosticUserId = hasProvidedUserId ? String(platformUserId) : '0';
+        const headerVariants: Record<string, string>[] = [
+          { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'New-Api-User': diagnosticUserId },
+        ];
+
+        for (const cookie of candidates) {
+          headerVariants.push({
+            Cookie: cookie,
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            ...(hasProvidedUserId ? { 'New-Api-User': diagnosticUserId } : {}),
+          });
+        }
+
+        for (const headers of headerVariants) {
+          try {
+            const testRes = await fetch(
+              `${site.url}/api/user/self`,
+              withExplicitProxyRequestInit(site.proxyUrl, {
+                headers,
+                signal: AbortSignal.timeout(ACCOUNT_VERIFY_DIAG_TIMEOUT_MS),
+              }),
+            );
+            const bodyText = await testRes.text();
+            const contentType = testRes.headers.get('content-type') || '';
+            const reason = parseFailureReason(bodyText, contentType);
+            if (reason) return reason;
+          } catch { }
+        }
+      } catch { }
+
+      return null;
+    };
+    const buildVerificationFailureResponse = (failureReason: VerifyFailureReason) => {
+      if (failureReason === 'needs-user-id') {
+        return {
+          success: false,
+          needsUserId: true,
+          message: 'This site requires a user ID. Please fill in your site user ID.',
+        };
+      }
+
+      if (failureReason === 'invalid-user-id') {
+        return {
+          success: false,
+          invalidUserId: true,
+          message: 'The provided user ID does not match this token. Please check your site user ID.',
+        };
+      }
+
+      if (failureReason === 'shield-blocked') {
+        return {
+          success: false,
+          shieldBlocked: true,
+          message: 'This site is shielded by anti-bot challenge. Create an API key on the target site and import that key.',
+        };
+      }
+
+      return null;
+    };
+
+    if (!platformUserId && (normalizedPlatform === 'new-api' || normalizedPlatform === 'anyrouter')) {
+      const preflightReason = await diagnoseVerificationFailure();
+      if (preflightReason === 'needs-user-id') {
+        return buildVerificationFailureResponse(preflightReason);
+      }
+    }
+
     if (credentialMode === 'apikey') {
       try {
-        const models = await adapter.getModels(site.url, accessToken, platformUserId);
+        const models = await withTimeout(
+          () => adapter.getModels(site.url, accessToken, platformUserId),
+          ACCOUNT_VERIFY_TIMEOUT_MS,
+          `Token verification timed out (${Math.max(1, Math.round(ACCOUNT_VERIFY_TIMEOUT_MS / 1000))}s)`,
+        );
         const availableModels = Array.isArray(models) ? models.filter((item) => typeof item === 'string' && item.trim().length > 0) : [];
         if (availableModels.length === 0) {
           return {
@@ -481,6 +652,10 @@ export async function accountsRoutes(app: FastifyInstance) {
           models: availableModels.slice(0, 10),
         };
       } catch (err: any) {
+        if (isVerificationTimeoutError(err)) {
+          const failure = buildVerificationFailureResponse(await diagnoseVerificationFailure());
+          if (failure) return failure;
+        }
         return {
           success: false,
           message: err?.message || 'API Key 验证失败',
@@ -490,8 +665,16 @@ export async function accountsRoutes(app: FastifyInstance) {
 
     let result: any;
     try {
-      result = await adapter.verifyToken(site.url, accessToken, platformUserId);
+      result = await withTimeout(
+        () => adapter.verifyToken(site.url, accessToken, platformUserId),
+        ACCOUNT_VERIFY_TIMEOUT_MS,
+        `Token verification timed out (${Math.max(1, Math.round(ACCOUNT_VERIFY_TIMEOUT_MS / 1000))}s)`,
+      );
     } catch (err: any) {
+      if (isVerificationTimeoutError(err)) {
+        const failure = buildVerificationFailureResponse(await diagnoseVerificationFailure());
+        if (failure) return failure;
+      }
       return {
         success: false,
         message: appendSessionTokenRebindHint(err?.message || 'Token 验证失败'),
@@ -524,12 +707,6 @@ export async function accountsRoutes(app: FastifyInstance) {
     }
 
     // Try to explain unknown failures: missing user id vs anti-bot challenge page.
-    const normalizedPlatform = String(adapter.platformName || site.platform || '').trim().toLowerCase();
-    // New-API family already runs shield-aware probing inside adapters.
-    // Raw fallback probe below does not include challenge-solving and can
-    // misclassify valid Cookie/Session flows as shield-blocked.
-    const skipRawShieldDetection = normalizedPlatform === 'new-api' || normalizedPlatform === 'anyrouter';
-    type VerifyFailureReason = 'needs-user-id' | 'shield-blocked' | null;
     const detectVerifyFailureReason = async (): Promise<VerifyFailureReason> => {
       const parseFailureReason = (bodyText: string, contentType: string): VerifyFailureReason => {
         const text = bodyText || '';
@@ -545,7 +722,8 @@ export async function accountsRoutes(app: FastifyInstance) {
         try {
           const body = JSON.parse(text) as any;
           const message = typeof body?.message === 'string' ? body.message : '';
-          if (/mismatch|new-api-user|user id/i.test(message)) return 'needs-user-id';
+          const userIdReason = resolveUserIdFailureReason(message, hasProvidedUserId);
+          if (userIdReason) return userIdReason;
           if (!skipRawShieldDetection && /shield|challenge|captcha|acw_sc__v2|arg1/i.test(message)) {
             return 'shield-blocked';
           }
@@ -564,8 +742,9 @@ export async function accountsRoutes(app: FastifyInstance) {
           candidates.add(`token=${raw}`);
         }
 
+        const diagnosticUserId = hasProvidedUserId ? String(platformUserId) : '0';
         const headerVariants: Record<string, string>[] = [
-          { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'New-Api-User': '0' },
+          { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'New-Api-User': diagnosticUserId },
         ];
 
         for (const cookie of candidates) {
@@ -573,12 +752,19 @@ export async function accountsRoutes(app: FastifyInstance) {
             Cookie: cookie,
             'Content-Type': 'application/json',
             'X-Requested-With': 'XMLHttpRequest',
+            ...(hasProvidedUserId ? { 'New-Api-User': diagnosticUserId } : {}),
           });
         }
 
         for (const headers of headerVariants) {
           try {
-            const testRes = await fetch(`${site.url}/api/user/self`, withExplicitProxyRequestInit(site.proxyUrl, { headers }));
+            const testRes = await fetch(
+              `${site.url}/api/user/self`,
+              withExplicitProxyRequestInit(site.proxyUrl, {
+                headers,
+                signal: AbortSignal.timeout(ACCOUNT_VERIFY_DIAG_TIMEOUT_MS),
+              }),
+            );
             const bodyText = await testRes.text();
             const contentType = testRes.headers.get('content-type') || '';
             const reason = parseFailureReason(bodyText, contentType);
@@ -596,6 +782,14 @@ export async function accountsRoutes(app: FastifyInstance) {
         success: false,
         needsUserId: true,
         message: 'This site requires a user ID. Please fill in your site user ID.',
+      };
+    }
+
+    if (failureReason === 'invalid-user-id') {
+      return {
+        success: false,
+        invalidUserId: true,
+        message: 'The provided user ID does not match this token. Please check your site user ID.',
       };
     }
 

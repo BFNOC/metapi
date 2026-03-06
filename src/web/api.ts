@@ -203,17 +203,17 @@ export const api = {
     body: JSON.stringify(data),
   }),
   getRuntimeDatabaseConfig: () => request('/api/settings/database/runtime'),
-  updateRuntimeDatabaseConfig: (data: { dialect: 'sqlite' | 'mysql' | 'postgres'; connectionString: string }) =>
+  updateRuntimeDatabaseConfig: (data: { dialect: 'sqlite' | 'mysql' | 'postgres'; connectionString: string; ssl?: boolean }) =>
     request('/api/settings/database/runtime', {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
-  testExternalDatabaseConnection: (data: { dialect: 'sqlite' | 'mysql' | 'postgres'; connectionString: string; overwrite?: boolean }) =>
+  testExternalDatabaseConnection: (data: { dialect: 'sqlite' | 'mysql' | 'postgres'; connectionString: string; ssl?: boolean }) =>
     request('/api/settings/database/test-connection', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  migrateExternalDatabase: (data: { dialect: 'sqlite' | 'mysql' | 'postgres'; connectionString: string; overwrite?: boolean }) =>
+  migrateExternalDatabase: (data: { dialect: 'sqlite' | 'mysql' | 'postgres'; connectionString: string; overwrite?: boolean; ssl?: boolean }) =>
     request('/api/settings/database/migrate', {
       method: 'POST',
       body: JSON.stringify(data),

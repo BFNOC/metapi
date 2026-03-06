@@ -13,6 +13,7 @@ describe('databaseMigrationService', () => {
       dialect: 'postgres',
       connectionString: 'postgres://user:pass@db.example.com:5432/metapi',
       overwrite: true,
+      ssl: false,
     });
   });
 
@@ -24,6 +25,7 @@ describe('databaseMigrationService', () => {
 
     expect(normalized.dialect).toBe('mysql');
     expect(normalized.overwrite).toBe(true);
+    expect(normalized.ssl).toBe(false);
   });
 
   it('accepts sqlite file migration target path', () => {
@@ -37,6 +39,7 @@ describe('databaseMigrationService', () => {
       dialect: 'sqlite',
       connectionString: './data/target.db',
       overwrite: false,
+      ssl: false,
     });
   });
 
@@ -57,6 +60,41 @@ describe('databaseMigrationService', () => {
   it('masks connection string credentials', () => {
     const masked = maskConnectionString('postgres://admin:super-secret@db.example.com:5432/metapi');
     expect(masked).toBe('postgres://admin:***@db.example.com:5432/metapi');
+  });
+
+  it('normalizes ssl boolean from input', () => {
+    const normalized = normalizeMigrationInput({
+      dialect: 'mysql',
+      connectionString: 'mysql://user:pass@tidb.example.com:4000/db',
+      ssl: true,
+    });
+    expect(normalized.ssl).toBe(true);
+  });
+
+  it('defaults ssl to false when not provided', () => {
+    const normalized = normalizeMigrationInput({
+      dialect: 'postgres',
+      connectionString: 'postgres://user:pass@db.example.com:5432/metapi',
+    });
+    expect(normalized.ssl).toBe(false);
+  });
+
+  it('parses ssl from string values', () => {
+    const normalized = normalizeMigrationInput({
+      dialect: 'mysql',
+      connectionString: 'mysql://user:pass@host:3306/db',
+      ssl: '1',
+    });
+    expect(normalized.ssl).toBe(true);
+  });
+
+  it('parses ssl false from string "0"', () => {
+    const normalized = normalizeMigrationInput({
+      dialect: 'mysql',
+      connectionString: 'mysql://user:pass@host:3306/db',
+      ssl: '0',
+    });
+    expect(normalized.ssl).toBe(false);
   });
 });
 

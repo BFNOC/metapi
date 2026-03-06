@@ -247,7 +247,7 @@ docker run -d --name metapi -p 4000:4000 \
 > [!IMPORTANT]
 > 请务必修改 `AUTH_TOKEN` 和 `PROXY_TOKEN`，不要使用默认值。
 
-📖 **[完整部署文档](https://metapi.cita777.me/deployment)** — Zeabur 一键部署 / Docker Compose / Release 包 / 反向代理 / 升级回滚
+📖 **[完整部署文档](https://metapi.cita777.me/deployment)** — Zeabur 一键部署 / Docker Compose / 桌面版安装包 / 反向代理 / 升级回滚
 
 📖 **[环境变量与配置](https://metapi.cita777.me/configuration)** — 全部环境变量、路由参数、通知渠道
 

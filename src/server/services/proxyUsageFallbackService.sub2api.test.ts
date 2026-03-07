@@ -16,6 +16,7 @@ vi.mock('./platforms/newApiShield.js', () => ({
 
 vi.mock('./siteProxy.js', () => ({
   withExplicitProxyRequestInit: (_proxyUrl: string | null | undefined, init: RequestInit) => init,
+  withSiteRecordProxyRequestInit: (_site: unknown, init: RequestInit) => init,
 }));
 
 import {

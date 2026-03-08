@@ -568,6 +568,49 @@ export function isUnsupportedMediaTypeError(status: number, upstreamErrorText?: 
   );
 }
 
+export function isEndpointDispatchDeniedError(status: number, upstreamErrorText?: string | null): boolean {
+  if (status !== 403) return false;
+  const text = (upstreamErrorText || '').toLowerCase();
+  if (!text) return false;
+
+  return (
+    /does\s+not\s+allow\s+\/v1\/[a-z0-9/_:-]+\s+dispatch/i.test(upstreamErrorText || '')
+    || text.includes('dispatch denied')
+  );
+}
+
+export function shouldPreferResponsesAfterLegacyChatError(input: {
+  status: number;
+  upstreamErrorText?: string | null;
+  downstreamFormat: EndpointPreference;
+  sitePlatform?: string | null;
+  modelName?: string | null;
+  requestedModelHint?: string | null;
+  currentEndpoint?: UpstreamEndpoint | null;
+}): boolean {
+  if (input.status < 400) return false;
+  if (input.downstreamFormat !== 'openai') return false;
+  if (input.currentEndpoint !== 'chat') return false;
+
+  const sitePlatform = normalizePlatformName(input.sitePlatform);
+  if (sitePlatform === 'openai' || sitePlatform === 'claude' || sitePlatform === 'gemini' || sitePlatform === 'anyrouter') {
+    return false;
+  }
+
+  const modelName = asTrimmedString(input.modelName);
+  const requestedModelHint = asTrimmedString(input.requestedModelHint);
+  if (isClaudeFamilyModel(modelName) || isClaudeFamilyModel(requestedModelHint)) {
+    return false;
+  }
+
+  const text = (input.upstreamErrorText || '').toLowerCase();
+  return (
+    text.includes('unsupported legacy protocol')
+    && text.includes('/v1/chat/completions')
+    && text.includes('/v1/responses')
+  );
+}
+
 export function isEndpointDowngradeError(status: number, upstreamErrorText?: string | null): boolean {
   if (status < 400) return false;
   const text = (upstreamErrorText || '').toLowerCase();
@@ -592,6 +635,8 @@ export function isEndpointDowngradeError(status: number, upstreamErrorText?: str
   }
 
   return (
+    isEndpointDispatchDeniedError(status, upstreamErrorText)
+    || 
     text.includes('convert_request_failed')
     || text.includes('not found')
     || text.includes('unknown endpoint')

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
+const recordFailureMock = vi.fn();
 const invalidateTokenRouterCacheMock = vi.fn();
 const authorizeDownstreamTokenMock = vi.fn();
 const consumeManagedKeyRequestMock = vi.fn();
@@ -16,6 +17,7 @@ vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
     selectChannel: (...args: unknown[]) => selectChannelMock(...args),
     selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
     explainSelection: vi.fn(async () => ({ selectedChannelId: 11 })),
   },
   invalidateTokenRouterCache: (...args: unknown[]) => invalidateTokenRouterCacheMock(...args),
@@ -39,6 +41,7 @@ describe('gemini native proxy routes', () => {
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
+    recordFailureMock.mockReset();
     authorizeDownstreamTokenMock.mockReset();
     consumeManagedKeyRequestMock.mockReset();
 
@@ -58,6 +61,7 @@ describe('gemini native proxy routes', () => {
       actualModel: 'gemini-2.5-flash',
     });
     selectNextChannelMock.mockReturnValue(null);
+    recordFailureMock.mockResolvedValue(undefined);
   });
 
   afterAll(async () => {
@@ -91,6 +95,49 @@ describe('gemini native proxy routes', () => {
         },
       ],
     });
+  });
+
+  it('falls back to the next channel for listModels when first Gemini channel fails', async () => {
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
+      account: { id: 34, username: 'demo-user-2' },
+      tokenName: 'fallback',
+      tokenValue: 'gemini-key-2',
+      actualModel: 'gemini-2.5-flash',
+    });
+
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { message: 'first channel failed' },
+      }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        models: [
+          { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
+        ],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1beta/models',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recordFailureMock).toHaveBeenCalledWith(11);
+    const [firstUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [secondUrl] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(firstUrl).toContain('key=gemini-key');
+    expect(secondUrl).toContain('key=gemini-key-2');
   });
 
   it('forwards native generateContent requests through the gemini route group', async () => {
@@ -426,5 +473,230 @@ describe('gemini native proxy routes', () => {
     expect(response.body).toContain('"thoughtsTokenCount":3');
     expect(response.body).toContain('"parts":[{"text":"first"},{"text":"second","thoughtSignature":"sig-1"}]');
     expect(response.body).not.toContain('\r\n\r\n');
+  });
+
+  it('falls back to the next channel when first Gemini channel returns 400 before any bytes are written', async () => {
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
+      account: { id: 34, username: 'demo-user-2' },
+      tokenName: 'fallback',
+      tokenValue: 'gemini-key-2',
+      actualModel: 'gemini-2.5-flash',
+    });
+
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { message: 'bad request on first channel' },
+      }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'ok from fallback' }] },
+            finishReason: 'STOP',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+      payload: {
+        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recordFailureMock).toHaveBeenCalledWith(11);
+    const [firstUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [secondUrl] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(firstUrl).toContain('key=gemini-key');
+    expect(secondUrl).toContain('key=gemini-key-2');
+    expect(response.json().candidates?.[0]?.content?.parts?.[0]?.text).toContain('ok from fallback');
+  });
+
+  it('falls back to the next channel when first Gemini channel returns 403 before any bytes are written', async () => {
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
+      account: { id: 34, username: 'demo-user-2' },
+      tokenName: 'fallback',
+      tokenValue: 'gemini-key-2',
+      actualModel: 'gemini-2.5-flash',
+    });
+
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { message: 'forbidden on first channel' },
+      }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'ok from fallback' }] },
+            finishReason: 'STOP',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+      payload: {
+        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recordFailureMock).toHaveBeenCalledWith(11);
+  });
+
+  it('falls back to the next channel when first Gemini channel returns 500 before any bytes are written', async () => {
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
+      account: { id: 34, username: 'demo-user-2' },
+      tokenName: 'fallback',
+      tokenValue: 'gemini-key-2',
+      actualModel: 'gemini-2.5-flash',
+    });
+
+    fetchMock
+      .mockResolvedValueOnce(new Response('upstream crash', {
+        status: 500,
+        headers: { 'content-type': 'text/plain' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'ok from fallback' }] },
+            finishReason: 'STOP',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+      payload: {
+        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recordFailureMock).toHaveBeenCalledWith(11);
+  });
+
+  it('falls back to the next channel when first Gemini channel throws before any bytes are written', async () => {
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
+      account: { id: 34, username: 'demo-user-2' },
+      tokenName: 'fallback',
+      tokenValue: 'gemini-key-2',
+      actualModel: 'gemini-2.5-flash',
+    });
+
+    fetchMock
+      .mockRejectedValueOnce(new Error('socket hang up'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [
+          {
+            content: { role: 'model', parts: [{ text: 'ok from fallback' }] },
+            finishReason: 'STOP',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+      payload: {
+        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recordFailureMock).toHaveBeenCalledWith(11);
+  });
+
+  it('falls back to the next channel for SSE requests before any bytes are written', async () => {
+    selectNextChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
+      account: { id: 34, username: 'demo-user-2' },
+      tokenName: 'fallback',
+      tokenValue: 'gemini-key-2',
+      actualModel: 'gemini-2.5-flash',
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"responseId":"resp-fallback","candidates":[{"content":{"role":"model","parts":[{"text":"hello from fallback sse"}]},"finishReason":"STOP"}]}\r\n\r\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { message: 'upstream unavailable' },
+      }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(upstreamBody, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+      payload: {
+        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recordFailureMock).toHaveBeenCalledWith(11);
+    expect(response.body).toContain('hello from fallback sse');
   });
 });

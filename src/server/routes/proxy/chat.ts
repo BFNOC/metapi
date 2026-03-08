@@ -13,9 +13,11 @@ import { type DownstreamFormat } from '../../transformers/shared/normalized.js';
 import {
   buildMinimalJsonHeadersForCompatibility,
   buildUpstreamEndpointRequest,
+  isEndpointDispatchDeniedError,
   isEndpointDowngradeError,
   isUnsupportedMediaTypeError,
   resolveUpstreamEndpointCandidates,
+  shouldPreferResponsesAfterLegacyChatError,
 } from './upstreamEndpoint.js';
 import {
   ensureModelAllowedForDownstreamKey,
@@ -110,7 +112,8 @@ async function handleChatProxyRequest(
     excludeChannelIds.push(selected.channel.id);
 
     const modelName = selected.actualModel || requestedModel;
-    const endpointCandidates = await resolveUpstreamEndpointCandidates(
+    const endpointCandidates = [
+      ...await resolveUpstreamEndpointCandidates(
       {
         site: selected.site,
         account: selected.account,
@@ -118,8 +121,30 @@ async function handleChatProxyRequest(
       modelName,
       downstreamFormat,
       requestedModel,
-    );
+      ),
+    ];
     let startTime = Date.now();
+
+    const promoteResponsesCandidate = (currentEndpoint: string | null | undefined, upstreamErrorText?: string | null, status = 0) => {
+      if (!shouldPreferResponsesAfterLegacyChatError({
+        status,
+        upstreamErrorText,
+        downstreamFormat,
+        sitePlatform: selected.site.platform,
+        modelName,
+        requestedModelHint: requestedModel,
+        currentEndpoint: currentEndpoint as any,
+      })) {
+        return;
+      }
+
+      const currentIndex = endpointCandidates.findIndex((endpoint) => endpoint === currentEndpoint);
+      const responsesIndex = endpointCandidates.indexOf('responses');
+      if (currentIndex < 0 || responsesIndex < 0 || responsesIndex <= currentIndex + 1) return;
+
+      endpointCandidates.splice(responsesIndex, 1);
+      endpointCandidates.splice(currentIndex + 1, 0, 'responses');
+    };
 
     try {
       const endpointResult = await executeEndpointFlow({
@@ -227,9 +252,15 @@ async function handleChatProxyRequest(
           return null;
         },
         shouldDowngrade: (ctx) => (
-          ctx.response.status >= 500
-          || isEndpointDowngradeError(ctx.response.status, ctx.rawErrText)
-          || isMessagesRequiredError(ctx.rawErrText)
+          (() => {
+            promoteResponsesCandidate(ctx.request.endpoint, ctx.rawErrText, ctx.response.status);
+            return (
+              ctx.response.status >= 500
+              || isEndpointDowngradeError(ctx.response.status, ctx.rawErrText)
+              || isMessagesRequiredError(ctx.rawErrText)
+              || isEndpointDispatchDeniedError(ctx.response.status, ctx.rawErrText)
+            );
+          })()
         ),
         onDowngrade: (ctx) => {
           logProxy(

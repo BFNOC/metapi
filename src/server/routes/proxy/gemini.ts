@@ -7,6 +7,7 @@ import {
   geminiGenerateContentTransformer,
 } from '../../transformers/gemini/generate-content/index.js';
 
+const MAX_RETRIES = 2;
 const GEMINI_MODEL_PROBES = [
   'gemini-2.5-flash',
   'gemini-2.0-flash',
@@ -18,6 +19,15 @@ async function selectGeminiChannel(request: FastifyRequest) {
   const policy = getDownstreamRoutingPolicy(request);
   for (const candidate of GEMINI_MODEL_PROBES) {
     const selected = await tokenRouter.selectChannel(candidate, policy);
+    if (selected) return selected;
+  }
+  return null;
+}
+
+async function selectNextGeminiProbeChannel(request: FastifyRequest, excludeChannelIds: number[]) {
+  const policy = getDownstreamRoutingPolicy(request);
+  for (const candidate of GEMINI_MODEL_PROBES) {
+    const selected = await tokenRouter.selectNextChannel(candidate, excludeChannelIds, policy);
     if (selected) return selected;
   }
   return null;
@@ -49,23 +59,60 @@ function extractGeminiModelActionPath(request: FastifyRequest, apiVersion: strin
 
 export async function geminiProxyRoute(app: FastifyInstance) {
   const listModels = async (request: FastifyRequest, reply: FastifyReply) => {
-    const selected = await selectGeminiChannel(request);
-    if (!selected) {
-      return reply.code(503).send({
-        error: { message: 'No available channels for Gemini models', type: 'server_error' },
-      });
-    }
-
     const apiVersion = resolveGeminiApiVersion(request);
-    const upstream = await fetch(
-      geminiGenerateContentTransformer.resolveModelsUrl(selected.site.url, apiVersion, selected.tokenValue),
-      { method: 'GET' },
-    );
-    const text = await upstream.text();
-    try {
-      return reply.code(upstream.status).send(JSON.parse(text));
-    } catch {
-      return reply.code(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
+    const excludeChannelIds: number[] = [];
+    let retryCount = 0;
+    let lastStatus = 503;
+    let lastText = 'No available channels for Gemini models';
+    let lastContentType = 'application/json';
+
+    while (retryCount <= MAX_RETRIES) {
+      const selected = retryCount === 0
+        ? await selectGeminiChannel(request)
+        : await selectNextGeminiProbeChannel(request, excludeChannelIds);
+      if (!selected) {
+        return reply.code(lastStatus).type(lastContentType).send(lastText);
+      }
+
+      excludeChannelIds.push(selected.channel.id);
+
+      try {
+        const upstream = await fetch(
+          geminiGenerateContentTransformer.resolveModelsUrl(selected.site.url, apiVersion, selected.tokenValue),
+          { method: 'GET' },
+        );
+        const text = await upstream.text();
+        if (!upstream.ok) {
+          lastStatus = upstream.status;
+          lastText = text;
+          lastContentType = upstream.headers.get('content-type') || 'application/json';
+          await tokenRouter.recordFailure?.(selected.channel.id);
+          if (retryCount < MAX_RETRIES) {
+            retryCount += 1;
+            continue;
+          }
+        }
+
+        try {
+          return reply.code(upstream.status).send(JSON.parse(text));
+        } catch {
+          return reply.code(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
+        }
+      } catch (error) {
+        await tokenRouter.recordFailure?.(selected.channel.id);
+        lastStatus = 502;
+        lastContentType = 'application/json';
+        lastText = JSON.stringify({
+          error: {
+            message: error instanceof Error ? error.message : 'Gemini upstream request failed',
+            type: 'upstream_error',
+          },
+        });
+        if (retryCount < MAX_RETRIES) {
+          retryCount += 1;
+          continue;
+        }
+      }
     }
   };
 
@@ -80,112 +127,151 @@ export async function geminiProxyRoute(app: FastifyInstance) {
     }
 
     const policy = getDownstreamRoutingPolicy(request);
-    const selected = await tokenRouter.selectChannel(requestedModel, policy);
-    if (!selected) {
-      return reply.code(503).send({
-        error: { message: 'No available channels for this model', type: 'server_error' },
-      });
-    }
+    const excludeChannelIds: number[] = [];
+    let retryCount = 0;
+    let lastStatus = 503;
+    let lastText = 'No available channels for this model';
+    let lastContentType = 'application/json';
 
-    const body = geminiGenerateContentTransformer.inbound.normalizeRequest(
-      request.body || {},
-      selected.actualModel || requestedModel,
-    );
-
-    const actualModelAction = modelActionPath.replace(
-      /^models\/[^:]+/,
-      `models/${selected.actualModel || requestedModel}`,
-    );
-    const query = new URLSearchParams(request.query as Record<string, string>).toString();
-    const upstream = await fetch(
-      geminiGenerateContentTransformer.resolveActionUrl(
-        selected.site.url,
-        apiVersion,
-        actualModelAction,
-        selected.tokenValue,
-        query,
-      ),
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      },
-    );
-
-    const contentType = upstream.headers.get('content-type');
-    if (geminiGenerateContentTransformer.stream.isSseContentType(contentType)) {
-      reply.hijack();
-      reply.raw.statusCode = upstream.status;
-      reply.raw.setHeader('Content-Type', contentType || 'text/event-stream');
-      const reader = upstream.body?.getReader();
-      if (!reader) {
-        reply.raw.end();
-        return;
-      }
-      const aggregateState = geminiGenerateContentTransformer.stream.createAggregateState();
-      const decoder = new TextDecoder();
-      let rest = '';
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (!value) continue;
-          const chunkText = decoder.decode(value, { stream: true });
-          const parsed = geminiGenerateContentTransformer.stream.parseSsePayloads(rest + chunkText);
-          rest = parsed.rest;
-          for (const event of parsed.events) {
-            geminiGenerateContentTransformer.stream.applyAggregate(aggregateState, event);
-            reply.raw.write(
-              geminiGenerateContentTransformer.stream.serializeSsePayload(
-                geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
-              ),
-            );
-          }
-        }
-        const tail = decoder.decode();
-        if (tail) {
-          const parsed = geminiGenerateContentTransformer.stream.parseSsePayloads(rest + tail);
-          for (const event of parsed.events) {
-            geminiGenerateContentTransformer.stream.applyAggregate(aggregateState, event);
-            reply.raw.write(
-              geminiGenerateContentTransformer.stream.serializeSsePayload(
-                geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
-              ),
-            );
-          }
-        }
-      } finally {
-        reader.releaseLock();
-        reply.raw.end();
-      }
-      return;
-    }
-
-    const text = await upstream.text();
-    try {
-      const parsed = JSON.parse(text);
-      if (!upstream.ok) {
-        return reply.code(upstream.status).send(parsed);
+    while (retryCount <= MAX_RETRIES) {
+      const selected = retryCount === 0
+        ? await tokenRouter.selectChannel(requestedModel, policy)
+        : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, policy);
+      if (!selected) {
+        return reply.code(lastStatus).type(lastContentType).send(lastText);
       }
 
-      const aggregateState = geminiGenerateContentTransformer.aggregator.createState();
-      if (Array.isArray(parsed)) {
-        for (const chunk of geminiGenerateContentTransformer.stream.parseJsonArrayPayload(parsed)) {
-          geminiGenerateContentTransformer.aggregator.apply(aggregateState, chunk);
-        }
-        return reply.code(upstream.status).send(
-          geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
-        );
-      }
+      excludeChannelIds.push(selected.channel.id);
 
-      geminiGenerateContentTransformer.aggregator.apply(aggregateState, parsed);
-      return reply.code(upstream.status).send(
-        geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
+      const body = geminiGenerateContentTransformer.inbound.normalizeRequest(
+        request.body || {},
+        selected.actualModel || requestedModel,
       );
-    } catch {
-      return reply.code(upstream.status).type(contentType || 'application/json').send(text);
+
+      const actualModelAction = modelActionPath.replace(
+        /^models\/[^:]+/,
+        `models/${selected.actualModel || requestedModel}`,
+      );
+      const query = new URLSearchParams(request.query as Record<string, string>).toString();
+      try {
+        const upstream = await fetch(
+          geminiGenerateContentTransformer.resolveActionUrl(
+            selected.site.url,
+            apiVersion,
+            actualModelAction,
+            selected.tokenValue,
+            query,
+          ),
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+          },
+        );
+        const contentType = upstream.headers.get('content-type') || 'application/json';
+        if (!upstream.ok) {
+          lastStatus = upstream.status;
+          lastContentType = contentType;
+          lastText = await upstream.text();
+          await tokenRouter.recordFailure?.(selected.channel.id);
+          if (retryCount < MAX_RETRIES) {
+            retryCount += 1;
+            continue;
+          }
+
+          try {
+            return reply.code(lastStatus).send(JSON.parse(lastText));
+          } catch {
+            return reply.code(lastStatus).type(lastContentType).send(lastText);
+          }
+        }
+
+        if (geminiGenerateContentTransformer.stream.isSseContentType(contentType)) {
+          reply.hijack();
+          reply.raw.statusCode = upstream.status;
+          reply.raw.setHeader('Content-Type', contentType || 'text/event-stream');
+          const reader = upstream.body?.getReader();
+          if (!reader) {
+            reply.raw.end();
+            return;
+          }
+          const aggregateState = geminiGenerateContentTransformer.stream.createAggregateState();
+          const decoder = new TextDecoder();
+          let rest = '';
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (!value) continue;
+              const chunkText = decoder.decode(value, { stream: true });
+              const parsed = geminiGenerateContentTransformer.stream.parseSsePayloads(rest + chunkText);
+              rest = parsed.rest;
+              for (const event of parsed.events) {
+                geminiGenerateContentTransformer.stream.applyAggregate(aggregateState, event);
+                reply.raw.write(
+                  geminiGenerateContentTransformer.stream.serializeSsePayload(
+                    geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
+                  ),
+                );
+              }
+            }
+            const tail = decoder.decode();
+            if (tail) {
+              const parsed = geminiGenerateContentTransformer.stream.parseSsePayloads(rest + tail);
+              for (const event of parsed.events) {
+                geminiGenerateContentTransformer.stream.applyAggregate(aggregateState, event);
+                reply.raw.write(
+                  geminiGenerateContentTransformer.stream.serializeSsePayload(
+                    geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
+                  ),
+                );
+              }
+            }
+          } finally {
+            reader.releaseLock();
+            reply.raw.end();
+          }
+          return;
+        }
+
+        const text = await upstream.text();
+        try {
+          const parsed = JSON.parse(text);
+          const aggregateState = geminiGenerateContentTransformer.aggregator.createState();
+          if (Array.isArray(parsed)) {
+            for (const chunk of geminiGenerateContentTransformer.stream.parseJsonArrayPayload(parsed)) {
+              geminiGenerateContentTransformer.aggregator.apply(aggregateState, chunk);
+            }
+            return reply.code(upstream.status).send(
+              geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
+            );
+          }
+
+          geminiGenerateContentTransformer.aggregator.apply(aggregateState, parsed);
+          return reply.code(upstream.status).send(
+            geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
+          );
+        } catch {
+          return reply.code(upstream.status).type(contentType || 'application/json').send(text);
+        }
+      } catch (error) {
+        lastStatus = 502;
+        lastContentType = 'application/json';
+        lastText = JSON.stringify({
+          error: {
+            message: error instanceof Error ? error.message : 'Gemini upstream request failed',
+            type: 'upstream_error',
+          },
+        });
+        await tokenRouter.recordFailure?.(selected.channel.id);
+        if (retryCount < MAX_RETRIES) {
+          retryCount += 1;
+          continue;
+        }
+        return reply.code(lastStatus).type(lastContentType).send(lastText);
+      }
     }
   };
 

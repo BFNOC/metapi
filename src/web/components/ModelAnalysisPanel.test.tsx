@@ -65,4 +65,30 @@ describe('ModelAnalysisPanel token summaries', () => {
 
     root?.unmount();
   });
+
+  it('renders with fallback label color when browser theme APIs are unavailable', async () => {
+    globalThis.document = {
+      documentElement: {},
+    } as unknown as Document;
+    delete (globalThis as typeof globalThis & { getComputedStyle?: typeof getComputedStyle }).getComputedStyle;
+    delete (globalThis as typeof globalThis & { MutationObserver?: typeof MutationObserver }).MutationObserver;
+
+    let root: ReturnType<typeof create> | null = null;
+
+    await expect(act(async () => {
+      root = create(
+        <ModelAnalysisPanel
+          data={{
+            totals: {
+              spend: 0.123456,
+              calls: 10,
+              tokens: 611_540_335,
+            },
+          }}
+        />,
+      );
+    })).resolves.toBeUndefined();
+
+    root?.unmount();
+  });
 });

@@ -130,6 +130,35 @@ describe('databaseMigrationService', () => {
     expect(useSystemProxySql).toContain('use_system_proxy');
   });
 
+  it.each(['postgres', 'mysql'] as const)('patches token_routes decision snapshot columns for %s', async (dialect) => {
+    const executedSql: string[] = [];
+    await __databaseMigrationServiceTestUtils.ensureSchema({
+      dialect,
+      begin: async () => {},
+      commit: async () => {},
+      rollback: async () => {},
+      execute: async (sqlText) => {
+        executedSql.push(sqlText);
+        return [];
+      },
+      queryScalar: async (sqlText, params = []) => {
+        if (sqlText.includes('information_schema.tables')) {
+          return 1;
+        }
+        if (sqlText.includes('information_schema.columns')) {
+          const columnName = String(params[1] ?? '');
+          return columnName === 'decision_snapshot' ? 0 : 1;
+        }
+        return 0;
+      },
+      close: async () => {},
+    });
+
+    expect(
+      executedSql.some((sqlText) => sqlText.includes('ADD COLUMN') && sqlText.includes('decision_snapshot')),
+    ).toBe(true);
+  });
+
   it('includes useSystemProxy when building site migration statements', () => {
     const statements = __databaseMigrationServiceTestUtils.buildStatements({
       version: 'test',

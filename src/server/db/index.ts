@@ -6,6 +6,7 @@ import { drizzle as drizzleMysqlProxy } from 'drizzle-orm/mysql-proxy';
 import { drizzle as drizzlePgProxy } from 'drizzle-orm/pg-proxy';
 import * as schema from './schema.js';
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from './siteSchemaCompatibility.js';
+import { ensureRouteGroupingSchemaCompatibility } from './routeGroupingSchemaCompatibility.js';
 import { config } from '../config.js';
 import { mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -266,7 +267,14 @@ function ensureSiteGlobalWeightSchema() {
   `);
 }
 
-function createSqliteSiteSchemaInspector(): SiteSchemaInspector {
+type RuntimeSchemaInspector = {
+  dialect: SiteSchemaInspector['dialect'];
+  tableExists(table: string): Promise<boolean>;
+  columnExists(table: string, column: string): Promise<boolean>;
+  execute(sqlText: string): Promise<void>;
+};
+
+function createSqliteSchemaInspector(): RuntimeSchemaInspector {
   return {
     dialect: 'sqlite',
     tableExists: async (table) => tableExists(table),
@@ -277,16 +285,9 @@ function createSqliteSiteSchemaInspector(): SiteSchemaInspector {
   };
 }
 
-export async function ensureSiteCompatibilityColumns(): Promise<void> {
-  if (runtimeDbDialect === 'sqlite') {
-    await ensureSiteSchemaCompatibility(createSqliteSiteSchemaInspector());
-    return;
-  }
-
-  if (runtimeDbDialect === 'mysql') {
-    if (!mysqlPool) return;
-
-    await ensureSiteSchemaCompatibility({
+function createMysqlSchemaInspector(): RuntimeSchemaInspector | null {
+  if (!mysqlPool) return null;
+  return {
       dialect: 'mysql',
       tableExists: async (table) => {
         const [rows] = await mysqlPool!.query(
@@ -305,13 +306,12 @@ export async function ensureSiteCompatibilityColumns(): Promise<void> {
       execute: async (sqlText) => {
         await mysqlPool!.query(sqlText);
       },
-    });
-    return;
-  }
+    };
+}
 
-  if (!pgPool) return;
-
-  await ensureSiteSchemaCompatibility({
+function createPostgresSchemaInspector(): RuntimeSchemaInspector | null {
+  if (!pgPool) return null;
+  return {
     dialect: 'postgres',
     tableExists: async (table) => {
       const result = await pgPool!.query(
@@ -330,7 +330,29 @@ export async function ensureSiteCompatibilityColumns(): Promise<void> {
     execute: async (sqlText) => {
       await pgPool!.query(sqlText);
     },
-  });
+  };
+}
+
+function createRuntimeSchemaInspector(): RuntimeSchemaInspector | null {
+  if (runtimeDbDialect === 'sqlite') {
+    return createSqliteSchemaInspector();
+  }
+  if (runtimeDbDialect === 'mysql') {
+    return createMysqlSchemaInspector();
+  }
+  return createPostgresSchemaInspector();
+}
+
+export async function ensureSiteCompatibilityColumns(): Promise<void> {
+  const inspector = createRuntimeSchemaInspector();
+  if (!inspector) return;
+  await ensureSiteSchemaCompatibility(inspector);
+}
+
+export async function ensureRouteGroupingCompatibilityColumns(): Promise<void> {
+  const inspector = createRuntimeSchemaInspector();
+  if (!inspector) return;
+  await ensureRouteGroupingSchemaCompatibility(inspector);
 }
 
 function ensureRouteGroupingSchema() {

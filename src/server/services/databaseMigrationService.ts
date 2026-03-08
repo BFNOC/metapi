@@ -5,6 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { db, schema } from '../db/index.js';
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from '../db/siteSchemaCompatibility.js';
+import { ensureRouteGroupingSchemaCompatibility } from '../db/routeGroupingSchemaCompatibility.js';
 
 export type MigrationDialect = 'sqlite' | 'mysql' | 'postgres';
 
@@ -433,6 +434,7 @@ async function ensureSchema(client: SqlClient): Promise<void> {
   }
 
   await ensureSiteSchemaCompatibility(createSiteSchemaInspector(client));
+  await ensureRouteGroupingSchemaCompatibility(createSiteSchemaInspector(client));
 }
 
 async function ensureTargetState(client: SqlClient, overwrite: boolean): Promise<void> {

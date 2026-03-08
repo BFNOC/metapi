@@ -31,6 +31,7 @@ import { dirname, normalize, resolve, sep } from 'path';
 import {
   db,
   ensureProxyLogBillingDetailsColumn,
+  ensureRouteGroupingCompatibilityColumns,
   ensureSiteCompatibilityColumns,
   runtimeDbDialect,
   schema,
@@ -217,6 +218,7 @@ try {
   }
 
   await ensureSiteCompatibilityColumns();
+  await ensureRouteGroupingCompatibilityColumns();
   const finalRows = await db.select().from(schema.settings).all();
   const finalMap = toSettingsMap(finalRows);
   applyRuntimeSettings(finalMap);

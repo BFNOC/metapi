@@ -14,16 +14,44 @@ describe('proxy route architecture boundaries', () => {
   });
   it('keeps anthropic-specific stream orchestration out of chat route', () => {
     const source = readSource('./chat.ts');
-    expect(source).not.toContain('function syncClaudeStreamStateFromRawEvent(');
-    expect(source).not.toContain('function serializeRawSseEvent(');
-    expect(source).not.toContain('function isClaudeSseEventName(');
+    expect(source).not.toContain('serializeAnthropicRawSseEvent');
+    expect(source).not.toContain('syncAnthropicRawStreamStateFromEvent');
+    expect(source).not.toContain('isAnthropicRawSseEventName');
+    expect(source).not.toContain('serializeAnthropicFinalAsStream');
+    expect(source).not.toContain('function shouldRetryClaudeMessagesWithNormalizedBody(');
+    expect(source).not.toContain('const emitNormalizedFinalAsStream =');
+    expect(source).not.toContain("from './protocolCompat.js'");
+    expect(source).not.toContain("from './chatStreamCompat.js'");
+    expect(source).not.toContain('const promoteResponsesCandidate =');
+    expect(source).not.toContain('shouldRetryClaudeMessagesWithNormalizedBody(');
+    expect(source).not.toContain('buildOpenAiSyntheticFinalStream(');
+    expect(source).toContain('anthropicMessagesTransformer.consumeSseEventBlock(');
+    expect(source).toContain('anthropicMessagesTransformer.serializeUpstreamFinalAsStream(');
+    expect(source).toContain('openAiChatTransformer.serializeUpstreamFinalAsStream(');
   });
 
   it('keeps responses protocol assembly out of responses route', () => {
     const source = readSource('./responses.ts');
     expect(source).not.toContain('function toResponsesPayload(');
     expect(source).not.toContain('function createResponsesStreamState(');
-    expect(source).not.toContain('function convertResponsesBodyToOpenAiBody(');
+    expect(source).not.toContain("from '../../transformers/openai/responses/conversion.js'");
+    expect(source).not.toContain("from '../../transformers/openai/responses/outbound.js'");
+    expect(source).not.toContain("from '../../transformers/openai/responses/aggregator.js'");
+    expect(source).not.toContain('function buildResponsesCompatibilityBodies(');
+    expect(source).not.toContain('function buildResponsesCompatibilityHeaderCandidates(');
+    expect(source).not.toContain('function shouldRetryResponsesCompatibility(');
+    expect(source).not.toContain("from './protocolCompat.js'");
+    expect(source).not.toContain('function shouldDowngradeFromChatToMessagesForResponses(');
+    expect(source).not.toContain('function normalizeText(');
+    expect(source).toContain('openAiResponsesTransformer.inbound.toOpenAiBody(');
+    expect(source).toContain('openAiResponsesTransformer.compatibility.buildRetryBodies(');
+    expect(source).toContain('openAiResponsesTransformer.compatibility.buildRetryHeaders(');
+    expect(source).toContain('openAiResponsesTransformer.compatibility.shouldRetry(');
+    expect(source).toContain('openAiResponsesTransformer.compatibility.shouldDowngradeChatToMessages(');
+    expect(source).toContain('openAiResponsesTransformer.aggregator.createState(');
+    expect(source).toContain('openAiResponsesTransformer.aggregator.serialize(');
+    expect(source).toContain('openAiResponsesTransformer.aggregator.complete(');
+    expect(source).toContain('openAiResponsesTransformer.outbound.serializeFinal(');
   });
 
   it('removes normalizeContentText from upstream endpoint routing', () => {
@@ -34,8 +62,14 @@ describe('proxy route architecture boundaries', () => {
 
   it('keeps gemini runtime closure in transformer-owned helpers', () => {
     const source = readSource('./gemini.ts');
-    expect(source).toContain('serializeAggregateResponse');
-    expect(source).toContain('parseSsePayloads');
-    expect(source).toContain('aggregator.apply(aggregateState, parsed)');
+    expect(source).not.toContain('outbound.serializeAggregateResponse(');
+    expect(source).not.toContain('aggregator.apply(');
+    expect(source).not.toContain('stream.serializeAggregateSsePayload(');
+    expect(source).not.toContain('stream.serializeAggregateJsonPayload(');
+    expect(source).not.toContain('stream.applyJsonPayloadToAggregate(');
+    expect(source).not.toContain('stream.parseSsePayloads(');
+    expect(source).toContain('stream.consumeUpstreamSseBuffer(');
+    expect(source).toContain('stream.serializeUpstreamJsonPayload(');
   });
 });
+

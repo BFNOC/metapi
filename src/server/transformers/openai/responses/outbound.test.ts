@@ -1,0 +1,251 @@
+import { describe, expect, it } from 'vitest';
+
+import { serializeResponsesFinalPayload } from './outbound.js';
+
+describe('serializeResponsesFinalPayload', () => {
+  it('preserves top-level chat annotations on synthetic assistant messages', () => {
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload: {
+        id: 'chatcmpl_1',
+        object: 'chat.completion',
+        created: 1700000000,
+        model: 'gpt-5',
+        choices: [
+          {
+            index: 0,
+            finish_reason: 'stop',
+            message: {
+              role: 'assistant',
+              content: 'hello',
+              annotations: [
+                {
+                  type: 'url_citation',
+                  url: 'https://example.com',
+                  title: 'Example',
+                },
+              ],
+            },
+          },
+        ],
+      },
+      normalized: {
+        id: 'chatcmpl_1',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: 'hello',
+        reasoningContent: '',
+        finishReason: 'stop',
+        toolCalls: [],
+      },
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+    });
+
+    expect(payload.output).toEqual([
+      {
+        id: 'msg_chatcmpl_1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [
+          {
+            type: 'output_text',
+            text: 'hello',
+            annotations: [
+              {
+                type: 'url_citation',
+                url: 'https://example.com',
+                title: 'Example',
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('falls back to normalized tool calls when upstream payload no longer exposes them directly', () => {
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload: {
+        id: 'opaque_1',
+        model: 'gpt-5',
+      },
+      normalized: {
+        id: 'opaque_1',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: '',
+        reasoningContent: '',
+        finishReason: 'tool_calls',
+        toolCalls: [
+          {
+            id: 'call_1',
+            name: 'browser',
+            arguments: '{"url":"https://example.com"}',
+          },
+        ],
+      },
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+    });
+
+    expect(payload.output).toEqual([
+      {
+        id: 'call_1',
+        type: 'function_call',
+        status: 'completed',
+        call_id: 'call_1',
+        name: 'browser',
+        arguments: '{"url":"https://example.com"}',
+      },
+    ]);
+  });
+
+  it('preserves response-like custom tool and image generation items when synthesizing object=response payloads', () => {
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload: {
+        id: 'resp_like_1',
+        model: 'gpt-5',
+        output: [
+          {
+            id: 'ct_1',
+            type: 'custom_tool_call',
+            status: 'completed',
+            call_id: 'ct_1',
+            name: 'browser',
+            input: 'open example.com',
+          },
+          {
+            id: 'img_1',
+            type: 'image_generation_call',
+            status: 'completed',
+            result: 'data:image/png;base64,final',
+            background: 'transparent',
+            output_format: 'png',
+            quality: 'high',
+            size: '1024x1024',
+            partial_images: [
+              {
+                partial_image_index: 0,
+                partial_image_b64: 'partial',
+              },
+            ],
+          },
+        ],
+      },
+      normalized: {
+        id: 'resp_like_1',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: '',
+        reasoningContent: '',
+        finishReason: 'stop',
+        toolCalls: [],
+      },
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+    });
+
+    expect(payload.output).toEqual([
+      {
+        id: 'ct_1',
+        type: 'custom_tool_call',
+        status: 'completed',
+        call_id: 'ct_1',
+        name: 'browser',
+        input: 'open example.com',
+      },
+      {
+        id: 'img_1',
+        type: 'image_generation_call',
+        status: 'completed',
+        result: 'data:image/png;base64,final',
+        background: 'transparent',
+        output_format: 'png',
+        quality: 'high',
+        size: '1024x1024',
+        partial_images: [
+          {
+            partial_image_index: 0,
+            partial_image_b64: 'partial',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('maps upstream chat-completion usage details into Responses usage details', () => {
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload: {
+        id: 'chatcmpl_usage',
+        object: 'chat.completion',
+        created: 1700000000,
+        model: 'gpt-5',
+        choices: [
+          {
+            index: 0,
+            finish_reason: 'stop',
+            message: {
+              role: 'assistant',
+              content: 'hello',
+            },
+          },
+        ],
+        usage: {
+          prompt_tokens: 11,
+          completion_tokens: 7,
+          total_tokens: 18,
+          prompt_tokens_details: {
+            cached_tokens: 5,
+            audio_tokens: 2,
+          },
+          completion_tokens_details: {
+            reasoning_tokens: 3,
+            audio_tokens: 1,
+            accepted_prediction_tokens: 4,
+            rejected_prediction_tokens: 6,
+          },
+        },
+      },
+      normalized: {
+        id: 'chatcmpl_usage',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: 'hello',
+        reasoningContent: '',
+        finishReason: 'stop',
+        toolCalls: [],
+      },
+      usage: {
+        promptTokens: 11,
+        completionTokens: 7,
+        totalTokens: 18,
+      },
+    });
+
+    expect(payload.usage).toMatchObject({
+      input_tokens: 11,
+      output_tokens: 7,
+      total_tokens: 18,
+      input_tokens_details: {
+        cached_tokens: 5,
+        audio_tokens: 2,
+      },
+      output_tokens_details: {
+        reasoning_tokens: 3,
+        audio_tokens: 1,
+        accepted_prediction_tokens: 4,
+        rejected_prediction_tokens: 6,
+      },
+    });
+  });
+});

@@ -1,0 +1,63 @@
+import { describe, expect, it } from 'vitest';
+
+import { anthropicMessagesInbound } from './inbound.js';
+
+describe('anthropicMessagesInbound', () => {
+  it('rejects requests without a positive max_tokens value', () => {
+    const result = anthropicMessagesInbound.parse({
+      model: 'claude-opus-4-6',
+      max_tokens: 0,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+
+    expect(result.error).toEqual({
+      statusCode: 400,
+      payload: {
+        error: {
+          message: 'max_tokens is required and must be positive',
+          type: 'invalid_request_error',
+        },
+      },
+    });
+  });
+
+  it('rejects system prompt blocks that are not text entries', () => {
+    const result = anthropicMessagesInbound.parse({
+      model: 'claude-opus-4-6',
+      max_tokens: 256,
+      system: [
+        { type: 'text', text: 'allowed' },
+        { type: 'image', source: { type: 'url', url: 'https://example.com/system.png' } },
+      ],
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+
+    expect(result.error).toEqual({
+      statusCode: 400,
+      payload: {
+        error: {
+          message: 'system prompt must be text',
+          type: 'invalid_request_error',
+        },
+      },
+    });
+  });
+
+  it('normalizes adaptive effort and tool choice at the inbound boundary', () => {
+    const result = anthropicMessagesInbound.parse({
+      model: 'claude-opus-4-6',
+      max_tokens: 512,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high', preserve: true },
+      tool_choice: { type: 'tool', tool: { name: 'lookup' } },
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.claudeOriginalBody).toMatchObject({
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high', preserve: true },
+      tool_choice: { type: 'tool', name: 'lookup' },
+    });
+  });
+});

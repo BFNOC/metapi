@@ -265,11 +265,35 @@ export async function rebuildTokenRoutesFromAvailability() {
     )
     .all();
 
-  const modelTokens = new Map<string, Map<number, number>>();
+  const accountRows = await db.select().from(schema.modelAvailability)
+    .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .where(
+      and(
+        eq(schema.modelAvailability.available, true),
+        eq(schema.accounts.status, 'active'),
+        eq(schema.sites.status, 'active'),
+      ),
+    )
+    .all();
+
+  const modelCandidates = new Map<string, Map<string, { accountId: number; tokenId: number | null }>>();
+  const addModelCandidate = (modelNameRaw: string | null | undefined, accountId: number, tokenId: number | null) => {
+    const modelName = (modelNameRaw || '').trim();
+    if (!modelName) return;
+    if (!modelCandidates.has(modelName)) modelCandidates.set(modelName, new Map());
+    const candidateKey = `${accountId}:${tokenId ?? 'account'}`;
+    modelCandidates.get(modelName)!.set(candidateKey, { accountId, tokenId });
+  };
+
   for (const row of tokenRows) {
-    const modelName = row.token_model_availability.modelName;
-    if (!modelTokens.has(modelName)) modelTokens.set(modelName, new Map<number, number>());
-    modelTokens.get(modelName)!.set(row.account_tokens.id, row.accounts.id);
+    addModelCandidate(row.token_model_availability.modelName, row.accounts.id, row.account_tokens.id);
+  }
+
+  for (const row of accountRows) {
+    if (!isApiKeyConnection(row.accounts)) continue;
+    if (!(row.accounts.apiToken || '').trim()) continue;
+    addModelCandidate(row.model_availability.modelName, row.accounts.id, null);
   }
 
   const routes = await db.select().from(schema.tokenRoutes).all();
@@ -280,7 +304,7 @@ export async function rebuildTokenRoutesFromAvailability() {
   let removedChannels = 0;
   let removedRoutes = 0;
 
-  for (const [modelName, tokenAccountMap] of modelTokens.entries()) {
+  for (const [modelName, candidateMap] of modelCandidates.entries()) {
     let route = routes.find((r) => r.modelPattern === modelName);
     if (!route) {
       const inserted = await db.insert(schema.tokenRoutes).values({
@@ -297,16 +321,19 @@ export async function rebuildTokenRoutesFromAvailability() {
     }
 
     const routeChannels = channels.filter((channel) => channel.routeId === route.id);
-    const desiredTokenIds = new Set<number>(Array.from(tokenAccountMap.keys()));
+    const desiredKeys = new Set(Array.from(candidateMap.keys()));
 
-    for (const [tokenId, accountId] of tokenAccountMap.entries()) {
-      const exists = routeChannels.some((channel) => channel.tokenId === tokenId);
+    for (const [candidateKey, candidate] of candidateMap.entries()) {
+      const exists = routeChannels.some((channel) => (
+        channel.accountId === candidate.accountId
+        && (channel.tokenId ?? null) === candidate.tokenId
+      ));
       if (exists) continue;
 
       const inserted = await db.insert(schema.routeChannels).values({
         routeId: route.id,
-        accountId,
-        tokenId,
+        accountId: candidate.accountId,
+        tokenId: candidate.tokenId,
         priority: 0,
         weight: 10,
         enabled: true,
@@ -318,16 +345,18 @@ export async function rebuildTokenRoutesFromAvailability() {
       if (!created) continue;
       channels.push(created);
       createdChannels++;
+      desiredKeys.add(candidateKey);
     }
 
     for (const channel of routeChannels) {
-      if (channel.tokenId && desiredTokenIds.has(channel.tokenId)) {
+      const channelKey = `${channel.accountId}:${channel.tokenId ?? 'account'}`;
+      if (desiredKeys.has(channelKey)) {
         continue;
       }
 
       if (!channel.tokenId) {
         const preferred = await getPreferredAccountToken(channel.accountId);
-        if (preferred && desiredTokenIds.has(preferred.id)) {
+        if (preferred && desiredKeys.has(`${channel.accountId}:${preferred.id}`)) {
           await db.update(schema.routeChannels)
             .set({ tokenId: preferred.id })
             .where(eq(schema.routeChannels.id, channel.id))
@@ -343,7 +372,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     }
   }
 
-  const latestModelNames = new Set<string>(Array.from(modelTokens.keys()));
+  const latestModelNames = new Set<string>(Array.from(modelCandidates.keys()));
   for (const route of routes) {
     const modelPattern = (route.modelPattern || '').trim();
     if (!modelPattern || !isExactModelPattern(modelPattern) || latestModelNames.has(modelPattern)) {
@@ -368,7 +397,7 @@ export async function rebuildTokenRoutesFromAvailability() {
   invalidateTokenRouterCache();
 
   return {
-    models: modelTokens.size,
+    models: modelCandidates.size,
     createdRoutes,
     createdChannels,
     removedChannels,

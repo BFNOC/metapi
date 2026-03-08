@@ -1,9 +1,10 @@
-import { type NormalizedFinalResponse, type NormalizedStreamEvent, type ParsedDownstreamChatRequest, type StreamTransformContext } from '../../shared/normalized.js';
+import { type NormalizedFinalResponse, type NormalizedStreamEvent, type StreamTransformContext } from '../../shared/normalized.js';
 import { openAiChatInbound } from './inbound.js';
 import { openAiChatOutbound } from './outbound.js';
 import { openAiChatStream } from './stream.js';
 import { openAiChatUsage } from './usage.js';
 import { createOpenAiChatAggregateState, applyOpenAiChatStreamEvent, finalizeOpenAiChatAggregate } from './aggregator.js';
+import type { OpenAiChatParsedRequest as OpenAiChatParsedRequestModel } from './model.js';
 
 export const openAiChatTransformer = {
   protocol: 'openai/chat' as const,
@@ -47,6 +48,20 @@ export const openAiChatTransformer = {
   ) {
     return openAiChatOutbound.serializeFinal(normalized, usage);
   },
+  serializeUpstreamFinalAsStream(
+    payload: unknown,
+    modelName: string,
+    fallbackText: string,
+    streamContext: StreamTransformContext,
+  ) {
+    const normalizedFinal = openAiChatOutbound.normalizeFinal(payload, modelName, fallbackText);
+    streamContext.id = normalizedFinal.id;
+    streamContext.model = normalizedFinal.model;
+    streamContext.created = normalizedFinal.created;
+    return openAiChatOutbound
+      .buildSyntheticChunks(normalizedFinal)
+      .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`);
+  },
   buildSyntheticChunks(normalized: NormalizedFinalResponse) {
     return openAiChatOutbound.buildSyntheticChunks(normalized);
   },
@@ -56,4 +71,4 @@ export const openAiChatTransformer = {
 };
 
 export type OpenAiChatTransformer = typeof openAiChatTransformer;
-export type OpenAiChatParsedRequest = ParsedDownstreamChatRequest;
+export type OpenAiChatParsedRequest = OpenAiChatParsedRequestModel;

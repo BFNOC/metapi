@@ -565,8 +565,15 @@ describe('chat proxy stream behavior', () => {
 
     expect(Array.isArray(firstBody.messages)).toBe(true);
     expect(Array.isArray(secondBody.messages)).toBe(true);
-    expect(typeof secondBody.messages[0]?.content).toBe('string');
-    expect(secondBody.messages[0]?.content).toContain('hello');
+    expect(Array.isArray(secondBody.messages[0]?.content)).toBe(true);
+    expect(secondBody.messages[0]?.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'text',
+          text: expect.stringContaining('hello'),
+        }),
+      ]),
+    );
   });
 
   it('downgrades to next endpoint when normalized Claude fallback still returns messages is required', async () => {

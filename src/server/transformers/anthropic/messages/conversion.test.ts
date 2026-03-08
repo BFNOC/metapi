@@ -29,6 +29,71 @@ describe('sanitizeAnthropicMessagesBody', () => {
     });
   });
 
+  it('normalizes string system and message content before rebuilding cache anchors', () => {
+    const result = sanitizeAnthropicMessagesBody({
+      model: 'claude-opus-4-6',
+      system: 'system prompt',
+      messages: [
+        {
+          role: 'user',
+          content: 'hello from user',
+        },
+      ],
+    });
+
+    expect(result.system).toEqual([
+      {
+        type: 'text',
+        text: 'system prompt',
+        cache_control: { type: 'ephemeral' },
+      },
+    ]);
+    expect(result.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'hello from user',
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('drops output_config.effort unless thinking stays adaptive', () => {
+    const enabled = sanitizeAnthropicMessagesBody({
+      model: 'claude-opus-4-6',
+      thinking: {
+        type: 'enabled',
+        budget_tokens: 256,
+      },
+      output_config: {
+        effort: 'high',
+        format: 'json',
+      },
+    });
+    const adaptive = sanitizeAnthropicMessagesBody({
+      model: 'claude-opus-4-6',
+      thinking: {
+        type: 'adaptive',
+      },
+      output_config: {
+        effort: 'high',
+        format: 'json',
+      },
+    });
+
+    expect(enabled.output_config).toEqual({
+      format: 'json',
+    });
+    expect(adaptive.output_config).toEqual({
+      effort: 'high',
+      format: 'json',
+    });
+  });
+
   it('drops non-ephemeral cache_control markers while preserving valid tool block markers', () => {
     const result = sanitizeAnthropicMessagesBody({
       model: 'claude-opus-4-6',
@@ -344,6 +409,59 @@ describe('convertOpenAiBodyToAnthropicMessagesBody', () => {
     expect(body.thinking).toEqual({ type: 'adaptive' });
     expect(body.output_config).toEqual({ effort: 'high' });
   });
+
+  it('rebuilds cache_control anchors at the anthropic inbound boundary', () => {
+    const result = anthropicMessagesInbound.parse(
+      {
+        model: 'gpt-5',
+        max_tokens: 512,
+        tools: [
+          {
+            name: 'lookup',
+            input_schema: { type: 'object' },
+          },
+          {
+            name: 'search',
+            input_schema: { type: 'object' },
+          },
+        ],
+        system: 'system prompt',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.claudeOriginalBody?.system).toEqual([
+      {
+        type: 'text',
+        text: 'system prompt',
+        cache_control: { type: 'ephemeral' },
+      },
+    ]);
+    expect(result.value?.claudeOriginalBody?.tools).toEqual([
+      {
+        name: 'lookup',
+        input_schema: { type: 'object' },
+      },
+      {
+        name: 'search',
+        input_schema: { type: 'object' },
+        cache_control: { type: 'ephemeral' },
+      },
+    ]);
+    expect(result.value?.claudeOriginalBody?.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'hello',
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+      },
+    ]);
+  });
 });
 
 describe('convertOpenAiToolChoiceToAnthropic', () => {
@@ -410,6 +528,17 @@ describe('anthropicMessagesInbound', () => {
 
     expect(result.error?.statusCode).toBe(400);
   });
+
+  it('rejects string tool_choice tool without a tool name', () => {
+    const result = anthropicMessagesInbound.parse({
+      model: 'claude-opus-4-6',
+      max_tokens: 512,
+      messages: [{ role: 'user', content: 'hello' }],
+      tool_choice: 'tool',
+    });
+
+    expect(result.error?.statusCode).toBe(400);
+  });
 });
 
 describe('anthropicMessagesTransformer.stream', () => {
@@ -470,13 +599,20 @@ describe('anthropicMessagesTransformer.stream', () => {
     const streamContext = anthropicMessagesTransformer.createStreamContext('claude-opus-4-6');
     const downstreamContext = anthropicMessagesTransformer.createDownstreamContext();
 
-    const redacted = anthropicMessagesTransformer.transformStreamEvent({
+    const redactedStart = anthropicMessagesTransformer.transformStreamEvent({
       type: 'content_block_start',
       index: 0,
       content_block: { type: 'redacted_thinking', data: 'ciphertext' },
     }, streamContext, 'claude-opus-4-6');
+    const redactedStop = anthropicMessagesTransformer.transformStreamEvent({
+      type: 'content_block_stop',
+      index: 0,
+    }, streamContext, 'claude-opus-4-6');
 
-    const serialized = anthropicMessagesTransformer.serializeStreamEvent(redacted, streamContext, downstreamContext).join('');
+    const serialized = [
+      ...anthropicMessagesTransformer.serializeStreamEvent(redactedStart, streamContext, downstreamContext),
+      ...anthropicMessagesTransformer.serializeStreamEvent(redactedStop, streamContext, downstreamContext),
+    ].join('');
     expect(serialized).toContain('"type":"redacted_thinking"');
     expect(serialized).toContain('content_block_start');
     expect(serialized).toContain('content_block_stop');
@@ -492,11 +628,14 @@ describe('extractAnthropicUsage', () => {
         cache_read_input_tokens: 12,
         cache_creation_input_tokens: 8,
       },
-    })).toEqual({
+    })).toMatchObject({
       promptTokens: 120,
       completionTokens: 30,
       totalTokens: 150,
       cachedTokens: 12,
+      cacheReadInputTokens: 12,
+      cacheCreationInputTokens: 8,
+      promptTokensIncludingCache: 120,
       reasoningTokens: 0,
       audioInputTokens: 0,
       audioOutputTokens: 0,
@@ -517,7 +656,7 @@ describe('extractAnthropicUsage', () => {
           ephemeral_1h_input_tokens: 3,
         },
       },
-    })).toEqual({
+    })).toMatchObject({
       cacheReadInputTokens: 12,
       cacheCreationInputTokens: 8,
       ephemeral5mInputTokens: 5,
@@ -537,7 +676,7 @@ describe('extractAnthropicUsage', () => {
           ephemeral_1h_input_tokens: 3,
         },
       },
-    })).toEqual({
+    })).toMatchObject({
       cacheReadInputTokens: 12,
       cacheCreationInputTokens: 8,
       ephemeral5mInputTokens: 5,
@@ -662,5 +801,33 @@ describe('applyAnthropicMessagesAggregateEvent', () => {
       { kind: 'redacted_thinking', phase: 'stop', index: 5 },
     ]);
     expect(state.finishReason).toBe('stop');
+  });
+
+  it('creates a synthetic thinking lifecycle when a buffered signature is flushed on finish', () => {
+    const state = createAnthropicMessagesAggregateState();
+
+    applyAnthropicMessagesAggregateEvent(state, {
+      anthropic: {
+        signatureDelta: 'sig-only',
+      },
+    } as any);
+    applyAnthropicMessagesAggregateEvent(state, {
+      finishReason: 'stop',
+      done: true,
+    });
+
+    expect(state.pendingSignature).toBeNull();
+    expect(state.signatures).toEqual(['sig-only']);
+    expect(state.contentBlocks).toEqual([
+      {
+        type: 'thinking',
+        thinking: '',
+        signature: 'sig-only',
+      },
+    ]);
+    expect(state.blockLifecycle).toEqual([
+      { kind: 'thinking', phase: 'start' },
+      { kind: 'thinking', phase: 'stop' },
+    ]);
   });
 });

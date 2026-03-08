@@ -4,18 +4,24 @@ import type {
   ParsedDownstreamChatRequest,
 } from '../../shared/normalized.js';
 
+export type OpenAiChatAudioRequest = {
+  format?: string;
+  voice?: string;
+  [key: string]: unknown;
+};
+
 export type OpenAiChatRequestMetadata = {
-  modalities?: unknown;
-  audio?: unknown;
-  reasoningEffort?: unknown;
-  reasoningBudget?: unknown;
-  reasoningSummary?: unknown;
-  serviceTier?: unknown;
-  topLogprobs?: unknown;
-  logitBias?: unknown;
-  promptCacheKey?: unknown;
-  safetyIdentifier?: unknown;
-  verbosity?: unknown;
+  modalities?: string[];
+  audio?: OpenAiChatAudioRequest;
+  reasoningEffort?: string;
+  reasoningBudget?: number;
+  reasoningSummary?: string;
+  serviceTier?: string;
+  topLogprobs?: number;
+  logitBias?: Record<string, number>;
+  promptCacheKey?: string;
+  safetyIdentifier?: string;
+  verbosity?: string;
   responseFormat?: unknown;
   streamOptionsIncludeUsage?: boolean | null;
 };
@@ -29,14 +35,50 @@ export type OpenAiChatParsedRequest = ParsedDownstreamChatRequest & {
   requestMetadata?: OpenAiChatRequestMetadata;
 };
 
+export type OpenAiChatToolCall = {
+  id: string;
+  name: string;
+  arguments: string;
+};
+
+export type OpenAiChatChoice = {
+  index: number;
+  role?: 'assistant';
+  content: string;
+  reasoningContent: string;
+  toolCalls: OpenAiChatToolCall[];
+  finishReason: string;
+  annotations?: Array<Record<string, unknown>>;
+  citations?: string[];
+};
+
 export type OpenAiChatNormalizedFinalResponse = NormalizedFinalResponse & {
+  choices?: OpenAiChatChoice[];
   annotations?: Array<Record<string, unknown>>;
   citations?: string[];
   usageDetails?: OpenAiChatUsageDetails;
   usagePayload?: Record<string, unknown>;
 };
 
+export type OpenAiChatChoiceDelta = {
+  index: number;
+  role?: 'assistant';
+  contentDelta?: string;
+  reasoningDelta?: string;
+  toolCallDeltas?: Array<{
+    index: number;
+    id?: string;
+    name?: string;
+    argumentsDelta?: string;
+  }>;
+  finishReason?: string | null;
+  annotations?: Array<Record<string, unknown>>;
+  citations?: string[];
+};
+
 export type OpenAiChatNormalizedStreamEvent = NormalizedStreamEvent & {
+  choiceIndex?: number;
+  choiceEvents?: OpenAiChatChoiceDelta[];
   annotations?: Array<Record<string, unknown>>;
   citations?: string[];
   usageDetails?: OpenAiChatUsageDetails;

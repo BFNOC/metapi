@@ -578,7 +578,13 @@ describe('buildUpstreamEndpointRequest', () => {
     });
 
     expect(request.path).toBe('/v1/messages');
-    expect(request.body.system).toBe('be careful');
+    expect(request.body.system).toEqual([
+      {
+        type: 'text',
+        text: 'be careful',
+        cache_control: { type: 'ephemeral' },
+      },
+    ]);
     expect(request.body.messages).toEqual([
       {
         role: 'user',
@@ -733,7 +739,13 @@ describe('buildUpstreamEndpointRequest', () => {
     });
 
     expect(request.path).toBe('/v1/messages');
-    expect(request.body.system).toBe('system prompt');
+    expect(request.body.system).toEqual([
+      {
+        type: 'text',
+        text: 'system prompt',
+        cache_control: { type: 'ephemeral' },
+      },
+    ]);
     expect(request.body.messages).toEqual([
       {
         role: 'user',

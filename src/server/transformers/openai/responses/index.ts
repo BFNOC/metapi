@@ -2,11 +2,17 @@ import { type StreamTransformContext } from '../../shared/normalized.js';
 import {
   convertOpenAiBodyToResponsesBody,
   convertResponsesBodyToOpenAiBody,
-  normalizeResponsesInputForCompatibility,
-  normalizeResponsesMessageContent,
   sanitizeResponsesBodyForProxy,
 } from './conversion.js';
-import { normalizeResponsesMessageItem } from './compatibility.js';
+import {
+  buildResponsesCompatibilityBodies as buildRetryBodies,
+  buildResponsesCompatibilityHeaderCandidates as buildRetryHeaders,
+  normalizeResponsesInputForCompatibility,
+  normalizeResponsesMessageContent,
+  normalizeResponsesMessageItem,
+  shouldDowngradeResponsesChatToMessages as shouldDowngradeChatToMessages,
+  shouldRetryResponsesCompatibility as shouldRetry,
+} from './compatibility.js';
 import {
   type OpenAiResponsesAggregateState,
   completeResponsesStream,
@@ -31,6 +37,12 @@ export const openAiResponsesTransformer = {
   outbound: openAiResponsesOutbound,
   stream: openAiResponsesStream,
   usage: openAiResponsesUsage,
+  compatibility: {
+    buildRetryBodies,
+    buildRetryHeaders,
+    shouldRetry,
+    shouldDowngradeChatToMessages,
+  },
   aggregator: {
     createState: createOpenAiResponsesAggregateState,
     serialize: serializeConvertedResponsesEvents,

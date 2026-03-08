@@ -407,6 +407,26 @@ function serializeOriginalResponsesEvent(eventType: string, payload: Record<stri
   return [serializeSse(eventType, payload)];
 }
 
+function mergeImageGenerationFields(
+  item: AggregateOutputItem,
+  payload: Record<string, unknown>,
+): void {
+  const passthroughKeys = [
+    'background',
+    'output_format',
+    'quality',
+    'size',
+    'revised_prompt',
+    'mime_type',
+  ] as const;
+
+  for (const key of passthroughKeys) {
+    if (payload[key] !== undefined) {
+      item[key] = cloneJson(payload[key]);
+    }
+  }
+}
+
 function computeNovelDelta(existingText: string, incomingDelta: string): string {
   if (!incomingDelta) return '';
   if (!existingText) return incomingDelta;
@@ -555,6 +575,7 @@ function applyOriginalResponsesPayload(
         });
         entry.item.partial_images = partialImages;
       }
+      mergeImageGenerationFields(entry.item, payload);
       if (payload.result !== undefined) {
         entry.item.result = payload.result;
       }

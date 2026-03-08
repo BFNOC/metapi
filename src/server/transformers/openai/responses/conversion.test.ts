@@ -19,6 +19,7 @@ describe('sanitizeResponsesBodyForProxy', () => {
         stream_options: { include_obfuscation: true },
         background: true,
         text: { format: { type: 'text' }, verbosity: 'high' },
+        top_logprobs: 2,
       },
       'gpt-5',
       true,
@@ -34,6 +35,48 @@ describe('sanitizeResponsesBodyForProxy', () => {
       stream_options: { include_obfuscation: true },
       background: true,
       text: { format: { type: 'text' }, verbosity: 'high' },
+      top_logprobs: 2,
+    });
+  });
+
+  it('normalizes current Responses inbound parity fields', () => {
+    const result = sanitizeResponsesBodyForProxy(
+      {
+        input: 'hello',
+        safety_identifier: '  safe-user-4  ',
+        max_tool_calls: '5',
+        prompt_cache_key: '  cache-key-2 ',
+        prompt_cache_retention: ' 24h ',
+        stream_options: { include_obfuscation: 'true', extra: 'keep-me' },
+        background: 'false',
+        text: { format: { type: 'text' }, verbosity: ' high ' },
+        truncation: ' auto ',
+        previous_response_id: ' resp_prev_2 ',
+        include: [' reasoning.encrypted_content ', '', 123, 'message.input_image.image_url'],
+        top_logprobs: '7',
+        user: '  user-456 ',
+        service_tier: ' priority ',
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      model: 'gpt-5',
+      stream: false,
+      safety_identifier: 'safe-user-4',
+      max_tool_calls: 5,
+      prompt_cache_key: 'cache-key-2',
+      prompt_cache_retention: '24h',
+      stream_options: { include_obfuscation: true, extra: 'keep-me' },
+      background: false,
+      text: { format: { type: 'text' }, verbosity: 'high' },
+      truncation: 'auto',
+      previous_response_id: 'resp_prev_2',
+      include: ['reasoning.encrypted_content', 'message.input_image.image_url'],
+      top_logprobs: 7,
+      user: 'user-456',
+      service_tier: 'priority',
     });
   });
 });
@@ -92,6 +135,92 @@ describe('convertOpenAiBodyToResponsesBody', () => {
           size: '1024x1024',
         },
       ],
+    });
+  });
+
+  it('maps OpenAI response_format into Responses text.format while preserving verbosity', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'return structured data' }],
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'payload',
+            schema: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+              },
+              required: ['name'],
+            },
+          },
+        },
+        verbosity: 'high',
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      text: {
+        format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'payload',
+            schema: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+              },
+              required: ['name'],
+            },
+          },
+        },
+        verbosity: 'high',
+      },
+    });
+  });
+
+  it('normalizes and preserves field parity when converting from OpenAI-compatible input', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        safety_identifier: '  safe-user-5 ',
+        max_tool_calls: '6',
+        prompt_cache_key: '  cache-key-3 ',
+        prompt_cache_retention: ' in-memory ',
+        stream_options: { include_obfuscation: 'false' },
+        background: 'true',
+        verbosity: ' medium ',
+        truncation: ' disabled ',
+        previous_response_id: ' resp_prev_3 ',
+        include: 'reasoning.encrypted_content',
+        top_logprobs: '4',
+        user: ' user-789 ',
+        service_tier: ' flex ',
+      },
+      'gpt-5',
+      true,
+    );
+
+    expect(result).toMatchObject({
+      model: 'gpt-5',
+      stream: true,
+      safety_identifier: 'safe-user-5',
+      max_tool_calls: 6,
+      prompt_cache_key: 'cache-key-3',
+      prompt_cache_retention: 'in-memory',
+      stream_options: { include_obfuscation: false },
+      background: true,
+      text: { verbosity: 'medium' },
+      truncation: 'disabled',
+      previous_response_id: 'resp_prev_3',
+      include: ['reasoning.encrypted_content'],
+      top_logprobs: 4,
+      user: 'user-789',
+      service_tier: 'flex',
     });
   });
 });
@@ -256,6 +385,90 @@ describe('convertResponsesBodyToOpenAiBody', () => {
       truncation: 'auto',
       service_tier: 'priority',
       top_logprobs: 4,
+    });
+  });
+
+  it('maps Responses text.format back into OpenAI response_format', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        text: {
+          format: {
+            type: 'json_schema',
+            json_schema: {
+              name: 'payload',
+              schema: {
+                type: 'object',
+                properties: {
+                  value: { type: 'string' },
+                },
+              },
+            },
+          },
+          verbosity: 'medium',
+        },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'payload',
+          schema: {
+            type: 'object',
+            properties: {
+              value: { type: 'string' },
+            },
+          },
+        },
+      },
+      verbosity: 'medium',
+    });
+  });
+
+  it('normalizes field parity when converting Responses input back to OpenAI-compatible input', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        safety_identifier: '  safe-user-6 ',
+        max_tool_calls: '8',
+        prompt_cache_key: '  cache-key-4 ',
+        prompt_cache_retention: ' 24h ',
+        stream_options: { include_obfuscation: 'true' },
+        background: 'false',
+        text: { verbosity: ' low ' },
+        truncation: ' auto ',
+        previous_response_id: ' resp_prev_4 ',
+        include: [' reasoning.encrypted_content ', ''],
+        top_logprobs: '9',
+        user: ' user-999 ',
+        service_tier: ' default ',
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      model: 'gpt-5',
+      stream: false,
+      safety_identifier: 'safe-user-6',
+      max_tool_calls: 8,
+      prompt_cache_key: 'cache-key-4',
+      prompt_cache_retention: '24h',
+      stream_options: { include_obfuscation: true },
+      background: false,
+      verbosity: 'low',
+      truncation: 'auto',
+      previous_response_id: 'resp_prev_4',
+      include: ['reasoning.encrypted_content'],
+      top_logprobs: 9,
+      user: 'user-999',
+      service_tier: 'default',
     });
   });
 });

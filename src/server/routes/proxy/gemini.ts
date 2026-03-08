@@ -119,6 +119,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
   const generateContent = async (request: FastifyRequest, reply: FastifyReply) => {
     const apiVersion = resolveGeminiApiVersion(request);
     const modelActionPath = extractGeminiModelActionPath(request, apiVersion);
+    const isStreamAction = modelActionPath.endsWith(':streamGenerateContent');
     const requestedModel = modelActionPath.replace(/^models\//, '').split(':')[0].trim();
     if (!requestedModel) {
       return reply.code(400).send({
@@ -206,27 +207,23 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               if (done) break;
               if (!value) continue;
               const chunkText = decoder.decode(value, { stream: true });
-              const parsed = geminiGenerateContentTransformer.stream.parseSsePayloads(rest + chunkText);
-              rest = parsed.rest;
-              for (const event of parsed.events) {
-                geminiGenerateContentTransformer.stream.applyAggregate(aggregateState, event);
-                reply.raw.write(
-                  geminiGenerateContentTransformer.stream.serializeSsePayload(
-                    geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
-                  ),
-                );
+              const consumed = geminiGenerateContentTransformer.stream.consumeUpstreamSseBuffer(
+                aggregateState,
+                rest + chunkText,
+              );
+              rest = consumed.rest;
+              for (const line of consumed.lines) {
+                reply.raw.write(line);
               }
             }
             const tail = decoder.decode();
             if (tail) {
-              const parsed = geminiGenerateContentTransformer.stream.parseSsePayloads(rest + tail);
-              for (const event of parsed.events) {
-                geminiGenerateContentTransformer.stream.applyAggregate(aggregateState, event);
-                reply.raw.write(
-                  geminiGenerateContentTransformer.stream.serializeSsePayload(
-                    geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
-                  ),
-                );
+              const consumed = geminiGenerateContentTransformer.stream.consumeUpstreamSseBuffer(
+                aggregateState,
+                rest + tail,
+              );
+              for (const line of consumed.lines) {
+                reply.raw.write(line);
               }
             }
           } finally {
@@ -239,19 +236,13 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         const text = await upstream.text();
         try {
           const parsed = JSON.parse(text);
-          const aggregateState = geminiGenerateContentTransformer.aggregator.createState();
-          if (Array.isArray(parsed)) {
-            for (const chunk of geminiGenerateContentTransformer.stream.parseJsonArrayPayload(parsed)) {
-              geminiGenerateContentTransformer.aggregator.apply(aggregateState, chunk);
-            }
-            return reply.code(upstream.status).send(
-              geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
-            );
-          }
-
-          geminiGenerateContentTransformer.aggregator.apply(aggregateState, parsed);
+          const aggregateState = geminiGenerateContentTransformer.stream.createAggregateState();
           return reply.code(upstream.status).send(
-            geminiGenerateContentTransformer.outbound.serializeAggregateResponse(aggregateState),
+            geminiGenerateContentTransformer.stream.serializeUpstreamJsonPayload(
+              aggregateState,
+              parsed,
+              isStreamAction,
+            ),
           );
         } catch {
           return reply.code(upstream.status).type(contentType || 'application/json').send(text);

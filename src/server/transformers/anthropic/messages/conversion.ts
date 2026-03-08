@@ -5,6 +5,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const VALID_ANTHROPIC_TOOL_CHOICE_TYPES = new Set(['auto', 'none', 'any', 'tool']);
 const VALID_ANTHROPIC_THINKING_TYPES = new Set(['enabled', 'disabled', 'adaptive']);
 const VALID_ANTHROPIC_EFFORTS = new Set(['low', 'medium', 'high', 'max']);
+const MAX_ANTHROPIC_CACHE_CONTROL_BREAKPOINTS = 4;
+const ADAPTIVE_ANTHROPIC_CACHE_CONTROL_BLOCK_WINDOW = 20;
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -47,17 +49,23 @@ function sanitizeCacheControl(value: unknown): Record<string, unknown> | undefin
 
 function sanitizeAnthropicOutputConfig(
   value: unknown,
+  options: { allowEffort?: boolean } = {},
 ): { value?: Record<string, unknown>; error?: string } {
   if (!isRecord(value)) return {};
+  const allowEffort = options.allowEffort === true;
 
   const next: Record<string, unknown> = {};
   if ('effort' in value) {
     const effort = asTrimmedString(value.effort).toLowerCase();
-    if (!effort) return { value: next };
-    if (!VALID_ANTHROPIC_EFFORTS.has(effort)) {
+    if (!effort) {
+      // Ignore blank effort and continue preserving other output_config fields.
+    } else if (!allowEffort) {
+      // Ignore effort outside adaptive thinking; upstream only applies it there.
+    } else if (!VALID_ANTHROPIC_EFFORTS.has(effort)) {
       return { error: 'output_config.effort must be one of: low, medium, high, max' };
+    } else {
+      next.effort = effort;
     }
-    next.effort = effort;
   }
 
   for (const [key, entry] of Object.entries(value)) {
@@ -77,6 +85,9 @@ function sanitizeAnthropicToolChoiceValue(
     const normalized = asTrimmedString(value).toLowerCase();
     if (!normalized) return {};
     if (normalized === 'required') return { value: { type: 'any' } };
+    if (normalized === 'tool') {
+      return { error: 'tool_choice.name is required when type is tool' };
+    }
     if (!VALID_ANTHROPIC_TOOL_CHOICE_TYPES.has(normalized)) {
       return { error: 'tool_choice.type must be one of: auto, none, any, tool' };
     }
@@ -359,6 +370,34 @@ function clearAnthropicCacheControls(body: Record<string, unknown>) {
   });
 }
 
+function normalizeAnthropicMessageContents(body: Record<string, unknown>) {
+  const rawMessages = Array.isArray(body.messages) ? body.messages : [];
+  body.messages = rawMessages.map((message) => {
+    if (!isRecord(message) || Array.isArray(message.content)) return message;
+    if (typeof message.content !== 'string' || message.content.length === 0) return message;
+    return {
+      ...message,
+      content: [
+        {
+          type: 'text',
+          text: message.content,
+        },
+      ],
+    };
+  });
+}
+
+function normalizeAnthropicSystemPrompts(body: Record<string, unknown>) {
+  if (Array.isArray(body.system)) return;
+  if (typeof body.system !== 'string' || body.system.length === 0) return;
+  body.system = [
+    {
+      type: 'text',
+      text: body.system,
+    },
+  ];
+}
+
 function ensureStructuralAnthropicCacheControls(body: Record<string, unknown>): number {
   let count = 0;
 
@@ -454,10 +493,12 @@ function sanitizeUnsupportedAnthropicCacheControls(body: Record<string, unknown>
 }
 
 function optimizeAnthropicCacheControls(body: Record<string, unknown>) {
+  normalizeAnthropicMessageContents(body);
+  normalizeAnthropicSystemPrompts(body);
   clearAnthropicCacheControls(body);
 
   const structuralAnchors = ensureStructuralAnthropicCacheControls(body);
-  const remaining = Math.max(0, 4 - structuralAnchors);
+  const remaining = Math.max(0, MAX_ANTHROPIC_CACHE_CONTROL_BREAKPOINTS - structuralAnchors);
   if (remaining <= 0) {
     sanitizeUnsupportedAnthropicCacheControls(body);
     return;
@@ -469,7 +510,7 @@ function optimizeAnthropicCacheControls(body: Record<string, unknown>) {
     return;
   }
 
-  const desiredMessageAnchors = refs.length >= 20 ? 2 : 1;
+  const desiredMessageAnchors = refs.length >= ADAPTIVE_ANTHROPIC_CACHE_CONTROL_BLOCK_WINDOW ? 2 : 1;
   const targetAnchors = Math.min(desiredMessageAnchors, remaining);
   const usedIndexes = new Set<number>();
 
@@ -482,7 +523,7 @@ function optimizeAnthropicCacheControls(body: Record<string, unknown>) {
   applyAnchor(refs.length - 1);
 
   if (targetAnchors > 1) {
-    const targetIndex = Math.max(refs.length - 1 - 20, 0);
+    const targetIndex = Math.max(refs.length - 1 - ADAPTIVE_ANTHROPIC_CACHE_CONTROL_BLOCK_WINDOW, 0);
     let chosen = -1;
     for (let index = targetIndex; index >= 0; index -= 1) {
       if (!usedIndexes.has(index)) {
@@ -546,7 +587,12 @@ export function sanitizeAnthropicMessagesBody(
     delete sanitized.thinking;
   }
 
-  const outputConfigResult = sanitizeAnthropicOutputConfig(sanitized.output_config ?? sanitized.outputConfig);
+  const allowOutputConfigEffort = isRecord(sanitized.thinking)
+    && asTrimmedString(sanitized.thinking.type).toLowerCase() === 'adaptive';
+  const outputConfigResult = sanitizeAnthropicOutputConfig(
+    sanitized.output_config ?? sanitized.outputConfig,
+    { allowEffort: allowOutputConfigEffort },
+  );
   if (outputConfigResult.value) {
     sanitized.output_config = outputConfigResult.value;
   } else {
@@ -653,28 +699,29 @@ export function convertOpenAiToolsToAnthropic(rawTools: unknown): unknown {
 export function convertOpenAiToolChoiceToAnthropic(rawToolChoice: unknown): unknown {
   if (rawToolChoice === undefined) return undefined;
 
+  let mappedValue: unknown = rawToolChoice;
   if (typeof rawToolChoice === 'string') {
     const normalized = rawToolChoice.trim().toLowerCase();
-    if (normalized === 'required') return { type: 'any' };
-    if (normalized === 'none') return { type: 'none' };
-    if (normalized === 'auto') return { type: 'auto' };
-    if (normalized === 'any') return { type: 'any' };
-    return rawToolChoice;
+    if (normalized === 'required') mappedValue = { type: 'any' };
+    else if (normalized === 'none') mappedValue = { type: 'none' };
+    else if (normalized === 'auto') mappedValue = { type: 'auto' };
+    else if (normalized === 'any') mappedValue = { type: 'any' };
+    else mappedValue = rawToolChoice;
   }
 
-  if (!isRecord(rawToolChoice)) return rawToolChoice;
-
-  const type = asTrimmedString(rawToolChoice.type).toLowerCase();
-  if (type === 'function' && isRecord(rawToolChoice.function)) {
-    const name = asTrimmedString(rawToolChoice.function.name);
-    return name ? { type: 'tool', name } : { type: 'any' };
+  if (isRecord(rawToolChoice)) {
+    const type = asTrimmedString(rawToolChoice.type).toLowerCase();
+    if (type === 'function' && isRecord(rawToolChoice.function)) {
+      const name = asTrimmedString(rawToolChoice.function.name);
+      mappedValue = name ? { type: 'tool', name } : undefined;
+    } else {
+      mappedValue = rawToolChoice;
+    }
   }
 
-  if (type === 'tool' || type === 'auto' || type === 'any' || type === 'none') {
-    return rawToolChoice;
-  }
-
-  return rawToolChoice;
+  if (mappedValue === undefined) return undefined;
+  const toolChoiceResult = sanitizeAnthropicToolChoiceValue(mappedValue);
+  return toolChoiceResult.value;
 }
 
 export function convertOpenAiBodyToAnthropicMessagesBody(
@@ -857,7 +904,11 @@ export function validateAnthropicMessagesBody(
     };
   }
 
-  const outputConfigResult = sanitizeAnthropicOutputConfig(body.output_config ?? body.outputConfig);
+  const allowOutputConfigEffort = !!thinkingResult.value && thinkingResult.value.type === 'adaptive';
+  const outputConfigResult = sanitizeAnthropicOutputConfig(
+    body.output_config ?? body.outputConfig,
+    { allowEffort: allowOutputConfigEffort },
+  );
   if (outputConfigResult.error) {
     return {
       error: {

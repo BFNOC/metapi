@@ -4,6 +4,7 @@ import { anthropicMessagesOutbound } from './outbound.js';
 import { anthropicMessagesStream, consumeAnthropicSseEvent } from './stream.js';
 import { anthropicMessagesUsage } from './usage.js';
 import { createAnthropicMessagesAggregateState } from './aggregator.js';
+import { isMessagesRequiredError, shouldRetryNormalizedMessagesBody } from './compatibility.js';
 export {
   ANTHROPIC_RAW_SSE_EVENT_NAMES,
   consumeAnthropicSseEvent,
@@ -20,6 +21,10 @@ export const anthropicMessagesTransformer = {
   outbound: anthropicMessagesOutbound,
   stream: anthropicMessagesStream,
   usage: anthropicMessagesUsage,
+  compatibility: {
+    shouldRetryNormalizedBody: shouldRetryNormalizedMessagesBody,
+    isMessagesRequiredError,
+  },
   aggregator: {
     createState: createAnthropicMessagesAggregateState,
   },

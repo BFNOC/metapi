@@ -611,6 +611,20 @@ export function shouldPreferResponsesAfterLegacyChatError(input: {
   );
 }
 
+export function promoteResponsesCandidateAfterLegacyChatError(
+  endpointCandidates: UpstreamEndpoint[],
+  input: Parameters<typeof shouldPreferResponsesAfterLegacyChatError>[0],
+): void {
+  if (!shouldPreferResponsesAfterLegacyChatError(input)) return;
+
+  const currentIndex = endpointCandidates.findIndex((endpoint) => endpoint === input.currentEndpoint);
+  const responsesIndex = endpointCandidates.indexOf('responses');
+  if (currentIndex < 0 || responsesIndex < 0 || responsesIndex <= currentIndex + 1) return;
+
+  endpointCandidates.splice(responsesIndex, 1);
+  endpointCandidates.splice(currentIndex + 1, 0, 'responses');
+}
+
 export function isEndpointDowngradeError(status: number, upstreamErrorText?: string | null): boolean {
   if (status < 400) return false;
   const text = (upstreamErrorText || '').toLowerCase();

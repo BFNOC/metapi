@@ -49,6 +49,18 @@ function isRecord(value: unknown): value is GeminiRecord {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function cloneJsonValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneJsonValue(item)) as T;
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, cloneJsonValue(item)]),
+    ) as T;
+  }
+  return value;
+}
+
 function isAggregateState(value: unknown): value is GeminiGenerateContentAggregateState {
   return isRecord(value) && Array.isArray(value.parts) && Array.isArray(value.groundingMetadata) && Array.isArray(value.citations);
 }
@@ -112,18 +124,92 @@ function buildCandidates(state: GeminiGenerateContentAggregateState): GeminiReco
   return [fallback];
 }
 
+function extractOrderedCandidateMetadata(
+  state: GeminiGenerateContentAggregateState,
+  key: 'groundingMetadata' | 'citationMetadata',
+): GeminiRecord[] {
+  if (state.candidates.length > 0) {
+    return state.candidates
+      .slice()
+      .sort((left, right) => left.index - right.index)
+      .map((candidate) => candidate[key])
+      .filter((item): item is GeminiRecord => isRecord(item))
+      .map((item) => cloneJsonValue(item));
+  }
+
+  const fallback = key === 'groundingMetadata' ? state.groundingMetadata : state.citations;
+  return fallback.map((item) => cloneJsonValue(item));
+}
+
+function extractOrderedThoughtSignatures(
+  state: GeminiGenerateContentAggregateState,
+): {
+  all: string[];
+  preferred: string | undefined;
+} {
+  const ordered = new Set<string>();
+  const preferredThoughts = new Set<string>();
+
+  const candidates = state.candidates.length > 0
+    ? state.candidates.slice().sort((left, right) => left.index - right.index)
+    : [{ index: 0, finishReason: state.finishReason, parts: state.parts }];
+
+  for (const candidate of candidates) {
+    for (const part of candidate.parts) {
+      if (!isRecord(part) || typeof part.thoughtSignature !== 'string' || !part.thoughtSignature.trim()) {
+        continue;
+      }
+      ordered.add(part.thoughtSignature);
+      if (part.thought === true) {
+        preferredThoughts.add(part.thoughtSignature);
+      }
+    }
+  }
+
+  const orderedList = [...ordered];
+  const preferred = [...preferredThoughts][0]
+    ?? (orderedList.length === 1 ? orderedList[0] : undefined);
+
+  return {
+    all: orderedList.length > 0 ? orderedList : [...state.thoughtSignatures],
+    preferred,
+  };
+}
+
 function extractRequestSemantics(requestPayload: unknown): GeminiRecord {
   if (!isRecord(requestPayload)) return {};
 
   const metadata: GeminiRecord = {};
-  if (requestPayload.systemInstruction !== undefined) metadata.systemInstruction = requestPayload.systemInstruction;
-  if (requestPayload.cachedContent !== undefined) metadata.cachedContent = requestPayload.cachedContent;
+  if (requestPayload.systemInstruction !== undefined) metadata.systemInstruction = cloneJsonValue(requestPayload.systemInstruction);
+  if (requestPayload.cachedContent !== undefined) metadata.cachedContent = cloneJsonValue(requestPayload.cachedContent);
+  if (requestPayload.safetySettings !== undefined) metadata.safetySettings = cloneJsonValue(requestPayload.safetySettings);
+  if (requestPayload.toolConfig !== undefined) metadata.toolConfig = cloneJsonValue(requestPayload.toolConfig);
 
   const generationConfig = isRecord(requestPayload.generationConfig) ? requestPayload.generationConfig : null;
   if (generationConfig) {
-    if (generationConfig.responseModalities !== undefined) metadata.responseModalities = generationConfig.responseModalities;
-    if (generationConfig.responseSchema !== undefined) metadata.responseSchema = generationConfig.responseSchema;
-    if (generationConfig.responseMimeType !== undefined) metadata.responseMimeType = generationConfig.responseMimeType;
+    const preservedKeys = [
+      'stopSequences',
+      'responseModalities',
+      'responseMimeType',
+      'responseSchema',
+      'candidateCount',
+      'maxOutputTokens',
+      'temperature',
+      'topP',
+      'topK',
+      'presencePenalty',
+      'frequencyPenalty',
+      'seed',
+      'responseLogprobs',
+      'logprobs',
+      'thinkingConfig',
+      'imageConfig',
+    ];
+    for (const key of preservedKeys) {
+      if (generationConfig[key] !== undefined) {
+        metadata[key] = cloneJsonValue(generationConfig[key]);
+      }
+    }
   }
 
   if (Array.isArray(requestPayload.tools)) {
@@ -131,10 +217,10 @@ function extractRequestSemantics(requestPayload: unknown): GeminiRecord {
       .filter((item) => isRecord(item))
       .map((item) => {
         const next: GeminiRecord = {};
-        if (item.googleSearch !== undefined) next.googleSearch = item.googleSearch;
-        if (item.urlContext !== undefined) next.urlContext = item.urlContext;
-        if (item.codeExecution !== undefined) next.codeExecution = item.codeExecution;
-        if (item.functionDeclarations !== undefined) next.functionDeclarations = item.functionDeclarations;
+        if (item.googleSearch !== undefined) next.googleSearch = cloneJsonValue(item.googleSearch);
+        if (item.urlContext !== undefined) next.urlContext = cloneJsonValue(item.urlContext);
+        if (item.codeExecution !== undefined) next.codeExecution = cloneJsonValue(item.codeExecution);
+        if (item.functionDeclarations !== undefined) next.functionDeclarations = cloneJsonValue(item.functionDeclarations);
         return next;
       })
       .filter((item) => Object.keys(item).length > 0);
@@ -169,11 +255,17 @@ export function extractResponseMetadata(payload: unknown, requestPayload?: unkno
   const state = ensureAggregateState(payload);
   const metadata: GeminiRecord = extractRequestSemantics(requestPayload);
 
-  if (state.citations.length > 0) metadata.citations = state.citations;
-  if (state.groundingMetadata.length > 0) metadata.groundingMetadata = state.groundingMetadata;
-  if (state.thoughtSignatures.length > 0) {
-    metadata.thoughtSignature = state.thoughtSignatures[0];
-    metadata.thoughtSignatures = state.thoughtSignatures;
+  const citations = extractOrderedCandidateMetadata(state, 'citationMetadata');
+  const groundingMetadata = extractOrderedCandidateMetadata(state, 'groundingMetadata');
+  const thoughtSignatures = extractOrderedThoughtSignatures(state);
+
+  if (citations.length > 0) metadata.citations = citations;
+  if (groundingMetadata.length > 0) metadata.groundingMetadata = groundingMetadata;
+  if (thoughtSignatures.all.length > 0) {
+    if (thoughtSignatures.preferred) {
+      metadata.thoughtSignature = thoughtSignatures.preferred;
+    }
+    metadata.thoughtSignatures = thoughtSignatures.all;
   }
   const usageMetadata = buildUsageMetadata(state);
   if (usageMetadata) metadata.usageMetadata = usageMetadata;

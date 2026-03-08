@@ -16,8 +16,8 @@ import {
   isEndpointDispatchDeniedError,
   isEndpointDowngradeError,
   isUnsupportedMediaTypeError,
+  promoteResponsesCandidateAfterLegacyChatError,
   resolveUpstreamEndpointCandidates,
-  shouldPreferResponsesAfterLegacyChatError,
 } from './upstreamEndpoint.js';
 import {
   ensureModelAllowedForDownstreamKey,
@@ -29,30 +29,9 @@ import { executeEndpointFlow, withUpstreamPath } from './endpointFlow.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
-import {
-  anthropicMessagesTransformer,
-  isAnthropicRawSseEventName,
-  serializeAnthropicFinalAsStream,
-  serializeAnthropicRawSseEvent,
-  syncAnthropicRawStreamStateFromEvent,
-} from '../../transformers/anthropic/messages/index.js';
+import { anthropicMessagesTransformer } from '../../transformers/anthropic/messages/index.js';
 
 const MAX_RETRIES = 2;
-function shouldRetryClaudeMessagesWithNormalizedBody(
-  downstreamFormat: DownstreamFormat,
-  endpointPath: string,
-  status: number,
-  upstreamErrorText: string,
-): boolean {
-  if (downstreamFormat !== 'claude') return false;
-  if (!endpointPath.includes('/v1/messages')) return false;
-  if (status < 400 || status >= 500) return false;
-  return /messages\s+is\s+required/i.test(upstreamErrorText);
-}
-
-function isMessagesRequiredError(upstreamErrorText: string): boolean {
-  return /messages\s+is\s+required/i.test(upstreamErrorText);
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -125,27 +104,6 @@ async function handleChatProxyRequest(
     ];
     let startTime = Date.now();
 
-    const promoteResponsesCandidate = (currentEndpoint: string | null | undefined, upstreamErrorText?: string | null, status = 0) => {
-      if (!shouldPreferResponsesAfterLegacyChatError({
-        status,
-        upstreamErrorText,
-        downstreamFormat,
-        sitePlatform: selected.site.platform,
-        modelName,
-        requestedModelHint: requestedModel,
-        currentEndpoint: currentEndpoint as any,
-      })) {
-        return;
-      }
-
-      const currentIndex = endpointCandidates.findIndex((endpoint) => endpoint === currentEndpoint);
-      const responsesIndex = endpointCandidates.indexOf('responses');
-      if (currentIndex < 0 || responsesIndex < 0 || responsesIndex <= currentIndex + 1) return;
-
-      endpointCandidates.splice(responsesIndex, 1);
-      endpointCandidates.splice(currentIndex + 1, 0, 'responses');
-    };
-
     try {
       const endpointResult = await executeEndpointFlow({
         siteUrl: selected.site.url,
@@ -172,12 +130,12 @@ async function handleChatProxyRequest(
           };
         },
         tryRecover: async (ctx) => {
-          if (shouldRetryClaudeMessagesWithNormalizedBody(
+          if (anthropicMessagesTransformer.compatibility.shouldRetryNormalizedBody({
             downstreamFormat,
-            ctx.request.path,
-            ctx.response.status,
-            ctx.rawErrText,
-          )) {
+            endpointPath: ctx.request.path,
+            status: ctx.response.status,
+            upstreamErrorText: ctx.rawErrText,
+          })) {
             const normalizedClaudeRequest = buildUpstreamEndpointRequest({
               endpoint: ctx.request.endpoint,
               modelName,
@@ -253,11 +211,19 @@ async function handleChatProxyRequest(
         },
         shouldDowngrade: (ctx) => (
           (() => {
-            promoteResponsesCandidate(ctx.request.endpoint, ctx.rawErrText, ctx.response.status);
+            promoteResponsesCandidateAfterLegacyChatError(endpointCandidates, {
+              status: ctx.response.status,
+              upstreamErrorText: ctx.rawErrText,
+              downstreamFormat,
+              sitePlatform: selected.site.platform,
+              modelName,
+              requestedModelHint: requestedModel,
+              currentEndpoint: ctx.request.endpoint,
+            });
             return (
               ctx.response.status >= 500
               || isEndpointDowngradeError(ctx.response.status, ctx.rawErrText)
-              || isMessagesRequiredError(ctx.rawErrText)
+              || anthropicMessagesTransformer.compatibility.isMessagesRequiredError(ctx.rawErrText)
               || isEndpointDispatchDeniedError(ctx.response.status, ctx.rawErrText)
             );
           })()
@@ -338,23 +304,6 @@ async function handleChatProxyRequest(
           writeLines(downstreamTransformer.serializeDone(streamContext, claudeContext));
         };
 
-        const emitNormalizedFinalAsStream = (upstreamData: unknown, fallbackText = '') => {
-          const normalizedFinal = downstreamTransformer.transformFinalResponse(upstreamData, modelName, fallbackText);
-          streamContext.id = normalizedFinal.id;
-          streamContext.model = normalizedFinal.model;
-          streamContext.created = normalizedFinal.created;
-
-          if (downstreamFormat === 'openai') {
-            const syntheticChunks = openAiChatTransformer.buildSyntheticChunks(normalizedFinal);
-            for (const chunk of syntheticChunks) {
-              reply.raw.write(`data: ${JSON.stringify(chunk)}\n\n`);
-            }
-            return;
-          }
-
-          writeLines(serializeAnthropicFinalAsStream(normalizedFinal, streamContext, claudeContext));
-        };
-
         const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
         if (!upstreamContentType.includes('text/event-stream')) {
           const fallbackText = await upstream.text();
@@ -366,7 +315,25 @@ async function handleChatProxyRequest(
           }
 
           parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(fallbackData));
-          emitNormalizedFinalAsStream(fallbackData, fallbackText);
+          if (downstreamFormat === 'openai') {
+            const syntheticLines = openAiChatTransformer.serializeUpstreamFinalAsStream(
+              fallbackData,
+              modelName,
+              fallbackText,
+              streamContext,
+            );
+            writeLines(syntheticLines);
+          } else {
+            writeLines(
+              anthropicMessagesTransformer.serializeUpstreamFinalAsStream(
+                fallbackData,
+                modelName,
+                fallbackText,
+                streamContext,
+                claudeContext,
+              ),
+            );
+          }
           writeDone();
           reply.raw.end();
 
@@ -437,37 +404,37 @@ async function handleChatProxyRequest(
             }
 
             let parsedPayload: unknown = null;
-            try {
-              parsedPayload = JSON.parse(eventBlock.data);
-            } catch {
-              parsedPayload = null;
+            if (downstreamFormat === 'claude') {
+              const consumed = anthropicMessagesTransformer.consumeSseEventBlock(
+                eventBlock,
+                streamContext,
+                claudeContext,
+                modelName,
+              );
+              parsedPayload = consumed.parsedPayload;
+              if (parsedPayload && typeof parsedPayload === 'object') {
+                parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(parsedPayload));
+              }
+              if (consumed.handled) {
+                writeLines(consumed.lines);
+                if (consumed.done) {
+                  shouldTerminateEarly = true;
+                  break;
+                }
+                continue;
+              }
+            } else {
+              try {
+                parsedPayload = JSON.parse(eventBlock.data);
+              } catch {
+                parsedPayload = null;
+              }
+              if (parsedPayload && typeof parsedPayload === 'object') {
+                parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(parsedPayload));
+              }
             }
 
             if (parsedPayload && typeof parsedPayload === 'object') {
-              parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(parsedPayload));
-              if (downstreamFormat === 'claude') {
-                const payloadType = (isRecord(parsedPayload) && typeof parsedPayload.type === 'string')
-                  ? parsedPayload.type
-                  : '';
-                const claudeEventName = isAnthropicRawSseEventName(eventBlock.event)
-                  ? eventBlock.event
-                  : (isAnthropicRawSseEventName(payloadType) ? payloadType : '');
-
-                if (claudeEventName) {
-                  syncAnthropicRawStreamStateFromEvent(
-                    claudeEventName,
-                    parsedPayload,
-                    streamContext,
-                    claudeContext,
-                  );
-                  reply.raw.write(serializeAnthropicRawSseEvent(claudeEventName, eventBlock.data));
-                  if (claudeContext.doneSent) {
-                    shouldTerminateEarly = true;
-                    break;
-                  }
-                  continue;
-                }
-              }
               const normalizedEvent = downstreamTransformer.transformStreamEvent(parsedPayload, streamContext, modelName);
               writeLines(downstreamTransformer.serializeStreamEvent(normalizedEvent, streamContext, claudeContext));
               if (downstreamFormat === 'claude' && claudeContext.doneSent) {

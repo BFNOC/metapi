@@ -1,14 +1,56 @@
+import { existsSync, globSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitepress';
 import { withMermaid } from 'vitepress-plugin-mermaid';
+
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
+const resolveDependencyEntry = (hoistedRelativePath: string, pnpmPattern: string) => {
+  const hoistedEntry = resolve(repoRoot, hoistedRelativePath);
+  if (existsSync(hoistedEntry)) return hoistedEntry;
+
+  const [pnpmEntry] = globSync(resolve(repoRoot, pnpmPattern));
+  return pnpmEntry;
+};
+
+const dayjsEsmEntry = resolveDependencyEntry(
+  'node_modules/dayjs/esm/index.js',
+  'node_modules/.pnpm/dayjs@*/node_modules/dayjs/esm/index.js',
+);
+const sanitizeUrlSourceEntry = resolveDependencyEntry(
+  'node_modules/@braintree/sanitize-url/src/index.ts',
+  'node_modules/.pnpm/@braintree+sanitize-url@*/node_modules/@braintree/sanitize-url/src/index.ts',
+);
+
+if (!dayjsEsmEntry) {
+  throw new Error('Unable to resolve the dayjs ESM entry required by vitepress-plugin-mermaid.');
+}
+
+if (!sanitizeUrlSourceEntry) {
+  throw new Error('Unable to resolve the sanitize-url source entry required by vitepress-plugin-mermaid.');
+}
 
 export default withMermaid(
   defineConfig({
     lang: 'zh-CN',
     title: 'Metapi 文档',
     description: 'Metapi 使用文档、FAQ 与维护协作指南',
+    head: [
+      ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon.png' }],
+      ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: '/favicon-64.png' }],
+      ['link', { rel: 'shortcut icon', href: '/favicon.ico' }],
+    ],
     cleanUrls: true,
     lastUpdated: true,
     ignoreDeadLinks: true,
+    vite: {
+      resolve: {
+        alias: [
+          { find: /^dayjs$/, replacement: dayjsEsmEntry },
+          { find: /^@braintree\/sanitize-url$/, replacement: sanitizeUrlSourceEntry },
+        ],
+      },
+    },
     themeConfig: {
       siteTitle: 'Metapi Docs',
       logo: '/logos/logo-icon-512.png',

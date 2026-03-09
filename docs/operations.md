@@ -30,12 +30,35 @@ cp -r data/ data-backup-$(date +%Y%m%d)/
 
 ### 方式二：数据库原生备份（MySQL / PostgreSQL）
 
-如果当前运行库已经切到 MySQL / Postgres，请使用数据库自己的备份工具或云快照，例如 `mysqldump`、`pg_dump`、RDS 快照等。
+如果当前运行库已经切到 MySQL / Postgres，请使用数据库自己的备份工具或云快照。
+
+**MySQL 备份示例：**
+
+```bash
+# 全量导出（替换为你的实际连接信息）
+mysqldump -h <HOST> -u <USER> -p<PASSWORD> metapi > metapi-backup-$(date +%Y%m%d).sql
+
+# 自动备份（crontab，每天凌晨 3 点）
+0 3 * * * mysqldump -h <HOST> -u <USER> -p<PASSWORD> metapi | gzip > /path/to/backups/metapi-$(date +\%Y\%m\%d).sql.gz
+```
+
+**PostgreSQL 备份示例：**
+
+```bash
+# 全量导出
+pg_dump -h <HOST> -U <USER> -d metapi -F c -f metapi-backup-$(date +%Y%m%d).dump
+
+# 自动备份（crontab，每天凌晨 3 点，使用 .pgpass 免交互密码）
+0 3 * * * pg_dump -h <HOST> -U <USER> -d metapi -F c -f /path/to/backups/metapi-$(date +\%Y\%m\%d).dump
+```
+
+**云托管数据库：** RDS、PlanetScale、Neon 等可直接使用平台的自动快照功能。
 
 建议：
 - 升级、迁移、执行「重新初始化系统」前先做一次库级备份
 - 备份对象是当前 metapi 正在使用的运行库，而不只是本地 `data/`
 - 恢复后重启 Metapi 一次，确认它重新连接到了正确的运行库
+- 建议保留最近 7~30 天的备份，定期清理过期文件
 
 ### 方式三：应用内导出
 
@@ -104,11 +127,16 @@ npm run dev
 
 | 关键词 | 含义 | 处理方式 |
 |--------|------|----------|
-| `auth failed` | 上游站点鉴权失败 | 检查账号凭证是否过期 |
-| `no available channel` | 路由无可用通道 | 检查 Token 是否同步、通道是否被冷却 |
-| `notify failed` | 通知发送失败 | 检查通知渠道配置 |
+| `auth failed` | 上游站点鉴权失败 | 检查账号凭证是否过期，系统会自动尝试重登录 |
+| `no available channel` | 路由无可用通道 | 检查 Token 是否同步、通道是否被冷却；可在路由页查看冷却状态 |
+| `channel cooling` | 通道进入冷却期 | 通道在请求失败后自动冷却 10 分钟，期间不会被路由选中；无需干预，会自动恢复 |
+| `upstream 429` | 上游限流 | 该上游站点触发了速率限制；路由引擎会自动切换其他通道，冷却期后重试 |
+| `upstream 5xx` | 上游服务器错误 | 上游站点临时不可用，路由引擎会自动故障转移到其他通道 |
+| `notify failed` | 通知发送失败 | 检查 [通知渠道配置](./configuration.md#通知渠道) |
 | `checkin failed` | 签到失败 | 检查账号状态和站点连通性 |
-| `balance refresh failed` | 余额刷新失败 | 检查账号凭证 |
+| `balance refresh failed` | 余额刷新失败 | 检查账号凭证，可能需要重新登录 |
+| `proxy timeout` | 代理请求超时 | 上游响应过慢；检查网络延迟或考虑切换其他通道 |
+| `token expired` | Token 过期 | 系统会自动尝试续签；若反复出现，手动刷新 Token |
 
 ## 健康检查
 
@@ -168,9 +196,14 @@ curl -sS http://localhost:4000/v1/chat/completions \
 
 ### 清理缓存并重建路由
 
-- 「设置 → 清除缓存并重建路由」会清空模型发现缓存、自动路由和自动通道，再后台触发一次模型刷新与路由重建
-- 「TokenRoutes → 重建路由」适合在调整账号、Token、路由规则后手动重新生成自动路由
-- 如果 `GET /v1/models`、路由列表或选择概率明显滞后，优先执行这一操作
+当模型列表（`GET /v1/models`）、路由列表或选择概率明显滞后时，使用以下操作：
+
+| 操作 | 位置 | 适用场景 |
+|------|------|----------|
+| **清除缓存并重建路由** | 设置 → 清除缓存并重建路由 | 全局刷新：清空模型发现缓存、自动路由和自动通道，后台触发模型刷新与路由重建 |
+| **重建路由** | TokenRoutes → 重建路由 | 局部刷新：调整账号、Token、路由规则后手动重新生成自动路由 |
+
+优先使用「重建路由」做局部刷新，问题持续时再用全局清除。
 
 ### 批量操作
 
@@ -206,3 +239,5 @@ curl -sS http://localhost:4000/v1/chat/completions \
 
 - [常见问题](./faq.md) — 常见报错与修复
 - [配置说明](./configuration.md) — 环境变量详解
+- [上游接入](./upstream-integration.md) — 平台特定的连接与排障
+- [客户端接入](./client-integration.md) — 下游客户端对接

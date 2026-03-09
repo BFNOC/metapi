@@ -3,6 +3,112 @@ import { describe, expect, it } from 'vitest';
 import { serializeResponsesFinalPayload } from './outbound.js';
 
 describe('serializeResponsesFinalPayload', () => {
+  it('preserves native response.compaction payloads when compact serialization is requested', () => {
+    const upstreamPayload = {
+      id: 'cmp_123',
+      object: 'response.compaction',
+      created_at: 1700000000,
+      output: [
+        {
+          id: 'rs_123',
+          type: 'compaction',
+          encrypted_content: 'enc-compact-payload',
+        },
+      ],
+      usage: {
+        input_tokens: 1234,
+        output_tokens: 321,
+        total_tokens: 1555,
+      },
+    };
+
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload,
+      normalized: {
+        id: 'cmp_123',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: '',
+        reasoningContent: '',
+        finishReason: 'stop',
+        toolCalls: [],
+      },
+      usage: {
+        promptTokens: 1234,
+        completionTokens: 321,
+        totalTokens: 1555,
+      },
+      serializationMode: 'compact',
+    } as any);
+
+    expect(payload).toEqual(upstreamPayload);
+  });
+
+  it('serializes compact mode as response.compaction instead of an ordinary response object', () => {
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload: {
+        id: 'chatcmpl_compact',
+        object: 'chat.completion',
+        created: 1700000000,
+        model: 'gpt-5',
+        choices: [
+          {
+            index: 0,
+            finish_reason: 'stop',
+            message: {
+              role: 'assistant',
+              content: 'hello',
+            },
+          },
+        ],
+      },
+      normalized: {
+        id: 'chatcmpl_compact',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: 'hello',
+        reasoningContent: '',
+        finishReason: 'stop',
+        toolCalls: [],
+      },
+      usage: {
+        promptTokens: 11,
+        completionTokens: 7,
+        totalTokens: 18,
+      },
+      serializationMode: 'compact',
+    } as any);
+
+    expect(payload).toEqual({
+      id: 'resp_chatcmpl_compact',
+      object: 'response.compaction',
+      created_at: 1700000000,
+      output: [
+        {
+          id: 'msg_chatcmpl_compact',
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [
+            {
+              type: 'output_text',
+              text: 'hello',
+            },
+          ],
+        },
+      ],
+      usage: {
+        input_tokens: 11,
+        output_tokens: 7,
+        total_tokens: 18,
+      },
+    });
+    expect(payload).not.toHaveProperty('created');
+    expect(payload).not.toHaveProperty('status');
+    expect(payload).not.toHaveProperty('model');
+    expect(payload).not.toHaveProperty('output_text');
+  });
+
   it('preserves top-level chat annotations on synthetic assistant messages', () => {
     const payload = serializeResponsesFinalPayload({
       upstreamPayload: {

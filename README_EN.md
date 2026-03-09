@@ -27,7 +27,10 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat">
 </a><!--
 --><img alt="Node.js" src="https://img.shields.io/badge/Node.js-20+-339933?logo=node.js&style=flat"><!--
---><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat">
+--><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat"><!--
+--><a href="https://zeabur.com/templates/DOX5PR">
+  <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
+</a>
 </p>
 
 <p align="center">
@@ -36,11 +39,12 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
-  <a href="docs/index.md"><strong>Docs</strong></a> ·
-  <a href="docs/getting-started.md">Quick Start</a> ·
-  <a href="docs/deployment.md">Deployment</a> ·
-  <a href="docs/configuration.md">Configuration</a> ·
-  <a href="docs/faq.md">FAQ</a> ·
+  <a href="https://metapi.cita777.me"><strong>Docs</strong></a> ·
+  <a href="https://metapi.cita777.me/getting-started">Quick Start</a> ·
+  <a href="https://metapi.cita777.me/deployment">Deployment</a> ·
+  <a href="https://metapi.cita777.me/configuration">Configuration</a> ·
+  <a href="https://metapi.cita777.me/client-integration">Client Integration</a> ·
+  <a href="https://metapi.cita777.me/faq">FAQ</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -575,6 +579,7 @@ If you discover a security issue, please refer to [SECURITY.md](SECURITY.md) and
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#cita-777/metapi&type=date&legend=top-left)
+
 ---
 
 <div align="center">

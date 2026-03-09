@@ -55,6 +55,12 @@ type ResponsesUsageSummary = {
 };
 
 type AggregateOutputItem = Record<string, unknown>;
+type AggregateOutputMetaCarrier = AggregateOutputItem & { [key: symbol]: true | undefined };
+
+const outputTextDoneMarker = Symbol('responses.output_text.done');
+const contentPartDoneMarker = Symbol('responses.content_part.done');
+const reasoningSummaryTextDoneMarker = Symbol('responses.reasoning_summary_text.done');
+const reasoningSummaryPartDoneMarker = Symbol('responses.reasoning_summary_part.done');
 
 export type OpenAiResponsesAggregateState = {
   modelName: string;
@@ -88,6 +94,14 @@ export function createOpenAiResponsesAggregateState(modelName: string): OpenAiRe
     completed: false,
     failed: false,
   };
+}
+
+function markTerminalMarker(item: AggregateOutputItem, marker: symbol): void {
+  (item as AggregateOutputMetaCarrier)[marker] = true;
+}
+
+function hasTerminalMarker(item: AggregateOutputItem, marker: symbol): boolean {
+  return (item as AggregateOutputMetaCarrier)[marker] === true;
 }
 
 function mergeUsageExtras(
@@ -523,8 +537,20 @@ function applyOriginalResponsesPayload(
       const message = ensureMessageItem(state, outputIndex).item;
       const content = Array.isArray(message.content) ? message.content as AggregateOutputItem[] : [];
       if (!Array.isArray(message.content)) message.content = content;
-      const part = cloneRecord(payload.part);
-      if (part) content[contentIndex] = part;
+      const existingPart = isRecord(content[contentIndex]) ? content[contentIndex] as AggregateOutputItem : null;
+      const incomingPart = cloneRecord(payload.part);
+      if (incomingPart) {
+        content[contentIndex] = existingPart
+          ? {
+            ...existingPart,
+            ...incomingPart,
+          }
+          : incomingPart;
+      }
+      const part = isRecord(content[contentIndex]) ? content[contentIndex] as AggregateOutputItem : existingPart;
+      if (eventType === 'response.content_part.done' && part) {
+        markTerminalMarker(part, contentPartDoneMarker);
+      }
       return serializeOriginalResponsesEvent(eventType, payload);
     }
     case 'response.output_text.delta':
@@ -533,6 +559,7 @@ function applyOriginalResponsesPayload(
       const textPart = ensureMessageOutputTextPart(state, outputIndex);
       if (eventType === 'response.output_text.done') {
         textPart.part.text = typeof payload.text === 'string' ? payload.text : String(payload.text ?? '');
+        markTerminalMarker(textPart.part, outputTextDoneMarker);
       } else {
         textPart.part.text = `${typeof textPart.part.text === 'string' ? textPart.part.text : ''}${typeof payload.delta === 'string' ? payload.delta : ''}`;
       }
@@ -580,6 +607,11 @@ function applyOriginalResponsesPayload(
           ...part,
         };
         summaryState.item.summary = summary;
+        if (eventType === 'response.reasoning_summary_part.done') {
+          markTerminalMarker(summary[summaryState.summaryIndex] as AggregateOutputItem, reasoningSummaryPartDoneMarker);
+        }
+      } else if (eventType === 'response.reasoning_summary_part.done') {
+        markTerminalMarker(summaryState.summary, reasoningSummaryPartDoneMarker);
       }
       return serializeOriginalResponsesEvent(eventType, payload);
     }
@@ -588,6 +620,7 @@ function applyOriginalResponsesPayload(
       const summaryState = ensureReasoningSummaryPart(state, payload.item_id, payload.summary_index, payload.output_index);
       if (eventType === 'response.reasoning_summary_text.done') {
         summaryState.summary.text = typeof payload.text === 'string' ? payload.text : String(payload.text ?? '');
+        markTerminalMarker(summaryState.summary, reasoningSummaryTextDoneMarker);
       } else {
         summaryState.summary.text = `${typeof summaryState.summary.text === 'string' ? summaryState.summary.text : ''}${typeof payload.delta === 'string' ? payload.delta : ''}`;
       }
@@ -790,39 +823,51 @@ function buildSyntheticTerminalItemDoneEvents(
       const part = content[0];
       if (isRecord(part)) {
         const text = typeof part.text === 'string' ? part.text : String(part.text ?? '');
-        lines.push(serializeSse('response.output_text.done', {
-          type: 'response.output_text.done',
-          output_index: index,
-          item_id: itemId,
-          text,
-        }));
-        lines.push(serializeSse('response.content_part.done', {
-          type: 'response.content_part.done',
-          output_index: index,
-          item_id: itemId,
-          content_index: 0,
-          part: cloneJson(part),
-        }));
+        if (!hasTerminalMarker(part, outputTextDoneMarker)) {
+          lines.push(serializeSse('response.output_text.done', {
+            type: 'response.output_text.done',
+            output_index: index,
+            item_id: itemId,
+            text,
+          }));
+          markTerminalMarker(part, outputTextDoneMarker);
+        }
+        if (!hasTerminalMarker(part, contentPartDoneMarker)) {
+          lines.push(serializeSse('response.content_part.done', {
+            type: 'response.content_part.done',
+            output_index: index,
+            item_id: itemId,
+            content_index: 0,
+            part: cloneJson(part),
+          }));
+          markTerminalMarker(part, contentPartDoneMarker);
+        }
       }
     } else if (itemType === 'reasoning') {
       const summary = Array.isArray(item.summary) ? item.summary as AggregateOutputItem[] : [];
       const part = summary[0];
       if (isRecord(part)) {
         const text = typeof part.text === 'string' ? part.text : String(part.text ?? '');
-        lines.push(serializeSse('response.reasoning_summary_text.done', {
-          type: 'response.reasoning_summary_text.done',
-          item_id: itemId,
-          output_index: index,
-          summary_index: 0,
-          text,
-        }));
-        lines.push(serializeSse('response.reasoning_summary_part.done', {
-          type: 'response.reasoning_summary_part.done',
-          item_id: itemId,
-          output_index: index,
-          summary_index: 0,
-          part: cloneJson(part),
-        }));
+        if (!hasTerminalMarker(part, reasoningSummaryTextDoneMarker)) {
+          lines.push(serializeSse('response.reasoning_summary_text.done', {
+            type: 'response.reasoning_summary_text.done',
+            item_id: itemId,
+            output_index: index,
+            summary_index: 0,
+            text,
+          }));
+          markTerminalMarker(part, reasoningSummaryTextDoneMarker);
+        }
+        if (!hasTerminalMarker(part, reasoningSummaryPartDoneMarker)) {
+          lines.push(serializeSse('response.reasoning_summary_part.done', {
+            type: 'response.reasoning_summary_part.done',
+            item_id: itemId,
+            output_index: index,
+            summary_index: 0,
+            part: cloneJson(part),
+          }));
+          markTerminalMarker(part, reasoningSummaryPartDoneMarker);
+        }
       }
     } else if (itemType === 'function_call') {
       const callId = asTrimmedString(item.call_id) || itemId;

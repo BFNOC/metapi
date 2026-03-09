@@ -14,6 +14,7 @@ tmp/*
 /.tmp-*
 /main.js
 /NUL
+/.playwright-cli/
 
 .DS_Store
 Thumbs.db

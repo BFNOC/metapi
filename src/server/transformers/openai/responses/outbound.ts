@@ -64,6 +64,8 @@ export type ResponsesToolCall = {
   arguments: string;
 };
 
+export type ResponsesFinalSerializationMode = 'response' | 'compact';
+
 type ResponsesOutputItem = Record<string, unknown>;
 
 function extractToolCallsFromUpstream(payload: unknown): ResponsesToolCall[] {
@@ -280,14 +282,45 @@ export function normalizeResponsesFinalPayload(
   return normalizeUpstreamFinalResponse(payload, modelName, fallbackText);
 }
 
+function buildResponsesUsagePayload(
+  usage: ResponsesUsageSummary,
+  syntheticUsageDetails: {
+    inputTokensDetails?: Record<string, unknown>;
+    outputTokensDetails?: Record<string, unknown>;
+  },
+): Record<string, unknown> {
+  return {
+    input_tokens: usage.promptTokens,
+    output_tokens: usage.completionTokens,
+    total_tokens: usage.totalTokens,
+    ...(usage.inputTokensDetails ?? syntheticUsageDetails.inputTokensDetails
+      ? { input_tokens_details: cloneJson(usage.inputTokensDetails ?? syntheticUsageDetails.inputTokensDetails) }
+      : {}),
+    ...(usage.outputTokensDetails ?? syntheticUsageDetails.outputTokensDetails
+      ? { output_tokens_details: cloneJson(usage.outputTokensDetails ?? syntheticUsageDetails.outputTokensDetails) }
+      : {}),
+  };
+}
+
 export function serializeResponsesFinalPayload(input: {
   upstreamPayload: unknown;
   normalized: NormalizedFinalResponse;
   usage: ResponsesUsageSummary;
+  serializationMode?: ResponsesFinalSerializationMode;
 }): Record<string, unknown> {
-  const { upstreamPayload, normalized, usage } = input;
-  if (isRecord(upstreamPayload) && upstreamPayload.object === 'response') {
-    return upstreamPayload;
+  const {
+    upstreamPayload,
+    normalized,
+    usage,
+    serializationMode = 'response',
+  } = input;
+  if (isRecord(upstreamPayload)) {
+    if (upstreamPayload.object === 'response.compaction') {
+      return upstreamPayload;
+    }
+    if (serializationMode === 'response' && upstreamPayload.object === 'response') {
+      return upstreamPayload;
+    }
   }
 
   const normalizedId = typeof normalized.id === 'string' && normalized.id.trim()
@@ -371,6 +404,17 @@ export function serializeResponsesFinalPayload(input: {
     }
   }
 
+  const usagePayload = buildResponsesUsagePayload(usage, syntheticUsageDetails);
+  if (serializationMode === 'compact') {
+    return {
+      id: responseId,
+      object: 'response.compaction',
+      created_at: normalized.created,
+      output,
+      usage: usagePayload,
+    };
+  }
+
   return {
     id: responseId,
     object: 'response',
@@ -379,17 +423,7 @@ export function serializeResponsesFinalPayload(input: {
     model: normalized.model,
     output,
     output_text: normalized.content || collectOutputTextFromItems(output),
-    usage: {
-      input_tokens: usage.promptTokens,
-      output_tokens: usage.completionTokens,
-      total_tokens: usage.totalTokens,
-      ...(usage.inputTokensDetails ?? syntheticUsageDetails.inputTokensDetails
-        ? { input_tokens_details: cloneJson(usage.inputTokensDetails ?? syntheticUsageDetails.inputTokensDetails) }
-        : {}),
-      ...(usage.outputTokensDetails ?? syntheticUsageDetails.outputTokensDetails
-        ? { output_tokens_details: cloneJson(usage.outputTokensDetails ?? syntheticUsageDetails.outputTokensDetails) }
-        : {}),
-    },
+    usage: usagePayload,
   };
 }
 

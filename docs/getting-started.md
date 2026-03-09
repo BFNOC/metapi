@@ -87,6 +87,11 @@ docker compose up -d
 > - Windows 下常见路径是 `%APPDATA%\Metapi\data` 和 `%APPDATA%\Metapi\logs`。
 > - 如果你要把本机其他客户端接到桌面版内置后端，先到日志里查当前端口，不要写死 `4000`。
 
+> [!WARNING]
+> **端口冲突排障：** 如果桌面版启动后报端口被占用，可能是 `4310..4399` 范围内的端口全被其他应用占用了。
+> - 设置环境变量 `METAPI_DESKTOP_SERVER_PORT=<指定端口>` 固定到一个空闲端口
+> - 或关闭占用这些端口的应用后重启 Metapi Desktop
+
 > [!NOTE]
 > 服务器部署统一推荐 Docker / Docker Compose，不再提供裸 Node.js 的 Release 压缩包。
 
@@ -127,15 +132,9 @@ npm run dev
 
 ### 步骤 2：添加账号
 
-首先前往你想添加的公益站，进入下图界面：
-
-![账号管理](./screenshots/account-management.png)
-
 进入 **账号管理**，为每个站点添加已注册的账号：
 
-
-
-![账号余额](./screenshots/account-balance.png)
+![账号管理](./screenshots/account-management.png)
 
 - 填入用户名和访问凭证
 
@@ -143,7 +142,7 @@ npm run dev
 
 - 系统会自动登录并获取余额信息
 
-![账号余额](./screenshots/account-balance.png)
+  ![账号余额](./screenshots/account-balance.png)
 
 - 启用自动签到（如站点支持）
 
@@ -163,6 +162,10 @@ npm run dev
 
 - 系统会自动发现模型并生成路由规则
 - 可以手动调整通道的优先级和权重
+- 关于路由权重参数调优，参考 [配置说明 → 智能路由](./configuration.md#智能路由)
+
+<!-- TODO: 补充路由管理截图 -->
+<!-- ![路由管理](./screenshots/route-management.png) -->
 
 ### 步骤 5：验证代理
 

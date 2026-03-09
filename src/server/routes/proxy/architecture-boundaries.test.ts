@@ -114,6 +114,7 @@ describe('proxy route architecture boundaries', () => {
     expect(source).not.toContain('const consumeSseBuffer = (incoming: string): string => {');
     expect(source).not.toContain('openAiResponsesTransformer.aggregator.complete(');
     expect(source).not.toContain('reply.raw.end();');
+    expect(source).toContain('reply.hijack();');
     expect(source).toContain('openAiResponsesTransformer.proxyStream.createSession(');
   });
 });

@@ -214,7 +214,6 @@ function toResponsesResolvedBlock(file: { fileId?: string; filename: string; fil
     ...(file.fileId ? { file_id: file.fileId } : {}),
     filename: file.filename,
     file_data: file.fileData,
-    mime_type: file.mimeType,
   };
 }
 

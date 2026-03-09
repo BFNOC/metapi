@@ -96,8 +96,6 @@ export function toResponsesInputFileBlock(file: NormalizedInputFile): Record<str
   if (file.fileId) block.file_id = file.fileId;
   if (file.fileData) block.file_data = parsedDataUrl?.data || file.fileData;
   if (file.filename) block.filename = file.filename;
-  if (file.mimeType) block.mime_type = file.mimeType;
-  else if (parsedDataUrl?.mimeType) block.mime_type = parsedDataUrl.mimeType;
   return block;
 }
 

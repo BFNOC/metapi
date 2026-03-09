@@ -4,6 +4,18 @@
 
 ---
 
+## 支持的运行方式
+
+| 场景 | 推荐方式 | 对外访问方式 | 数据位置 |
+|------|----------|--------------|----------|
+| 云服务器 / NAS / 家用主机长期运行 | Docker / Docker Compose / Zeabur | 固定服务地址，例如 `http://your-host:4000` 或反向代理域名 | 你挂载的 `DATA_DIR` / 持久化卷 |
+| 个人电脑本地使用 | 桌面版安装包 | 桌面窗口；如需本机客户端直连，使用日志中打印的 `http://127.0.0.1:<port>` | Electron `app.getPath('userData')/data` |
+| 二次开发 / 调试 | 本地开发 | 前端 `http://localhost:5173`，后端默认 `http://localhost:4000` | 仓库内 `./data` 或自定义 `DATA_DIR` |
+
+> [!NOTE]
+> - 当前不再提供 `Release` 压缩包 + Node.js 运行时的独立部署路径。
+> - 生产/长期运行请用 Docker 系列方案；桌面版面向单机本地使用；源码运行请走本地开发流程。
+
 ## Zeabur 一键部署
 
 <a href="https://zeabur.com/templates/DOX5PR">
@@ -91,6 +103,18 @@ docker run -d --name metapi \
 2. 安装并启动 Metapi Desktop
 3. 桌面壳会自动启动本地服务并将数据保存到应用数据目录
 
+| 项目 | 说明 |
+|------|------|
+| 适用场景 | 单机本地使用、个人电脑常驻、需要免 Docker 的桌面体验 |
+| 后端监听 | 绑定 `127.0.0.1`，默认会在 `4310..4399` 中选择空闲端口；只有设置 `METAPI_DESKTOP_SERVER_PORT` 时才固定 |
+| 管理界面 | 直接在桌面窗口打开，不建议把桌面版当成固定 `localhost:4000` 的服务来写文档或脚本 |
+| 数据目录 | `app.getPath('userData')/data` |
+| 日志目录 | `app.getPath('userData')/logs`，托盘菜单提供 `Open Logs Folder` |
+
+> [!TIP]
+> - Windows 下常见路径是 `%APPDATA%\Metapi\data` 和 `%APPDATA%\Metapi\logs`。
+> - 如果你想让本机其他客户端调用桌面版内置 `/v1/*`，先从日志确认当前端口。
+
 桌面版特性：
 
 - 内置本地 Metapi 服务，无需手动准备 Node.js 运行环境
@@ -100,14 +124,56 @@ docker run -d --name metapi \
 > [!NOTE]
 > 服务器部署不再提供裸 Node.js Release 压缩包，统一推荐 Docker / Docker Compose。
 
+### 桌面版如何找到当前本地地址
+
+桌面版启动后，后端会把当前地址打印到日志中。定位方式：
+
+1. 打开托盘菜单，点击 `Open Logs Folder`
+2. 打开最新日志文件
+3. 搜索 `Dashboard:` 或 `Proxy API:` 行
+
+常见日志内容如下：
+
+```text
+Dashboard: http://127.0.0.1:4312
+Proxy API: http://127.0.0.1:4312/v1/chat/completions
+```
+
+如果你只是通过桌面窗口使用管理后台，可以完全忽略这个端口；只有在本机其他客户端需要直连桌面版内置后端时，才需要读取这里的地址。
+
 ### 桌面版升级
 
 1. 通过应用内更新提示安装新版本，或从 Releases 下载最新安装包覆盖安装
 2. 用户数据目录会保留，升级后自动继续使用原有数据
+3. 如需排查启动问题，优先查看 `app.getPath('userData')/logs` 下的最新日志
+
+## 本地开发运行（源码调试）
+
+如果你的目标是开发、调试或提交 PR，请直接跑源码：
+
+```bash
+git clone https://github.com/cita-777/metapi.git
+cd metapi
+npm install
+npm run db:migrate
+npm run dev
+```
+
+默认访问地址：
+
+| 服务 | 地址 |
+|------|------|
+| 前端（Vite） | `http://localhost:5173` |
+| 后端 API | `http://localhost:4000` |
+
+> [!NOTE]
+> 这条路径是开发流程，不是下载 `Release` 包后再手动跑 Node.js 的替代说法。
 
 ---
 
 ## 反向代理
+
+以下反向代理配置面向 Docker / 服务器模式。桌面版内置后端默认只绑定本机 `127.0.0.1`，通常不作为公网服务直接暴露。
 
 ### Nginx
 
@@ -193,9 +259,17 @@ docker compose up -d
 
 ## 数据持久化
 
-Metapi 的所有运行数据存储在 SQLite 数据库中，位于 `DATA_DIR`（默认 `./data`）目录下。
+不同运行方式的数据目录不同：
 
-只要挂载了该目录，升级、重启都不会丢失数据。
+| 运行方式 | 数据目录 | 说明 |
+|----------|----------|------|
+| Docker / Docker Compose / Zeabur | 容器内 `DATA_DIR`（常见为 `/app/data`） | 需要映射到宿主机目录或平台持久化卷 |
+| 本地开发 | `DATA_DIR`，默认 `./data` | 位于当前仓库工作目录 |
+| 桌面版 | `app.getPath('userData')/data` | 不在仓库目录里，升级桌面应用时会保留 |
+
+桌面版日志位于 `app.getPath('userData')/logs`；Docker / 本地开发模式的日志则跟随各自进程输出或你配置的日志目录。
+
+只要备份了对应的数据目录，升级、重启通常都不会丢失现有配置和 SQLite 数据。
 
 ### 备份策略建议
 

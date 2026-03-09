@@ -1,5 +1,12 @@
-﻿import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { api } from '../api.js';
+import React, { useDeferredValue, useEffect, useMemo, useState, useCallback } from 'react';
+import {
+  api,
+  type ProxyLogBillingDetails,
+  type ProxyLogDetail,
+  type ProxyLogListItem,
+  type ProxyLogsSummary,
+  type ProxyLogStatusFilter,
+} from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { ModelBadge } from '../components/BrandIcon.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
@@ -7,58 +14,28 @@ import ModernSelect from '../components/ModernSelect.js';
 import { parseProxyLogPathMeta } from './helpers/proxyLogPathMeta.js';
 import { tr } from '../i18n.js';
 
-type StatusFilter = 'all' | 'success' | 'failed';
-
-interface ProxyLog {
-  id: number;
-  createdAt: string;
-  modelRequested: string;
-  modelActual: string;
-  status: string;
-  latencyMs: number;
-  totalTokens: number | null;
-  retryCount: number;
-  accountId?: number;
+type ProxyLogRenderItem = ProxyLogListItem & {
+  billingDetails?: ProxyLogBillingDetails;
   username?: string | null;
   siteName?: string | null;
   siteUrl?: string | null;
-  errorMessage?: string;
-  promptTokens?: number;
-  completionTokens?: number;
-  estimatedCost?: number;
-  billingDetails?: {
-    quotaType: number;
-    usage: {
-      promptTokens: number;
-      completionTokens: number;
-      totalTokens: number;
-      cacheReadTokens: number;
-      cacheCreationTokens: number;
-      billablePromptTokens: number;
-      promptTokensIncludeCache: boolean | null;
-    };
-    pricing: {
-      modelRatio: number;
-      completionRatio: number;
-      cacheRatio: number;
-      cacheCreationRatio: number;
-      groupRatio: number;
-    };
-    breakdown: {
-      inputPerMillion: number;
-      outputPerMillion: number;
-      cacheReadPerMillion: number;
-      cacheCreationPerMillion: number;
-      inputCost: number;
-      outputCost: number;
-      cacheReadCost: number;
-      cacheCreationCost: number;
-      totalCost: number;
-    };
-  } | null;
-}
+  errorMessage?: string | null;
+};
+
+type ProxyLogDetailState = {
+  loading: boolean;
+  data?: ProxyLogDetail;
+  error?: string;
+};
 
 const PAGE_SIZES = [20, 50, 100];
+const EMPTY_SUMMARY: ProxyLogsSummary = {
+  totalCount: 0,
+  successCount: 0,
+  failedCount: 0,
+  totalCost: 0,
+  totalTokensAll: 0,
+};
 
 function formatLatency(ms: number) {
   if (ms >= 1000) {
@@ -92,13 +69,13 @@ function formatPerMillionPrice(value: number) {
   return `$${formatCompactNumber(value)} / 1M tokens`;
 }
 
-function formatBillingDetailSummary(log: ProxyLog) {
+function formatBillingDetailSummary(log: ProxyLogRenderItem) {
   const detail = log.billingDetails;
   if (!detail) return null;
   return `模型倍率 ${formatCompactNumber(detail.pricing.modelRatio)}，输出倍率 ${formatCompactNumber(detail.pricing.completionRatio)}，缓存倍率 ${formatCompactNumber(detail.pricing.cacheRatio)}，缓存创建倍率 ${formatCompactNumber(detail.pricing.cacheCreationRatio)}，分组倍率 ${formatCompactNumber(detail.pricing.groupRatio)}`;
 }
 
-function buildBillingProcessLines(log: ProxyLog) {
+function buildBillingProcessLines(log: ProxyLogRenderItem) {
   const detail = log.billingDetails;
   if (!detail) return [];
 
@@ -134,73 +111,111 @@ function buildBillingProcessLines(log: ProxyLog) {
 }
 
 export default function ProxyLogs() {
-  const [logs, setLogs] = useState<ProxyLog[]>([]);
+  const [logs, setLogs] = useState<ProxyLogListItem[]>([]);
+  const [summary, setSummary] = useState<ProxyLogsSummary>(EMPTY_SUMMARY);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<ProxyLogStatusFilter>('all');
+  const [searchInput, setSearchInput] = useState('');
+  const deferredSearchInput = useDeferredValue(searchInput.trim());
+  const [searchQuery, setSearchQuery] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const [detailById, setDetailById] = useState<Record<number, ProxyLogDetailState>>({});
   const toast = useToast();
+
+  useEffect(() => {
+    setPage(1);
+    setSearchQuery(deferredSearchInput);
+  }, [deferredSearchInput]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const currentOffset = (safePage - 1) * pageSize;
+  const displayedStart = total === 0 ? 0 : currentOffset + 1;
+  const displayedEnd = total === 0 ? 0 : Math.min(currentOffset + logs.length, total);
+
+  const pageNumbers = useMemo(() => (
+    Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+      if (totalPages <= 7) return i + 1;
+      if (safePage <= 4) return i + 1;
+      if (safePage >= totalPages - 3) return totalPages - 6 + i;
+      return safePage - 3 + i;
+    })
+  ), [safePage, totalPages]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.getProxyLogs('limit=500');
-      setLogs(data);
+      const data = await api.getProxyLogs({
+        limit: pageSize,
+        offset: currentOffset,
+        status: statusFilter,
+        search: searchQuery,
+      });
+      setLogs(Array.isArray(data.items) ? data.items : []);
+      setTotal(Number(data.total || 0));
+      setSummary(data.summary || EMPTY_SUMMARY);
     } catch (e: any) {
       toast.error(e.message || '加载日志失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentOffset, pageSize, searchQuery, statusFilter, toast]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  /* ---- derived ---- */
-  const filtered = useMemo(() => logs.filter(log => {
-    if (statusFilter === 'success' && log.status !== 'success') return false;
-    if (statusFilter === 'failed' && log.status === 'success') return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (log.modelRequested || '').toLowerCase().includes(q) ||
-        (log.modelActual || '').toLowerCase().includes(q);
-    }
-    return true;
-  }), [logs, statusFilter, search]);
+  useEffect(() => {
+    if (page <= totalPages) return;
+    setPage(totalPages);
+  }, [page, totalPages]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, totalPages);
-  const paged = useMemo(
-    () => filtered.slice((safePage - 1) * pageSize, safePage * pageSize),
-    [filtered, safePage, pageSize],
-  );
-
-  useEffect(() => { setPage(1); }, [statusFilter, search, pageSize]);
-
-  /* ---- stats ---- */
-  const summary = useMemo(() => {
-    let successCount = 0;
-    let totalCost = 0;
-    let totalTokensAll = 0;
-    for (const log of logs) {
-      if (log.status === 'success') successCount += 1;
-      totalCost += log.estimatedCost || 0;
-      totalTokensAll += log.totalTokens || 0;
-    }
-    const totalCount = logs.length;
-    return {
-      totalCount,
-      successCount,
-      failedCount: totalCount - successCount,
-      totalCost,
-      totalTokensAll,
-    };
+  useEffect(() => {
+    setExpanded((current) => (
+      current !== null && logs.some((log) => log.id === current)
+        ? current
+        : null
+    ));
   }, [logs]);
+
+  const loadDetail = useCallback(async (id: number) => {
+    const existing = detailById[id];
+    if (existing?.loading || existing?.data) return;
+
+    setDetailById((current) => ({
+      ...current,
+      [id]: { loading: true },
+    }));
+
+    try {
+      const data = await api.getProxyLogDetail(id);
+      setDetailById((current) => ({
+        ...current,
+        [id]: { loading: false, data },
+      }));
+    } catch (e: any) {
+      const message = e?.message || '加载日志详情失败';
+      setDetailById((current) => ({
+        ...current,
+        [id]: { loading: false, error: message },
+      }));
+      toast.error(message);
+    }
+  }, [detailById, toast]);
+
+  const handleToggleExpand = useCallback((id: number) => {
+    const shouldExpand = expanded !== id;
+    setExpanded(shouldExpand ? id : null);
+    if (shouldExpand) {
+      void loadDetail(id);
+    }
+  }, [expanded, loadDetail]);
 
   return (
     <div className="animate-fade-in">
-      {/* Header + Stat Badges */}
       <div className="page-header" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <h2 className="page-title">{tr('使用日志')}</h2>
@@ -219,18 +234,20 @@ export default function ProxyLogs() {
         </button>
       </div>
 
-      {/* Toolbar: Filter + Search */}
       <div className="toolbar" style={{ marginBottom: 12 }}>
         <div className="pill-tabs">
           {([
-            { key: 'all' as StatusFilter, label: '全部', count: summary.totalCount },
-            { key: 'success' as StatusFilter, label: '成功', count: summary.successCount },
-            { key: 'failed' as StatusFilter, label: '失败', count: summary.failedCount },
-          ]).map(tab => (
+            { key: 'all' as ProxyLogStatusFilter, label: '全部', count: summary.totalCount },
+            { key: 'success' as ProxyLogStatusFilter, label: '成功', count: summary.successCount },
+            { key: 'failed' as ProxyLogStatusFilter, label: '失败', count: summary.failedCount },
+          ]).map((tab) => (
             <button
               key={tab.key}
               className={`pill-tab ${statusFilter === tab.key ? 'active' : ''}`}
-              onClick={() => setStatusFilter(tab.key)}
+              onClick={() => {
+                setStatusFilter(tab.key);
+                setPage(1);
+              }}
             >
               {tab.label} <span style={{ fontVariantNumeric: 'tabular-nums', opacity: 0.7 }}>{tab.count}</span>
             </button>
@@ -240,11 +257,10 @@ export default function ProxyLogs() {
           <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索模型名称..." />
+          <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="搜索模型名称..." />
         </div>
       </div>
 
-      {/* Table */}
       <div className="card" style={{ overflowX: 'auto' }}>
         {loading ? (
           <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -275,194 +291,201 @@ export default function ProxyLogs() {
               </tr>
             </thead>
             <tbody>
-              {paged.map(log => {
-                const pathMeta = parseProxyLogPathMeta(log.errorMessage);
-                const billingDetailSummary = formatBillingDetailSummary(log);
-                const billingProcessLines = buildBillingProcessLines(log);
+              {logs.map((log) => {
+                const detailState = detailById[log.id];
+                const detail = detailState?.data;
+                const detailLog: ProxyLogRenderItem = detail ? { ...log, ...detail } : log;
+                const pathMeta = parseProxyLogPathMeta(detailLog.errorMessage);
+                const billingDetailSummary = detail ? formatBillingDetailSummary(detailLog) : null;
+                const billingProcessLines = detail ? buildBillingProcessLines(detailLog) : [];
+
                 return (
-                <React.Fragment key={log.id}>
-                  <tr
-                    onClick={() => setExpanded(expanded === log.id ? null : log.id)}
-                    style={{
-                      cursor: 'pointer',
-                      background: expanded === log.id ? 'var(--color-primary-light)' : undefined,
-                      transition: 'background 0.15s',
-                    }}
-                  >
-                    <td style={{ padding: '8px 4px 8px 12px' }}>
-                      <svg width="10" height="10" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{
-                        transform: expanded === log.id ? 'rotate(90deg)' : 'none',
-                        transition: 'transform 0.2s',
-                        color: 'var(--color-text-muted)',
-                      }}>
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </td>
-                    <td style={{ fontSize: 12, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
-                      {formatDateTimeLocal(log.createdAt)}
-                    </td>
-                    <td>
-                      <ModelBadge model={log.modelRequested} />
-                    </td>
-                    <td>
-                      <span className={`badge ${log.status === 'success' ? 'badge-success' : 'badge-error'}`} style={{ fontSize: 11, fontWeight: 600 }}>
-                        <span style={{
-                          width: 6, height: 6, borderRadius: '50%',
-                          background: log.status === 'success' ? 'var(--color-success)' : 'var(--color-danger)',
-                        }} />
-                        {log.status === 'success' ? '成功' : '失败'}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <span style={{
-                        fontVariantNumeric: 'tabular-nums',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: latencyColor(log.latencyMs),
-                        background: latencyBgColor(log.latencyMs),
-                        padding: '2px 8px',
-                        borderRadius: 4,
-                      }}>
-                        {formatLatency(log.latencyMs)}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
-                      {log.promptTokens?.toLocaleString() || '-'}
-                    </td>
-                    <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
-                      {log.completionTokens?.toLocaleString() || '-'}
-                    </td>
-                    <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
-                      {typeof log.estimatedCost === 'number' ? `$${log.estimatedCost.toFixed(6)}` : '-'}
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      {log.retryCount > 0 ? (
-                        <span className="badge badge-warning" style={{ fontSize: 11 }}>{log.retryCount}</span>
-                      ) : (
-                        <span style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>0</span>
-                      )}
-                    </td>
-                  </tr>
-                  {expanded === log.id && (
-                  <tr style={{ background: 'var(--color-bg)' }}>
-                    <td colSpan={9} style={{ padding: 0 }}>
-                      <div className="anim-collapse is-open">
-                        <div className="anim-collapse-inner">
-                          <div className="animate-fade-in" style={{
-                          padding: '14px 20px 14px 40px',
-                          borderTop: '1px solid var(--color-border-light)',
-                          borderBottom: '1px solid var(--color-border-light)',
-                          fontSize: 12,
-                          lineHeight: 1.9,
-                          color: 'var(--color-text-secondary)',
+                  <React.Fragment key={log.id}>
+                    <tr
+                      data-testid={`proxy-log-row-${log.id}`}
+                      onClick={() => handleToggleExpand(log.id)}
+                      style={{
+                        cursor: 'pointer',
+                        background: expanded === log.id ? 'var(--color-primary-light)' : undefined,
+                        transition: 'background 0.15s',
+                      }}
+                    >
+                      <td style={{ padding: '8px 4px 8px 12px' }}>
+                        <svg width="10" height="10" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{
+                          transform: expanded === log.id ? 'rotate(90deg)' : 'none',
+                          transition: 'transform 0.2s',
+                          color: 'var(--color-text-muted)',
                         }}>
-                          {/* 鏃ュ織璇︽儏 section */}
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <span style={{ fontWeight: 600, color: 'var(--color-warning)', flexShrink: 0 }}>日志详情</span>
-                            <div>
-                              <div>
-                                请求模型: <strong style={{ color: 'var(--color-text-primary)' }}>{log.modelRequested}</strong>
-                                {log.modelActual && log.modelActual !== log.modelRequested && (
-                                  <>{' -> '}实际模型: <strong style={{ color: 'var(--color-text-primary)' }}>{log.modelActual}</strong></>
-                                )}
-                                ，状态: <strong style={{ color: log.status === 'success' ? 'var(--color-success)' : 'var(--color-danger)' }}>{log.status === 'success' ? '成功' : '失败'}</strong>
-                                ，用时: <strong style={{ color: latencyColor(log.latencyMs) }}>{formatLatency(log.latencyMs)}</strong>
-                                ，站点: <strong style={{ color: 'var(--color-text-primary)' }}>{log.siteName || '未知站点'}</strong>
-                                ，账号: <strong style={{ color: 'var(--color-text-primary)' }}>{log.username || '未知账号'}</strong>
-                              </div>
-                              {billingDetailSummary && (
-                                <div style={{ color: 'var(--color-text-muted)' }}>{billingDetailSummary}</div>
-                              )}
-                            </div>
-                          </div>
-
-                          {log.billingDetails && log.billingDetails.usage.cacheReadTokens > 0 && (
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              <span style={{ fontWeight: 600, color: 'var(--color-warning)', flexShrink: 0 }}>缓存 Tokens</span>
-                              <span>{log.billingDetails.usage.cacheReadTokens.toLocaleString()}</span>
-                            </div>
-                          )}
-
-                          {log.billingDetails && log.billingDetails.usage.cacheCreationTokens > 0 && (
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              <span style={{ fontWeight: 600, color: 'var(--color-warning)', flexShrink: 0 }}>缓存创建 Tokens</span>
-                              <span>{log.billingDetails.usage.cacheCreationTokens.toLocaleString()}</span>
-                            </div>
-                          )}
-
-                          {/* 璁¤垂杩囩▼ section */}
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <span style={{ fontWeight: 600, color: 'var(--color-info)', flexShrink: 0 }}>计费过程</span>
-                            {billingProcessLines.length > 0 ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                {billingProcessLines.map((line, index) => (
-                                  <span key={`${log.id}-billing-${index}`}>{line}</span>
-                                ))}
-                                <span style={{ color: 'var(--color-text-muted)' }}>仅供参考，以实际扣费为准</span>
-                              </div>
-                            ) : (
-                              <span>
-                                输入 {log.promptTokens?.toLocaleString() || 0} tokens
-                                {' + '}输出 {log.completionTokens?.toLocaleString() || 0} tokens
-                                {' = '}总计 {log.totalTokens?.toLocaleString() || 0} tokens
-                                {typeof log.estimatedCost === 'number' && (
-                                  <>，预估费用 <strong style={{ color: 'var(--color-text-primary)' }}>${log.estimatedCost.toFixed(6)}</strong></>
-                                )}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* 涓嬫父璇锋眰璺緞 */}
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                            <span style={{ fontWeight: 600, color: 'var(--color-primary)', flexShrink: 0 }}>下游请求路径</span>
-                            {pathMeta.downstreamPath ? (
-                              <code style={{
-                                fontFamily: 'var(--font-mono)', fontSize: 12,
-                                background: 'var(--color-bg-card)', padding: '1px 8px', borderRadius: 4,
-                                border: '1px solid var(--color-border-light)',
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </td>
+                      <td style={{ fontSize: 12, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
+                        {formatDateTimeLocal(log.createdAt)}
+                      </td>
+                      <td>
+                        <ModelBadge model={log.modelRequested} />
+                      </td>
+                      <td>
+                        <span className={`badge ${log.status === 'success' ? 'badge-success' : 'badge-error'}`} style={{ fontSize: 11, fontWeight: 600 }}>
+                          <span style={{
+                            width: 6, height: 6, borderRadius: '50%',
+                            background: log.status === 'success' ? 'var(--color-success)' : 'var(--color-danger)',
+                          }} />
+                          {log.status === 'success' ? '成功' : '失败'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span style={{
+                          fontVariantNumeric: 'tabular-nums',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: latencyColor(log.latencyMs),
+                          background: latencyBgColor(log.latencyMs),
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                        }}>
+                          {formatLatency(log.latencyMs)}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
+                        {log.promptTokens?.toLocaleString() || '-'}
+                      </td>
+                      <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
+                        {log.completionTokens?.toLocaleString() || '-'}
+                      </td>
+                      <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+                        {typeof log.estimatedCost === 'number' ? `$${log.estimatedCost.toFixed(6)}` : '-'}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        {log.retryCount > 0 ? (
+                          <span className="badge badge-warning" style={{ fontSize: 11 }}>{log.retryCount}</span>
+                        ) : (
+                          <span style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>0</span>
+                        )}
+                      </td>
+                    </tr>
+                    {expanded === log.id && (
+                      <tr style={{ background: 'var(--color-bg)' }}>
+                        <td colSpan={9} style={{ padding: 0 }}>
+                          <div className="anim-collapse is-open">
+                            <div className="anim-collapse-inner">
+                              <div className="animate-fade-in" style={{
+                                padding: '14px 20px 14px 40px',
+                                borderTop: '1px solid var(--color-border-light)',
+                                borderBottom: '1px solid var(--color-border-light)',
+                                fontSize: 12,
+                                lineHeight: 1.9,
+                                color: 'var(--color-text-secondary)',
                               }}>
-                                {pathMeta.downstreamPath}
-                              </code>
-                            ) : (
-                              <span style={{ color: 'var(--color-text-muted)' }}>未记录</span>
-                            )}
-                          </div>
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                  <span style={{ fontWeight: 600, color: 'var(--color-warning)', flexShrink: 0 }}>日志详情</span>
+                                  <div>
+                                    <div>
+                                      请求模型: <strong style={{ color: 'var(--color-text-primary)' }}>{detailLog.modelRequested}</strong>
+                                      {detailLog.modelActual && detailLog.modelActual !== detailLog.modelRequested && (
+                                        <>{' -> '}实际模型: <strong style={{ color: 'var(--color-text-primary)' }}>{detailLog.modelActual}</strong></>
+                                      )}
+                                      ，状态: <strong style={{ color: detailLog.status === 'success' ? 'var(--color-success)' : 'var(--color-danger)' }}>{detailLog.status === 'success' ? '成功' : '失败'}</strong>
+                                      ，用时: <strong style={{ color: latencyColor(detailLog.latencyMs) }}>{formatLatency(detailLog.latencyMs)}</strong>
+                                      {detail && (
+                                        <>
+                                          ，站点: <strong style={{ color: 'var(--color-text-primary)' }}>{detailLog.siteName || '未知站点'}</strong>
+                                          ，账号: <strong style={{ color: 'var(--color-text-primary)' }}>{detailLog.username || '未知账号'}</strong>
+                                        </>
+                                      )}
+                                    </div>
+                                    {detailState?.loading && <div style={{ color: 'var(--color-text-muted)' }}>加载详情中...</div>}
+                                    {detailState?.error && <div style={{ color: 'var(--color-danger)' }}>{detailState.error}</div>}
+                                    {billingDetailSummary && (
+                                      <div style={{ color: 'var(--color-text-muted)' }}>{billingDetailSummary}</div>
+                                    )}
+                                  </div>
+                                </div>
 
-                          {/* 涓婃父璇锋眰璺緞 */}
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                            <span style={{ fontWeight: 600, color: 'var(--color-primary)', flexShrink: 0 }}>上游请求路径</span>
-                            {pathMeta.upstreamPath ? (
-                              <code style={{
-                                fontFamily: 'var(--font-mono)', fontSize: 12,
-                                background: 'var(--color-bg-card)', padding: '1px 8px', borderRadius: 4,
-                                border: '1px solid var(--color-border-light)',
-                              }}>
-                                {pathMeta.upstreamPath}
-                              </code>
-                            ) : (
-                              <span style={{ color: 'var(--color-text-muted)' }}>未记录</span>
-                            )}
-                          </div>
+                                {detailLog.billingDetails && detailLog.billingDetails.usage.cacheReadTokens > 0 && (
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <span style={{ fontWeight: 600, color: 'var(--color-warning)', flexShrink: 0 }}>缓存 Tokens</span>
+                                    <span>{detailLog.billingDetails.usage.cacheReadTokens.toLocaleString()}</span>
+                                  </div>
+                                )}
 
-                          {/* 閿欒淇℃伅 */}
-                          {pathMeta.errorMessage.trim().length > 0 && (
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              <span style={{ fontWeight: 600, color: 'var(--color-danger)', flexShrink: 0 }}>错误信息</span>
-                              <span style={{ color: 'var(--color-danger)' }}>{pathMeta.errorMessage}</span>
+                                {detailLog.billingDetails && detailLog.billingDetails.usage.cacheCreationTokens > 0 && (
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <span style={{ fontWeight: 600, color: 'var(--color-warning)', flexShrink: 0 }}>缓存创建 Tokens</span>
+                                    <span>{detailLog.billingDetails.usage.cacheCreationTokens.toLocaleString()}</span>
+                                  </div>
+                                )}
+
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                  <span style={{ fontWeight: 600, color: 'var(--color-info)', flexShrink: 0 }}>计费过程</span>
+                                  {billingProcessLines.length > 0 ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                      {billingProcessLines.map((line, index) => (
+                                        <span key={`${log.id}-billing-${index}`}>{line}</span>
+                                      ))}
+                                      <span style={{ color: 'var(--color-text-muted)' }}>仅供参考，以实际扣费为准</span>
+                                    </div>
+                                  ) : (
+                                    <span>
+                                      输入 {detailLog.promptTokens?.toLocaleString() || 0} tokens
+                                      {' + '}输出 {detailLog.completionTokens?.toLocaleString() || 0} tokens
+                                      {' = '}总计 {detailLog.totalTokens?.toLocaleString() || 0} tokens
+                                      {typeof detailLog.estimatedCost === 'number' && (
+                                        <>，预估费用 <strong style={{ color: 'var(--color-text-primary)' }}>${detailLog.estimatedCost.toFixed(6)}</strong></>
+                                      )}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                  <span style={{ fontWeight: 600, color: 'var(--color-primary)', flexShrink: 0 }}>下游请求路径</span>
+                                  {detail && pathMeta.downstreamPath ? (
+                                    <code style={{
+                                      fontFamily: 'var(--font-mono)', fontSize: 12,
+                                      background: 'var(--color-bg-card)', padding: '1px 8px', borderRadius: 4,
+                                      border: '1px solid var(--color-border-light)',
+                                    }}>
+                                      {pathMeta.downstreamPath}
+                                    </code>
+                                  ) : (
+                                    <span style={{ color: 'var(--color-text-muted)' }}>未记录</span>
+                                  )}
+                                </div>
+
+                                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                  <span style={{ fontWeight: 600, color: 'var(--color-primary)', flexShrink: 0 }}>上游请求路径</span>
+                                  {detail && pathMeta.upstreamPath ? (
+                                    <code style={{
+                                      fontFamily: 'var(--font-mono)', fontSize: 12,
+                                      background: 'var(--color-bg-card)', padding: '1px 8px', borderRadius: 4,
+                                      border: '1px solid var(--color-border-light)',
+                                    }}>
+                                      {pathMeta.upstreamPath}
+                                    </code>
+                                  ) : (
+                                    <span style={{ color: 'var(--color-text-muted)' }}>未记录</span>
+                                  )}
+                                </div>
+
+                                {detail && pathMeta.errorMessage.trim().length > 0 && (
+                                  <div style={{ display: 'flex', gap: 6 }}>
+                                    <span style={{ fontWeight: 600, color: 'var(--color-danger)', flexShrink: 0 }}>错误信息</span>
+                                    <span style={{ color: 'var(--color-danger)' }}>{pathMeta.errorMessage}</span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          )}
                           </div>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                  )}
-                </React.Fragment>
-              )})}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}
-        {!loading && filtered.length === 0 && (
+        {!loading && logs.length === 0 && (
           <div className="empty-state">
             <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
             <div className="empty-state-title">{tr('暂无使用日志')}</div>
@@ -471,28 +494,20 @@ export default function ProxyLogs() {
         )}
       </div>
 
-      {/* Pagination */}
-      {filtered.length > 0 && (
+      {total > 0 && (
         <div className="pagination">
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginRight: 'auto' }}>
-            显示第 {(safePage - 1) * pageSize + 1} - {Math.min(safePage * pageSize, filtered.length)} 条，共 {filtered.length} 条
+            显示第 {displayedStart} - {displayedEnd} 条，共 {total} 条
           </div>
-          <button className="pagination-btn" disabled={safePage <= 1} onClick={() => setPage(p => p - 1)}>
+          <button className="pagination-btn" disabled={safePage <= 1} onClick={() => setPage((current) => current - 1)}>
             <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
           </button>
-          {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-            let num: number;
-            if (totalPages <= 7) num = i + 1;
-            else if (safePage <= 4) num = i + 1;
-            else if (safePage >= totalPages - 3) num = totalPages - 6 + i;
-            else num = safePage - 3 + i;
-            return (
-              <button key={num} className={`pagination-btn ${safePage === num ? 'active' : ''}`} onClick={() => setPage(num)}>
-                {num}
-              </button>
-            );
-          })}
-          <button className="pagination-btn" disabled={safePage >= totalPages} onClick={() => setPage(p => p + 1)}>
+          {pageNumbers.map((num) => (
+            <button key={num} className={`pagination-btn ${safePage === num ? 'active' : ''}`} onClick={() => setPage(num)}>
+              {num}
+            </button>
+          ))}
+          <button className="pagination-btn" disabled={safePage >= totalPages} onClick={() => setPage((current) => current + 1)}>
             <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
           </button>
           <div className="pagination-size">
@@ -501,7 +516,10 @@ export default function ProxyLogs() {
               <ModernSelect
                 size="sm"
                 value={String(pageSize)}
-                onChange={(nextValue) => setPageSize(Number(nextValue))}
+                onChange={(nextValue) => {
+                  setPageSize(Number(nextValue));
+                  setPage(1);
+                }}
                 options={PAGE_SIZES.map((s) => ({ value: String(s), label: String(s) }))}
                 placeholder={String(pageSize)}
               />
@@ -512,4 +530,3 @@ export default function ProxyLogs() {
     </div>
   );
 }
-

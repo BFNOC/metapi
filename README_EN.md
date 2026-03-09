@@ -160,7 +160,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 ### Unified Proxy Gateway
 
 - Compatible with **OpenAI** and **Claude** downstream formats, works with all mainstream clients
-- Supports Responses / Chat Completions / Messages / Completions (Legacy) / Embeddings / Images / Models (current core coverage)
+- Supports Responses / Chat Completions / Messages / Completions (Legacy) / Embeddings / Images / Models, plus standard `/v1/files`
 - Full SSE streaming support with automatic format conversion (OpenAI <-> Claude)
 
 ### Smart Routing Engine
@@ -184,12 +184,12 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 | **New API** | `new-api` | Next-gen LLM gateway |
 | **One API** | `one-api` | Classic OpenAI API aggregation |
 | **OneHub** | `onehub` | Enhanced One API fork |
-| **DoneHub** | `donehub` | Enhanced OneHub fork |
+| **DoneHub** | `done-hub` | Enhanced OneHub fork |
 | **Veloera** | `veloera` | API gateway platform |
 | **AnyRouter** | `anyrouter` | Universal routing platform |
 | **Sub2API** | `sub2api` | Subscription-based relay |
 
-Each adapter supports: account login, balance queries, model enumeration, token sync, daily check-in, user info retrieval, and full lifecycle management.
+Adapters cover shared capabilities such as model discovery, balance access, token management, and proxy integration; login, check-in, and user-info flows vary by platform.
 
 ### Account & Token Management
 
@@ -264,7 +264,7 @@ Alert scenarios: low balance warning, site/account anomalies, check-in failures,
 
 ### Lightweight Deployment
 
-- **Single Docker container** with built-in SQLite — no external dependencies
+- **Single Docker container** with a default local data directory, plus optional external MySQL / PostgreSQL runtime DB
 - Alpine base image, minimal footprint
 - Full data import/export for worry-free migration
 
@@ -330,31 +330,7 @@ After starting, visit `http://localhost:4000` and log in with your `AUTH_TOKEN`!
 > If running outside Compose without explicitly setting `AUTH_TOKEN`, the default is `change-me-admin-token` (for local debugging only).
 > If you change the admin token in the Settings panel, use the new token for subsequent logins.
 
-### Desktop App (Windows / macOS / Linux)
-
-For personal-computer deployments, download the desktop installer from [Releases](https://github.com/cita-777/metapi/releases):
-
-1. Download the installer for your platform
-2. Install and launch Metapi Desktop
-3. The desktop shell starts the local service automatically and stores data under the app data directory
-
-Desktop builds include:
-
-- Embedded local Metapi service, started automatically by Electron
-- Tray menu for reopen / restart backend / launch at login
-- In-app update checks backed by GitHub Releases
-
-> [!NOTE]
-> Server deployments are now Docker-first.  
-> GitHub Release assets are intended for the desktop app rather than raw Node.js server archives.
-
-### Upgrade
-
-```bash
-docker compose pull && docker compose up -d && docker image prune -f
-```
-
-For more deployment options, see [Deployment Guide](docs/deployment.md).
+For Docker Compose, desktop installers, reverse proxy, upgrades, and database options, see [Deployment Guide](docs/deployment.md).
 
 ---
 
@@ -379,7 +355,7 @@ For more deployment options, see [Deployment Guide](docs/deployment.md).
 | Category | Link | Description |
 | --- | --- | --- |
 | Docs Home | [docs/index.md](docs/index.md) | Publishable docs portal with nav/sidebar/search |
-| Overview | [docs/README.md](docs/README.md) | Documentation index |
+| Docs Maintenance | [docs/README.md](docs/README.md) | Maintenance and contributor-oriented docs entry |
 | Quick Start | [docs/getting-started.md](docs/getting-started.md) | Get running in 10 minutes |
 | Deployment | [docs/deployment.md](docs/deployment.md) | Docker Compose, reverse proxy, upgrades |
 | Configuration | [docs/configuration.md](docs/configuration.md) | All environment variables and routing params |
@@ -399,7 +375,7 @@ For more deployment options, see [Deployment Guide](docs/deployment.md).
 | `AUTH_TOKEN` | Admin panel login token (**must change**) | `change-me-admin-token` |
 | `PROXY_TOKEN` | Proxy API Bearer Token (**must change**) | `change-me-proxy-sk-token` |
 | `PORT` | Service listening port | `4000` |
-| `DATA_DIR` | Data directory (SQLite database) | `./data` |
+| `DATA_DIR` | Data directory for local runtime data | `./data` |
 | `TZ` | Timezone | `Asia/Shanghai` |
 | `ACCOUNT_CREDENTIAL_SECRET` | Account credential encryption key | Defaults to `AUTH_TOKEN` |
 
@@ -470,6 +446,9 @@ Metapi exposes standard OpenAI / Claude compatible endpoints:
 | `/v1/completions` | POST | OpenAI Completions (Legacy) |
 | `/v1/embeddings` | POST | Embeddings |
 | `/v1/images/generations` | POST | Image Generation |
+| `/v1/files` | POST / GET | OpenAI Files upload and list |
+| `/v1/files/:fileId` | GET / DELETE | OpenAI Files retrieve metadata and delete |
+| `/v1/files/:fileId/content` | GET | OpenAI Files raw content |
 | `/v1/models` | GET | List all available models |
 
 Include `Authorization: Bearer <PROXY_TOKEN>` in request headers.
@@ -495,84 +474,9 @@ Compatible with all OpenAI API-compatible clients:
 | **API Key** | Your configured `PROXY_TOKEN` |
 | **Model List** | Auto-fetched from `GET /v1/models` |
 
-### CLI Quick Setup (Claude Code / Codex)
+Standard OpenAI `/v1/files` workflows are also supported for clients that use the official file API.
 
-#### Claude Code (`~/.claude/settings.json`)
-
-```json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://your-domain.com",
-    "ANTHROPIC_API_KEY": "your-proxy-sk-token",
-    "ANTHROPIC_AUTH_TOKEN": "your-proxy-sk-token",
-    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
-  }
-}
-```
-
-> Note: Different client versions may read `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`; setting both is recommended.
-
-#### Codex (`~/.codex/config.toml` + `~/.codex/auth.json`)
-
-`~/.codex/config.toml`
-
-```toml
-model = "gpt-5"
-model_provider = "metapi"
-
-[model_providers.metapi]
-name = "metapi"
-base_url = "https://your-domain.com/v1"
-```
-
-`~/.codex/auth.json`
-
-```json
-{
-  "OPENAI_API_KEY": "your-proxy-sk-token"
-}
-```
-
-> Tip: `model` must exist in Metapi `GET /v1/models`.
-
-### Verified Compatible Clients
-
-- [ChatGPT-Next-Web](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web)
-- [Open WebUI](https://github.com/open-webui/open-webui)
-- [Cherry Studio](https://github.com/kangfenmao/cherry-studio)
-- [Cursor](https://cursor.sh)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- Codex CLI
-- [Roo Code](https://github.com/RooVetGit/Roo-Code)
-- [Kilo Code](https://github.com/kilocode/kilocode)
-- And any client that supports the OpenAI API format
-
-<details>
-<summary><strong>Troubleshooting: Streaming Response Issues</strong></summary>
-
-If non-streaming works but streaming fails, check:
-
-1. Whether the reverse proxy has SSE buffering disabled (Nginx: `proxy_buffering off`)
-2. Whether a middleware layer is rewriting the `text/event-stream` Content-Type
-3. Whether the client requires a specific streaming format
-
-**Nginx reference configuration:**
-
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:4000;
-    proxy_buffering off;
-    proxy_cache off;
-    proxy_set_header Connection '';
-    proxy_http_version 1.1;
-    chunked_transfer_encoding off;
-}
-```
-
-</details>
-
-For detailed integration instructions: [docs/client-integration.md](docs/client-integration.md)
+For detailed per-client setup, examples, and troubleshooting, see [docs/client-integration.md](docs/client-integration.md).
 
 ---
 
@@ -584,7 +488,7 @@ For detailed integration instructions: [docs/client-integration.md](docs/client-
 | **Frontend** | [React 18](https://react.dev) + [Vite](https://vitejs.dev) |
 | **Language** | [TypeScript](https://www.typescriptlang.org) — End-to-end type safety |
 | **Styling** | [Tailwind CSS v4](https://tailwindcss.com) — Utility-first CSS framework |
-| **Database** | SQLite ([better-sqlite3](https://github.com/WiseLibs/better-sqlite3)) + [Drizzle ORM](https://orm.drizzle.team) |
+| **Database** | SQLite / MySQL / PostgreSQL + [Drizzle ORM](https://orm.drizzle.team) |
 | **Charts** | [VChart](https://visactor.io/vchart) (@visactor/react-vchart) |
 | **Scheduling** | [node-cron](https://github.com/node-cron/node-cron) |
 | **Containerization** | Docker (Alpine) + Docker Compose |
@@ -640,7 +544,7 @@ npm run db:generate    # Generate Drizzle migration files
 
 ## Data & Privacy
 
-Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) is stored in the local SQLite database. No data is sent to any third party. Proxy requests are transmitted directly between your server and upstream sites only.
+Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in your own deployment environment. No data is sent to any third party. Proxy requests are transmitted directly between your server and upstream sites only.
 
 ---
 

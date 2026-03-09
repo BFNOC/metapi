@@ -16,8 +16,8 @@ hero:
       text: 常见问题 FAQ
       link: /faq
     - theme: alt
-      text: 贡献教程/FAQ
-      link: /community/faq-tutorial-guidelines
+      text: 文档维护与贡献
+      link: /README
 
 features:
   - title: 快速上手
@@ -286,21 +286,16 @@ onBeforeUnmount(() => {
 });
 </script>
 
-## 文档定位
+## 从这里开始
 
-- 面向新用户：快速搭建和接入
-- 面向维护者：稳定运行、排障和升级
-- 面向贡献者：持续沉淀教程、FAQ 与最佳实践
+- 初次部署或首次接入：从 [快速上手](/getting-started) 开始，先跑通最小可用链路。
+- 准备上线或升级回滚：查看 [部署指南](/deployment) 与 [运维手册](/operations)。
+- 需要补齐环境变量或路由参数：直接查 [配置说明](/configuration)。
+- 正在处理客户端或第三方工具接入：优先看 [客户端接入](/client-integration)。
+- 遇到高频报错或异常表现：去 [常见问题 FAQ](/faq) 快速定位根因。
 
-## 推荐阅读路径
+## 文档维护入口
 
-1. [快速上手](/getting-started)
-2. [部署指南](/deployment)
-3. [配置说明](/configuration)
-4. [客户端接入](/client-integration)
-5. [常见问题 FAQ](/faq)
-
-## 协作维护
-
-如需新增文档内容，请优先使用统一模板与提交流程：  
-[FAQ/教程贡献规范](/community/faq-tutorial-guidelines)
+- `/` 保持为面向所有读者的公开落地页，不再承担维护说明或贡献说明的二次首页职责。
+- 维护文档站、梳理导航、补充内容地图时，请进入 [文档维护与贡献](/README)。
+- 新增 FAQ 或教程前，请先阅读 [FAQ/教程贡献规范](/community/faq-tutorial-guidelines)。

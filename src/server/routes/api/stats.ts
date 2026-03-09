@@ -73,6 +73,86 @@ function proxyCostSqlExpression() {
   `;
 }
 
+type ProxyLogStatusFilter = 'all' | 'success' | 'failed';
+
+function normalizeProxyLogPageSize(raw?: string): number {
+  const parsed = Number.parseInt(raw || '50', 10);
+  if (!Number.isFinite(parsed)) return 50;
+  return Math.max(1, Math.min(100, parsed));
+}
+
+function normalizeProxyLogOffset(raw?: string): number {
+  const parsed = Number.parseInt(raw || '0', 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, parsed);
+}
+
+function normalizeProxyLogStatusFilter(raw?: string): ProxyLogStatusFilter {
+  const normalized = (raw || '').trim().toLowerCase();
+  if (normalized === 'success') return 'success';
+  if (normalized === 'failed') return 'failed';
+  return 'all';
+}
+
+function normalizeProxyLogSearch(raw?: string): string {
+  return (raw || '').trim().toLowerCase();
+}
+
+function buildProxyLogSearchCondition(search: string) {
+  if (!search) return null;
+  const likeTerm = `%${search}%`;
+  return sql<boolean>`(
+    lower(coalesce(${schema.proxyLogs.modelRequested}, '')) like ${likeTerm}
+    or lower(coalesce(${schema.proxyLogs.modelActual}, '')) like ${likeTerm}
+  )`;
+}
+
+function buildProxyLogStatusCondition(status: ProxyLogStatusFilter) {
+  if (status === 'success') {
+    return eq(schema.proxyLogs.status, 'success');
+  }
+  if (status === 'failed') {
+    return sql<boolean>`coalesce(${schema.proxyLogs.status}, '') <> 'success'`;
+  }
+  return null;
+}
+
+function buildProxyLogWhereClause(params: {
+  status?: ProxyLogStatusFilter;
+  search?: string;
+}) {
+  const conditions = [
+    params.status ? buildProxyLogStatusCondition(params.status) : null,
+    params.search ? buildProxyLogSearchCondition(params.search) : null,
+  ].filter((condition): condition is NonNullable<typeof condition> => condition !== null);
+
+  if (conditions.length === 0) return undefined;
+  return conditions.length === 1 ? conditions[0] : and(...conditions);
+}
+
+function toRoundedMicroNumber(value: number | null | undefined): number {
+  return Math.round(Number(value || 0) * 1_000_000) / 1_000_000;
+}
+
+function mapProxyLogRow(
+  row: {
+    proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
+    accounts: { username?: string | null } | null;
+    sites: { name?: string | null; url?: string | null } | null;
+  },
+  options?: { includeBillingDetails?: boolean },
+) {
+  return {
+    ...row.proxy_logs,
+    ...(options?.includeBillingDetails
+      ? { billingDetails: parseProxyLogBillingDetails(row.proxy_logs.billingDetails) }
+      : {}),
+    username: row.accounts?.username || null,
+    siteName: row.sites?.name || null,
+    siteUrl: row.sites?.url || null,
+  };
+}
+
 export async function statsRoutes(app: FastifyInstance) {
   const proxyLogBaseFields = getProxyLogBaseSelectFields();
 
@@ -204,10 +284,80 @@ export async function statsRoutes(app: FastifyInstance) {
   });
 
   // Proxy logs
-  app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/stats/proxy-logs', async (request) => {
-    const limit = parseInt(request.query.limit || '50', 10);
-    const offset = parseInt(request.query.offset || '0', 10);
-    const rows = await withProxyLogSelectFields(({ fields }) => (
+  app.get<{ Querystring: { limit?: string; offset?: string; status?: string; search?: string } }>('/api/stats/proxy-logs', async (request) => {
+    const limit = normalizeProxyLogPageSize(request.query.limit);
+    const offset = normalizeProxyLogOffset(request.query.offset);
+    const status = normalizeProxyLogStatusFilter(request.query.status);
+    const search = normalizeProxyLogSearch(request.query.search);
+    const listWhere = buildProxyLogWhereClause({ status, search });
+    const summaryWhere = buildProxyLogWhereClause({ search });
+
+    const listRows = await withProxyLogSelectFields(({ fields }) => {
+      let query = db.select({
+        proxy_logs: fields,
+        accounts: schema.accounts,
+        sites: schema.sites,
+      }).from(schema.proxyLogs)
+        .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
+        .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id));
+
+      if (listWhere) {
+        query = query.where(listWhere) as typeof query;
+      }
+
+      return query
+        .orderBy(desc(schema.proxyLogs.createdAt))
+        .limit(limit)
+        .offset(offset)
+        .all();
+    }, { includeBillingDetails: false }) as Array<{
+      proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
+      accounts: { username?: string | null } | null;
+      sites: { name?: string | null; url?: string | null } | null;
+    }>;
+
+    let totalQuery = db.select({
+      total: sql<number>`count(*)`,
+    }).from(schema.proxyLogs);
+    if (listWhere) {
+      totalQuery = totalQuery.where(listWhere) as typeof totalQuery;
+    }
+    const totalRow = await totalQuery.get();
+
+    let summaryQuery = db.select({
+      totalCount: sql<number>`count(*)`,
+      successCount: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
+      failedCount: sql<number>`coalesce(sum(case when coalesce(${schema.proxyLogs.status}, '') <> 'success' then 1 else 0 end), 0)`,
+      totalCost: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.estimatedCost}, 0)), 0)`,
+      totalTokensAll: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
+    }).from(schema.proxyLogs);
+    if (summaryWhere) {
+      summaryQuery = summaryQuery.where(summaryWhere) as typeof summaryQuery;
+    }
+    const summaryRow = await summaryQuery.get();
+
+    return {
+      items: listRows.map((row) => mapProxyLogRow(row)),
+      total: Number(totalRow?.total || 0),
+      page: Math.floor(offset / limit) + 1,
+      pageSize: limit,
+      summary: {
+        totalCount: Number(summaryRow?.totalCount || 0),
+        successCount: Number(summaryRow?.successCount || 0),
+        failedCount: Number(summaryRow?.failedCount || 0),
+        totalCost: toRoundedMicroNumber(summaryRow?.totalCost),
+        totalTokensAll: Number(summaryRow?.totalTokensAll || 0),
+      },
+    };
+  });
+
+  app.get<{ Params: { id: string } }>('/api/stats/proxy-logs/:id', async (request, reply) => {
+    const id = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return reply.code(400).send({ message: 'proxy log id is invalid' });
+    }
+
+    const row = await withProxyLogSelectFields(({ fields }) => (
       db.select({
         proxy_logs: fields,
         accounts: schema.accounts,
@@ -215,21 +365,19 @@ export async function statsRoutes(app: FastifyInstance) {
       }).from(schema.proxyLogs)
         .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
         .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-        .orderBy(desc(schema.proxyLogs.createdAt))
-        .limit(limit).offset(offset).all()
-    ), { includeBillingDetails: true }) as Array<{
+        .where(eq(schema.proxyLogs.id, id))
+        .get()
+    ), { includeBillingDetails: true }) as {
       proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
       accounts: { username?: string | null } | null;
       sites: { name?: string | null; url?: string | null } | null;
-    }>;
+    } | undefined;
 
-    return rows.map((row) => ({
-      ...row.proxy_logs,
-      billingDetails: parseProxyLogBillingDetails(row.proxy_logs.billingDetails),
-      username: row.accounts?.username || null,
-      siteName: row.sites?.name || null,
-      siteUrl: row.sites?.url || null,
-    }));
+    if (!row) {
+      return reply.code(404).send({ message: 'proxy log not found' });
+    }
+
+    return mapProxyLogRow(row, { includeBillingDetails: true });
   });
 
   // Models marketplace - refresh upstream models and aggregate.

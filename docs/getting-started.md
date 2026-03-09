@@ -8,9 +8,17 @@
 
 ## 前置条件
 
-- Docker 与 Docker Compose（推荐）
-- 或下载 [Release 包](https://github.com/cita-777/metapi/releases) + Node.js 20+（免 Docker 运行）
-- 或 Node.js 20+ 与 npm（本地开发）
+按你的使用场景准备对应环境：
+
+| 场景 | 推荐方式 | 需要准备 |
+|------|----------|----------|
+| 云服务器 / NAS / 家用主机长期运行 | Docker / Docker Compose | Docker 与 Docker Compose |
+| 个人电脑本地使用 | 桌面版安装包 | 从 [Releases](https://github.com/cita-777/metapi/releases) 下载对应系统的桌面安装包 |
+| 二次开发 / 调试 | 本地开发 | Node.js 20+ 与 npm |
+
+> [!NOTE]
+> - 当前不再把 `Release` 压缩包 + Node.js 运行时作为独立部署路径。
+> - 想直接运行成品，请用 Docker 或桌面版；想改代码，请走本地开发流程。
 
 ## 方式一：Docker Compose 部署（推荐）
 
@@ -68,6 +76,17 @@ docker compose up -d
 2. 安装并启动 Metapi Desktop
 3. 桌面壳会自动启动本地服务并保存数据，无需手动准备 Node.js 环境
 
+| 项目 | 说明 |
+|------|------|
+| 管理界面 | 应用启动后会直接打开桌面窗口，不需要假设固定的 `http://localhost:4000` |
+| 本地后端地址 | 桌面版把内置服务绑定到 `127.0.0.1`，默认会在 `4310..4399` 中挑选空闲端口；只有显式设置 `METAPI_DESKTOP_SERVER_PORT` 时才会固定 |
+| 数据目录 | 保存在 `app.getPath('userData')/data`，不是仓库里的 `./data` |
+| 日志目录 | 保存在 `app.getPath('userData')/logs`；托盘菜单提供 `Open Logs Folder` |
+
+> [!TIP]
+> - Windows 下常见路径是 `%APPDATA%\Metapi\data` 和 `%APPDATA%\Metapi\logs`。
+> - 如果你要把本机其他客户端接到桌面版内置后端，先到日志里查当前端口，不要写死 `4000`。
+
 > [!NOTE]
 > 服务器部署统一推荐 Docker / Docker Compose，不再提供裸 Node.js 的 Release 压缩包。
 
@@ -83,6 +102,7 @@ npm run dev
 
 - 前端地址：`http://localhost:5173`（Vite dev server）
 - 后端地址：`http://localhost:4000`
+- 这是源码开发流程，不是免 Docker 的成品部署包
 
 ## 首次使用流程
 
@@ -144,7 +164,15 @@ npm run dev
 
 ### 步骤 5：验证代理
 
-使用 curl 快速验证：
+按运行方式选择验证入口：
+
+| 运行方式 | 管理界面 | 代理接口基地址 |
+|----------|----------|----------------|
+| Docker / Docker Compose | `http://localhost:4000` | `http://localhost:4000` |
+| 本地开发 | `http://localhost:5173` | `http://localhost:4000` |
+| 桌面版 | 直接使用桌面窗口 | 先从日志里的 `Proxy API:` 行确认当前 `http://127.0.0.1:<port>` |
+
+### Docker / 本地开发：直接用 curl 验证
 
 ```bash
 # 检查模型列表
@@ -158,7 +186,23 @@ curl -sS http://localhost:4000/v1/chat/completions \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-返回正常响应，说明一切就绪。
+### 桌面版：先确认当前端口再验证
+
+打开托盘菜单的 `Open Logs Folder`，在最新日志里查找类似下面的启动信息：
+
+```text
+Dashboard: http://127.0.0.1:4312
+Proxy API: http://127.0.0.1:4312/v1/chat/completions
+```
+
+然后把日志里的实际端口替换进 curl：
+
+```bash
+curl -sS http://127.0.0.1:4312/v1/models \
+  -H "Authorization: Bearer your-proxy-sk-token"
+```
+
+返回正常响应，说明代理链路已经可用。
 
 ## 下一步
 

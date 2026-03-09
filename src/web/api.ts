@@ -84,6 +84,17 @@ async function request(url: string, options: RequestOptions = {}) {
   }
 }
 
+function buildQueryString(params?: Record<string, string | number | boolean | null | undefined>) {
+  if (!params) return '';
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue;
+    searchParams.set(key, String(value));
+  }
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : '';
+}
+
 type TestChatRequestPayload = {
   model: string;
   messages: Array<{ role: string; content: string }>;
@@ -128,6 +139,88 @@ export type ProxyTestJobResponse = {
   createdAt?: string;
   updatedAt?: string;
   expiresAt?: string;
+};
+
+export type ProxyLogStatusFilter = 'all' | 'success' | 'failed';
+
+export type ProxyLogBillingDetails = {
+  quotaType: number;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    billablePromptTokens: number;
+    promptTokensIncludeCache: boolean | null;
+  };
+  pricing: {
+    modelRatio: number;
+    completionRatio: number;
+    cacheRatio: number;
+    cacheCreationRatio: number;
+    groupRatio: number;
+  };
+  breakdown: {
+    inputPerMillion: number;
+    outputPerMillion: number;
+    cacheReadPerMillion: number;
+    cacheCreationPerMillion: number;
+    inputCost: number;
+    outputCost: number;
+    cacheReadCost: number;
+    cacheCreationCost: number;
+    totalCost: number;
+  };
+} | null;
+
+export type ProxyLogListItem = {
+  id: number;
+  createdAt: string;
+  modelRequested: string;
+  modelActual: string;
+  status: string;
+  latencyMs: number;
+  totalTokens: number | null;
+  retryCount: number;
+  accountId?: number | null;
+  username?: string | null;
+  siteName?: string | null;
+  siteUrl?: string | null;
+  errorMessage?: string | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  estimatedCost?: number | null;
+};
+
+export type ProxyLogDetail = ProxyLogListItem & {
+  routeId?: number | null;
+  channelId?: number | null;
+  httpStatus?: number | null;
+  billingDetails?: ProxyLogBillingDetails;
+};
+
+export type ProxyLogsSummary = {
+  totalCount: number;
+  successCount: number;
+  failedCount: number;
+  totalCost: number;
+  totalTokensAll: number;
+};
+
+export type ProxyLogsQuery = {
+  limit?: number;
+  offset?: number;
+  status?: ProxyLogStatusFilter;
+  search?: string;
+};
+
+export type ProxyLogsResponse = {
+  items: ProxyLogListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: ProxyLogsSummary;
 };
 
 export const api = {
@@ -221,7 +314,8 @@ export const api = {
 
   // Stats
   getDashboard: () => request('/api/stats/dashboard'),
-  getProxyLogs: (params?: string) => request(`/api/stats/proxy-logs${params ? '?' + params : ''}`),
+  getProxyLogs: (params?: ProxyLogsQuery) => request(`/api/stats/proxy-logs${buildQueryString(params)}`) as Promise<ProxyLogsResponse>,
+  getProxyLogDetail: (id: number) => request(`/api/stats/proxy-logs/${id}`) as Promise<ProxyLogDetail>,
   checkModels: (accountId: number) => request(`/api/models/check/${accountId}`, { method: 'POST' }),
   getSiteDistribution: () => request('/api/stats/site-distribution'),
   getSiteTrend: (days = 7) => request(`/api/stats/site-trend?days=${days}`),

@@ -343,7 +343,6 @@ const toResponsesContentPart = (part: ConversationContentPart): Record<string, u
     if (typeof part.fileId === 'string' && part.fileId.trim()) fileBlock.file_id = part.fileId.trim();
     if (typeof part.filename === 'string' && part.filename.trim()) fileBlock.filename = part.filename.trim();
     if (typeof part.data === 'string' && part.data.trim()) fileBlock.file_data = part.data.trim();
-    if (typeof part.mimeType === 'string' && part.mimeType.trim()) fileBlock.mime_type = part.mimeType.trim();
     if (Object.keys(fileBlock).length === 1) return null;
     return fileBlock;
   }
@@ -383,10 +382,12 @@ const toResponsesInput = (messages: ApiChatMessage[]) => {
   if (!hasStructuredParts && messages.length === 1 && messages[0].role === 'user') {
     return messages[0].content;
   }
+  const toResponsesTextType = (role: ApiChatMessage['role']) =>
+    role === 'assistant' ? 'output_text' : 'input_text';
   return messages.map((message) => ({
     role: message.role === 'assistant' ? 'assistant' : 'user',
     content: [
-      ...(message.content.trim() ? [{ type: 'input_text', text: message.content }] : []),
+      ...(message.content.trim() ? [{ type: toResponsesTextType(message.role), text: message.content }] : []),
       ...((Array.isArray(message.parts)
         ? message.parts
           .map((part) => toResponsesContentPart(part))
@@ -394,7 +395,7 @@ const toResponsesInput = (messages: ApiChatMessage[]) => {
         : [])),
     ].length > 0
       ? [
-        ...(message.content.trim() ? [{ type: 'input_text', text: message.content }] : []),
+        ...(message.content.trim() ? [{ type: toResponsesTextType(message.role), text: message.content }] : []),
         ...((Array.isArray(message.parts)
           ? message.parts
             .map((part) => toResponsesContentPart(part))

@@ -252,7 +252,42 @@ describe('modelTesterSession', () => {
           role: 'user',
           content: [
             { type: 'input_text', text: '请总结上传文件' },
-            { type: 'input_file', file_id: 'file_123', filename: 'notes.txt', mime_type: 'text/plain' },
+            { type: 'input_file', file_id: 'file_123', filename: 'notes.txt' },
+          ],
+        },
+      ],
+      stream: false,
+      temperature: 0.7,
+    });
+  });
+
+  it('serializes assistant history as output_text for responses payloads', () => {
+    const payload = buildApiPayload(
+      [
+        { id: 'u1', role: 'user', content: '先看附件', createAt: 1 },
+        { id: 'a1', role: 'assistant', content: '我已经看过摘要', createAt: 2 },
+      ],
+      {
+        ...DEFAULT_INPUTS,
+        model: 'gpt-5.2',
+        protocol: 'responses',
+      },
+      DEFAULT_PARAMETER_ENABLED,
+    );
+
+    expect(payload.jsonBody).toEqual({
+      model: 'gpt-5.2',
+      input: [
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: '先看附件' },
+          ],
+        },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'output_text', text: '我已经看过摘要' },
           ],
         },
       ],
@@ -357,7 +392,6 @@ describe('modelTesterSession', () => {
               type: 'input_file',
               file_id: 'file_metapi_123',
               filename: 'paper.pdf',
-              mime_type: 'application/pdf',
             },
           ],
         },

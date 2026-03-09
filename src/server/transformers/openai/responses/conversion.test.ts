@@ -427,7 +427,6 @@ describe('convertOpenAiBodyToResponsesBody', () => {
             type: 'input_file',
             file_id: 'file_local_123',
             filename: 'report.pdf',
-            mime_type: 'application/pdf',
             file_data: 'JVBERi0xLjQK',
           },
         ],

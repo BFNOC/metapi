@@ -157,7 +157,7 @@
 ### 🌐 统一代理网关
 
 - 兼容 **OpenAI** 与 **Claude** 下游格式，对接所有主流客户端
-- 支持 Responses / Chat Completions / Messages / Completions（Legacy）/ Embeddings / Images / Models 全接口
+- 支持 Responses / Chat Completions / Messages / Completions（Legacy）/ Embeddings / Images / Models，以及标准 `/v1/files` 文件接口
 - 完整的 SSE 流式传输支持，自动格式转换（OpenAI ⇄ Claude）
 
 ### 🧠 智能路由引擎
@@ -181,12 +181,12 @@
 | **New API**   | `new-api`   | 新一代大模型网关     |
 | **One API**   | `one-api`   | 经典 OpenAI 接口聚合 |
 | **OneHub**    | `onehub`    | One API 增强分支     |
-| **DoneHub**   | `donehub`   | OneHub 增强分支      |
+| **DoneHub**   | `done-hub`  | OneHub 增强分支      |
 | **Veloera**   | `veloera`   | API 网关平台         |
 | **AnyRouter** | `anyrouter` | 通用路由平台         |
 | **Sub2API**   | `sub2api`   | 订阅制中转平台       |
 
-每种平台适配器均支持：账号登录、余额查询、模型枚举、Token 同步、每日签到、用户信息获取等完整生命周期管理。
+各平台适配器覆盖模型枚举、余额查询、Token 管理、代理接入等通用能力；登录、签到、用户信息等能力按平台而异。
 
 ### 👥 账号与 Token 管理
 
@@ -222,7 +222,7 @@
 
 ### 📦 轻量部署
 
-- **单 Docker 容器**，内置 SQLite，无外部依赖
+- **单 Docker 容器**，默认本地数据目录部署，开箱即用
 - Alpine 基础镜像，体积精简
 - 数据完整导入导出，迁移无忧
 
@@ -263,7 +263,7 @@ docker run -d --name metapi -p 4000:4000 \
 | **前端框架**   | [React 18](https://react.dev) + [Vite](https://vitejs.dev)                                                      |
 | **语言**       | [TypeScript](https://www.typescriptlang.org) — 端到端类型安全                                               |
 | **样式**       | [Tailwind CSS v4](https://tailwindcss.com) — 原子化样式框架                                                 |
-| **数据库**     | SQLite ([better-sqlite3](https://github.com/WiseLibs/better-sqlite3)) + [Drizzle ORM](https://orm.drizzle.team) |
+| **数据库**     | SQLite / MySQL / PostgreSQL + [Drizzle ORM](https://orm.drizzle.team) |
 | **数据可视化** | [VChart](https://visactor.io/vchart) (@visactor/react-vchart)                                                |
 | **定时任务**   | [node-cron](https://github.com/node-cron/node-cron)                                                          |
 | **容器化**     | Docker (Alpine) + Docker Compose                                                                     |
@@ -319,7 +319,7 @@ npm run db:generate    # 生成 Drizzle 迁移文件
 
 ## 🔒 数据与隐私
 
-Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均存储在本地 SQLite 数据库中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。
+Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均存储在你自己的部署环境中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。
 
 ---
 

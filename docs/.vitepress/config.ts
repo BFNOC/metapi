@@ -5,7 +5,7 @@ export default withMermaid(
   defineConfig({
     lang: 'zh-CN',
     title: 'Metapi 文档',
-    description: 'Metapi 使用文档、FAQ 与教程沉淀',
+    description: 'Metapi 使用文档、FAQ 与维护协作指南',
     cleanUrls: true,
     lastUpdated: true,
     ignoreDeadLinks: true,
@@ -16,7 +16,7 @@ export default withMermaid(
         { text: '首页', link: '/' },
         { text: '快速上手', link: '/getting-started' },
         { text: 'FAQ', link: '/faq' },
-        { text: '社区贡献', link: '/community/faq-tutorial-guidelines' },
+        { text: '文档维护', link: '/README' },
         { text: '项目主页', link: 'https://github.com/cita-777/metapi' },
       ],
       sidebar: [
@@ -24,23 +24,23 @@ export default withMermaid(
           text: '开始',
           items: [
             { text: '文档首页', link: '/' },
-            { text: '文档总览', link: '/README' },
             { text: '快速上手', link: '/getting-started' },
             { text: '部署指南', link: '/deployment' },
           ],
         },
         {
-          text: '使用与配置',
+          text: '使用与运维',
           items: [
             { text: '配置说明', link: '/configuration' },
             { text: '客户端接入', link: '/client-integration' },
             { text: '运维手册', link: '/operations' },
+            { text: '常见问题 FAQ', link: '/faq' },
           ],
         },
         {
-          text: '知识库',
+          text: '文档维护',
           items: [
-            { text: '常见问题 FAQ', link: '/faq' },
+            { text: '文档维护与贡献', link: '/README' },
             { text: '目录规范', link: '/project-structure' },
             { text: 'FAQ/教程贡献规范', link: '/community/faq-tutorial-guidelines' },
           ],

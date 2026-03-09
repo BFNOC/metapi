@@ -72,7 +72,6 @@ describe('proxyInputFileResolver', () => {
             file_id: 'file-metapi-123',
             filename: 'brief.pdf',
             file_data: Buffer.from('%PDF-local').toString('base64'),
-            mime_type: 'application/pdf',
           },
         ],
       },

@@ -29,6 +29,7 @@ export type NormalizedInputFile = {
   sourceType?: 'file' | 'input_file';
   fileId?: string;
   fileData?: string;
+  fileUrl?: string;
   filename?: string;
   mimeType?: string | null;
   hadDataUrl?: boolean;
@@ -59,9 +60,10 @@ export function normalizeInputFileBlock(item: Record<string, unknown>): Normaliz
   if (type === 'input_file') {
     const fileId = asTrimmedString(item.file_id);
     const fileData = asTrimmedString(item.file_data);
+    const fileUrl = asTrimmedString(item.file_url);
     const filename = asTrimmedString(item.filename);
     let mimeType = asTrimmedString(item.mime_type ?? item.mimeType) || null;
-    if (!fileId && !fileData) return null;
+    if (!fileId && !fileData && !fileUrl) return null;
     const parsedDataUrl = fileData ? splitBase64DataUrl(fileData) : null;
     if (parsedDataUrl) {
       mimeType = mimeType || parsedDataUrl.mimeType;
@@ -70,6 +72,7 @@ export function normalizeInputFileBlock(item: Record<string, unknown>): Normaliz
       sourceType: 'input_file',
       fileId: fileId || undefined,
       fileData: fileData || undefined,
+      fileUrl: fileUrl || undefined,
       filename: filename || undefined,
       mimeType,
       hadDataUrl: /^data:[^;,]+;base64,/i.test(fileData),
@@ -80,9 +83,10 @@ export function normalizeInputFileBlock(item: Record<string, unknown>): Normaliz
     const file = isRecord(item.file) ? item.file : item;
     const fileId = asTrimmedString(file.file_id ?? item.file_id);
     const fileData = asTrimmedString(file.file_data ?? item.file_data);
+    const fileUrl = asTrimmedString(file.file_url ?? item.file_url);
     const filename = asTrimmedString(file.filename ?? item.filename);
     let mimeType = asTrimmedString(file.mime_type ?? file.mimeType ?? item.mime_type ?? item.mimeType) || null;
-    if (!fileId && !fileData) return null;
+    if (!fileId && !fileData && !fileUrl) return null;
     const parsedDataUrl = fileData ? splitBase64DataUrl(fileData) : null;
     if (parsedDataUrl) {
       mimeType = mimeType || parsedDataUrl.mimeType;
@@ -91,6 +95,7 @@ export function normalizeInputFileBlock(item: Record<string, unknown>): Normaliz
       sourceType: 'file',
       fileId: fileId || undefined,
       fileData: fileData || undefined,
+      fileUrl: fileUrl || undefined,
       filename: filename || undefined,
       mimeType,
       hadDataUrl: /^data:[^;,]+;base64,/i.test(fileData),
@@ -103,13 +108,14 @@ export function normalizeInputFileBlock(item: Record<string, unknown>): Normaliz
 export function toResponsesInputFileBlock(file: NormalizedInputFile): Record<string, unknown> {
   const parsedDataUrl = file.fileData ? splitBase64DataUrl(file.fileData) : null;
   const block: Record<string, unknown> = { type: 'input_file' };
-  if (file.fileId) block.file_id = file.fileId;
   if (file.fileData) {
     block.file_data = ensureBase64DataUrl(
       file.fileData,
       parsedDataUrl?.mimeType || inferInputFileMimeType(file),
     );
   }
+  if (file.fileUrl && !block.file_data) block.file_url = file.fileUrl;
+  if (file.fileId && !block.file_data && !block.file_url) block.file_id = file.fileId;
   if (file.filename) block.filename = file.filename;
   return block;
 }
@@ -117,8 +123,9 @@ export function toResponsesInputFileBlock(file: NormalizedInputFile): Record<str
 export function toOpenAiChatFileBlock(file: NormalizedInputFile): Record<string, unknown> {
   const parsedDataUrl = file.fileData ? splitBase64DataUrl(file.fileData) : null;
   const payload: Record<string, unknown> = {};
-  if (file.fileId) payload.file_id = file.fileId;
   if (file.fileData) payload.file_data = parsedDataUrl?.data || file.fileData;
+  else if (file.fileUrl) payload.file_url = file.fileUrl;
+  else if (file.fileId) payload.file_id = file.fileId;
   if (file.filename) payload.filename = file.filename;
   if (file.mimeType) payload.mime_type = file.mimeType;
   else if (parsedDataUrl?.mimeType) payload.mime_type = parsedDataUrl.mimeType;

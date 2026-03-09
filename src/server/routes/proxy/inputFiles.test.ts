@@ -11,7 +11,7 @@ describe('inlineLocalInputFileReferences', () => {
     getProxyFileByPublicIdForOwnerMock.mockReset();
   });
 
-  it('replaces local responses input_file ids with inline file_data payloads', async () => {
+  it('replaces local responses input_file ids with inline-only file_data payloads', async () => {
     getProxyFileByPublicIdForOwnerMock.mockResolvedValue({
       publicId: 'file-metapi-123',
       filename: 'report.pdf',

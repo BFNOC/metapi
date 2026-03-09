@@ -461,7 +461,7 @@ describe('buildUpstreamEndpointRequest', () => {
     ]);
   });
 
-  it('serializes file uploads into Responses input_file blocks for upstream responses endpoints', () => {
+  it('serializes file uploads into Responses input_file blocks without conflicting file ids', () => {
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',
       modelName: 'gpt-5.2',
@@ -499,7 +499,6 @@ describe('buildUpstreamEndpointRequest', () => {
           { type: 'input_text', text: 'read this' },
           {
             type: 'input_file',
-            file_id: 'file_local_123',
             filename: 'paper.pdf',
             file_data: 'data:application/pdf;base64,JVBERi0xLjQK',
           },
@@ -706,6 +705,51 @@ describe('buildUpstreamEndpointRequest', () => {
             type: 'input_file',
             filename: 'notes.txt',
             file_data: 'data:text/plain;base64,aGVsbG8=',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('preserves structured input_file file_url blocks on downstream responses bodies', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'upstream-gpt',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'openai',
+      siteUrl: 'https://example.com',
+      openaiBody: {},
+      downstreamFormat: 'responses',
+      responsesOriginalBody: {
+        model: 'gpt-5.2',
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [
+              { type: 'input_text', text: 'read this remote file' },
+              {
+                type: 'input_file',
+                filename: 'remote.pdf',
+                file_url: 'https://example.com/remote.pdf',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(request.body.input).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'read this remote file' },
+          {
+            type: 'input_file',
+            filename: 'remote.pdf',
+            file_url: 'https://example.com/remote.pdf',
           },
         ],
       },

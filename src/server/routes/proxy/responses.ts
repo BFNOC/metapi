@@ -23,6 +23,7 @@ import { executeEndpointFlow, withUpstreamPath } from './endpointFlow.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
 import { getProxyResourceOwner } from '../../middleware/auth.js';
+import { normalizeInputFileBlock } from '../../transformers/shared/inputFile.js';
 import {
   ProxyInputFileResolutionError,
   hasNonImageFileInputInOpenAiBody,
@@ -135,6 +136,18 @@ function wantsNativeResponsesReasoning(body: unknown): boolean {
   return hasResponsesReasoningRequest(body.reasoning);
 }
 
+function carriesResponsesFileUrlInput(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => carriesResponsesFileUrlInput(item));
+  }
+  if (!isRecord(value)) return false;
+
+  const normalizedFile = normalizeInputFileBlock(value);
+  if (normalizedFile?.fileUrl) return true;
+
+  return Object.values(value).some((entry) => carriesResponsesFileUrlInput(entry));
+}
+
 type UsageSummary = ReturnType<typeof parseProxyUsage>;
 
 export async function responsesProxyRoute(app: FastifyInstance) {
@@ -207,6 +220,15 @@ export async function responsesProxyRoute(app: FastifyInstance) {
       );
       const hasNonImageFileInput = hasNonImageFileInputInOpenAiBody(openAiBody);
       const prefersNativeResponsesReasoning = wantsNativeResponsesReasoning(normalizedResponsesBody);
+      const requiresNativeResponsesFileUrl = carriesResponsesFileUrlInput(normalizedResponsesBody.input);
+      if (requiresNativeResponsesFileUrl && String(selected.site.platform || '').trim().toLowerCase() === 'claude') {
+        return reply.code(400).send({
+          error: {
+            message: 'Responses input_file.file_url requires an upstream /v1/responses endpoint; current site only supports /v1/messages.',
+            type: 'invalid_request_error',
+          },
+        });
+      }
       const endpointCandidates = await resolveUpstreamEndpointCandidates(
         {
           site: selected.site,
@@ -220,6 +242,9 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
         },
       );
+      if (requiresNativeResponsesFileUrl) {
+        endpointCandidates.splice(0, endpointCandidates.length, 'responses');
+      }
       if (endpointCandidates.length === 0) {
         endpointCandidates.push('responses', 'chat', 'messages');
       }
@@ -329,12 +354,14 @@ export async function responsesProxyRoute(app: FastifyInstance) {
             return null;
           },
           shouldDowngrade: (ctx) => (
-            ctx.response.status >= 500
-            || isEndpointDowngradeError(ctx.response.status, ctx.rawErrText)
-            || openAiResponsesTransformer.compatibility.shouldDowngradeChatToMessages(
-              ctx.request.path,
-              ctx.response.status,
-              ctx.rawErrText,
+            !requiresNativeResponsesFileUrl && (
+              ctx.response.status >= 500
+              || isEndpointDowngradeError(ctx.response.status, ctx.rawErrText)
+              || openAiResponsesTransformer.compatibility.shouldDowngradeChatToMessages(
+                ctx.request.path,
+                ctx.response.status,
+                ctx.rawErrText,
+              )
             )
           ),
           onDowngrade: (ctx) => {

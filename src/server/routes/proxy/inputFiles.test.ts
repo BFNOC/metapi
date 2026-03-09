@@ -49,7 +49,7 @@ describe('inlineLocalInputFileReferences', () => {
             {
               type: 'input_file',
               filename: 'report.pdf',
-              file_data: Buffer.from('%PDF-demo').toString('base64'),
+              file_data: `data:application/pdf;base64,${Buffer.from('%PDF-demo').toString('base64')}`,
             },
           ],
         },

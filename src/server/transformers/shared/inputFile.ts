@@ -15,6 +15,16 @@ function splitBase64DataUrl(value: string): { mimeType: string; data: string } |
   };
 }
 
+export function ensureBase64DataUrl(fileData: string, mimeType?: string | null): string {
+  const trimmedData = asTrimmedString(fileData);
+  if (!trimmedData) return trimmedData;
+  if (splitBase64DataUrl(trimmedData)) return trimmedData;
+
+  const normalizedMimeType = asTrimmedString(mimeType).toLowerCase();
+  if (!normalizedMimeType) return trimmedData;
+  return `data:${normalizedMimeType};base64,${trimmedData}`;
+}
+
 export type NormalizedInputFile = {
   sourceType?: 'file' | 'input_file';
   fileId?: string;
@@ -94,7 +104,12 @@ export function toResponsesInputFileBlock(file: NormalizedInputFile): Record<str
   const parsedDataUrl = file.fileData ? splitBase64DataUrl(file.fileData) : null;
   const block: Record<string, unknown> = { type: 'input_file' };
   if (file.fileId) block.file_id = file.fileId;
-  if (file.fileData) block.file_data = parsedDataUrl?.data || file.fileData;
+  if (file.fileData) {
+    block.file_data = ensureBase64DataUrl(
+      file.fileData,
+      parsedDataUrl?.mimeType || inferInputFileMimeType(file),
+    );
+  }
   if (file.filename) block.filename = file.filename;
   return block;
 }

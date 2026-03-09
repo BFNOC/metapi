@@ -455,7 +455,7 @@ describe('buildUpstreamEndpointRequest', () => {
         role: 'user',
         content: [
           { type: 'input_text', text: 'summarize this file' },
-          { type: 'input_file', filename: 'brief.pdf', file_data: 'JVBERi0xLjc=' },
+          { type: 'input_file', filename: 'brief.pdf', file_data: 'data:application/pdf;base64,JVBERi0xLjc=' },
         ],
       },
     ]);
@@ -501,7 +501,7 @@ describe('buildUpstreamEndpointRequest', () => {
             type: 'input_file',
             file_id: 'file_local_123',
             filename: 'paper.pdf',
-            file_data: 'JVBERi0xLjQK',
+            file_data: 'data:application/pdf;base64,JVBERi0xLjQK',
           },
         ],
       },
@@ -705,7 +705,7 @@ describe('buildUpstreamEndpointRequest', () => {
           {
             type: 'input_file',
             filename: 'notes.txt',
-            file_data: 'aGVsbG8=',
+            file_data: 'data:text/plain;base64,aGVsbG8=',
           },
         ],
       },

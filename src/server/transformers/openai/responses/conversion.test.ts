@@ -231,7 +231,7 @@ describe('convertOpenAiBodyToResponsesBody', () => {
           {
             type: 'input_file',
             filename: 'notes.md',
-            file_data: Buffer.from('# hello').toString('base64'),
+            file_data: `data:text/markdown;base64,${Buffer.from('# hello').toString('base64')}`,
           },
         ],
       },
@@ -427,7 +427,7 @@ describe('convertOpenAiBodyToResponsesBody', () => {
             type: 'input_file',
             file_id: 'file_local_123',
             filename: 'report.pdf',
-            file_data: 'JVBERi0xLjQK',
+            file_data: 'data:application/pdf;base64,JVBERi0xLjQK',
           },
         ],
       },

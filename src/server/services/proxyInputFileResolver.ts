@@ -1,5 +1,6 @@
 import type { ProxyResourceOwner } from '../middleware/auth.js';
 import { getProxyFileByPublicIdForOwner, LOCAL_PROXY_FILE_ID_PREFIX } from './proxyFileStore.js';
+import { ensureBase64DataUrl } from '../transformers/shared/inputFile.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -213,7 +214,7 @@ function toResponsesResolvedBlock(file: { fileId?: string; filename: string; fil
     type: 'input_file',
     ...(file.fileId ? { file_id: file.fileId } : {}),
     filename: file.filename,
-    file_data: file.fileData,
+    file_data: ensureBase64DataUrl(file.fileData, file.mimeType),
   };
 }
 

@@ -393,7 +393,7 @@ describe('convertOpenAiBodyToResponsesBody', () => {
     expect(result.include).toBeUndefined();
   });
 
-  it('maps OpenAI file-style content blocks into Responses input_file blocks', () => {
+  it('maps OpenAI file-style content blocks into inline-only Responses input_file blocks', () => {
     const result = convertOpenAiBodyToResponsesBody(
       {
         model: 'gpt-5',
@@ -425,7 +425,6 @@ describe('convertOpenAiBodyToResponsesBody', () => {
           { type: 'input_text', text: 'summarize this file' },
           {
             type: 'input_file',
-            file_id: 'file_local_123',
             filename: 'report.pdf',
             file_data: 'data:application/pdf;base64,JVBERi0xLjQK',
           },
@@ -766,7 +765,7 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     });
   });
 
-  it('keeps Responses input_file items when converting back to OpenAI-compatible bodies', () => {
+  it('keeps Responses input_file items when converting back to OpenAI-compatible bodies without conflicting file ids', () => {
     const result = convertResponsesBodyToOpenAiBody(
       {
         model: 'gpt-5',
@@ -799,10 +798,49 @@ describe('convertResponsesBodyToOpenAiBody', () => {
           {
             type: 'file',
             file: {
-              file_id: 'file_local_456',
               filename: 'notes.md',
               mime_type: 'text/markdown',
               file_data: 'IyBoZWxsbwo=',
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('keeps Responses input_file file_url items when converting back to OpenAI-compatible bodies', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [
+              { type: 'input_text', text: 'read this remote file' },
+              {
+                type: 'input_file',
+                filename: 'remote.pdf',
+                file_url: 'https://example.com/remote.pdf',
+              },
+            ],
+          },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'read this remote file' },
+          {
+            type: 'file',
+            file: {
+              filename: 'remote.pdf',
+              file_url: 'https://example.com/remote.pdf',
             },
           },
         ],

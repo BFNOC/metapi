@@ -212,7 +212,7 @@ function toResponsesResolvedBlock(file: { fileId?: string; filename: string; fil
   }
   return {
     type: 'input_file',
-    ...(file.fileId ? { file_id: file.fileId } : {}),
+    ...(!file.fileData && file.fileId ? { file_id: file.fileId } : {}),
     filename: file.filename,
     file_data: ensureBase64DataUrl(file.fileData, file.mimeType),
   };

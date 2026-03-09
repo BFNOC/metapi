@@ -37,7 +37,7 @@ describe('proxyInputFileResolver', () => {
     expect(getProxyFileByPublicIdForOwnerMock).not.toHaveBeenCalled();
   });
 
-  it('resolves object-form responses input payloads with local file ids', async () => {
+  it('resolves object-form responses input payloads with local file ids into inline-only uploads', async () => {
     getProxyFileByPublicIdForOwnerMock.mockResolvedValue({
       publicId: 'file-metapi-123',
       filename: 'brief.pdf',
@@ -69,7 +69,6 @@ describe('proxyInputFileResolver', () => {
         content: [
           {
             type: 'input_file',
-            file_id: 'file-metapi-123',
             filename: 'brief.pdf',
             file_data: `data:application/pdf;base64,${Buffer.from('%PDF-local').toString('base64')}`,
           },

@@ -7,6 +7,6 @@ describe('App mobile layout', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
 
     expect(source).toContain('useIsMobile(768)');
-    expect(source).toContain("document.documentElement.setAttribute('data-layout'");
+    expect(source).toContain("document.documentElement.setAttribute('data-layout', isMobile ? 'mobile' : 'desktop');");
   });
 });

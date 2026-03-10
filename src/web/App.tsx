@@ -153,7 +153,7 @@ function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (text: str
               reason = text;
             }
           }
-        } catch {}
+        } catch { }
         setError(t(resolveLoginErrorMessage(res.status, reason)));
         setLoading(false);
       }
@@ -688,6 +688,10 @@ function AppShell() {
       <div className="app-layout">
         {isMobile ? (
           <MobileDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
+            <div className="mobile-drawer-header">
+              <img src="/logo.png" alt="Metapi" />
+              <span>Metapi</span>
+            </div>
             <nav className="mobile-nav">
               {sidebarGroups.map((group) => (
                 <div key={group.label} className="mobile-nav-group">
@@ -706,6 +710,19 @@ function AppShell() {
                   ))}
                 </div>
               ))}
+              <div className="mobile-nav-group">
+                <div className="mobile-nav-label">{t('更多')}</div>
+                {topNavItems.filter(n => n.to !== '/').map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) => `mobile-nav-item ${isActive ? 'active' : ''}`}
+                    onClick={() => setDrawerOpen(false)}
+                  >
+                    <span>{t(item.label)}</span>
+                  </NavLink>
+                ))}
+              </div>
             </nav>
           </MobileDrawer>
         ) : (

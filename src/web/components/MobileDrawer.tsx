@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 
 type MobileDrawerProps = {
   open: boolean;
@@ -7,14 +7,41 @@ type MobileDrawerProps = {
 };
 
 function MobileDrawer({ open, onClose, children }: MobileDrawerProps) {
-  if (!open) return null;
+  const [shouldRender, setShouldRender] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setShouldRender(true);
+      setIsClosing(false);
+    } else if (shouldRender) {
+      setIsClosing(true);
+      const timer = setTimeout(() => {
+        setShouldRender(false);
+        setIsClosing(false);
+      }, 280);
+      return () => clearTimeout(timer);
+    }
+  }, [open]);
+
+  const handleClose = useCallback(() => {
+    setIsClosing(true);
+    const timer = setTimeout(() => {
+      setShouldRender(false);
+      setIsClosing(false);
+      onClose();
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  if (!shouldRender) return null;
 
   return (
-    <div className="mobile-drawer-root">
+    <div className={`mobile-drawer-root ${isClosing ? 'is-closing' : ''}`}>
       <button
         type="button"
         className="mobile-drawer-backdrop"
-        onClick={onClose}
+        onClick={handleClose}
         aria-label="Close navigation"
       />
       <div className="mobile-drawer-panel" role="dialog" aria-modal="true">

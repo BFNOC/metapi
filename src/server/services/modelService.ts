@@ -71,7 +71,16 @@ export async function refreshModelsForAccount(accountId: number) {
     .get();
 
   if (!row) {
-    return { accountId, refreshed: false, modelCount: 0, reason: 'account_not_found' };
+    return {
+      accountId,
+      refreshed: false,
+      status: 'failed',
+      errorCode: 'account_not_found',
+      errorMessage: '账号不存在',
+      modelCount: 0,
+      modelsPreview: [],
+      reason: 'account_not_found',
+    };
   }
 
   const account = row.accounts;
@@ -94,11 +103,29 @@ export async function refreshModelsForAccount(accountId: number) {
   }
 
   if (isSiteDisabled(site.status)) {
-    return { accountId, refreshed: false, modelCount: 0, reason: 'site_disabled' };
+    return {
+      accountId,
+      refreshed: false,
+      status: 'skipped',
+      errorCode: 'site_disabled',
+      errorMessage: '站点已禁用',
+      modelCount: 0,
+      modelsPreview: [],
+      reason: 'site_disabled',
+    };
   }
 
   if (!adapter || account.status !== 'active') {
-    return { accountId, refreshed: false, modelCount: 0, reason: 'adapter_or_status' };
+    return {
+      accountId,
+      refreshed: false,
+      status: 'skipped',
+      errorCode: 'adapter_or_status',
+      errorMessage: '平台不可用或账号未激活',
+      modelCount: 0,
+      modelsPreview: [],
+      reason: 'adapter_or_status',
+    };
   }
 
   const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
@@ -278,6 +305,8 @@ export async function refreshModelsForAccount(accountId: number) {
     accountId,
     refreshed: true,
     status: 'success',
+    errorCode: null,
+    errorMessage: '',
     modelCount: accountModels.size,
     modelsPreview,
     tokenScanned: scannedTokenCount,

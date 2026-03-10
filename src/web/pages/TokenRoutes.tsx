@@ -21,7 +21,10 @@ import { api } from '../api.js';
 import { BrandGlyph, InlineBrandIcon, getBrand, hashColor, normalizeBrandIconKey, type BrandInfo } from '../components/BrandIcon.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { MobileCard, MobileField } from '../components/MobileCard.js';
+import { MobileDrawer } from '../components/MobileDrawer.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
+import { useIsMobile } from '../components/useIsMobile.js';
 import { tr } from '../i18n.js';
 import {
   buildRouteModelCandidatesIndex,
@@ -708,6 +711,7 @@ export default function TokenRoutes() {
   const [activeEndpointType, setActiveEndpointType] = useState<string | null>(null);
   const [activeGroupFilter, setActiveGroupFilter] = useState<GroupFilter>(null);
   const [filterCollapsed, setFilterCollapsed] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
   const [sortBy, setSortBy] = useState<RouteSortBy>('channelCount');
   const [sortDir, setSortDir] = useState<RouteSortDir>('desc');
 
@@ -729,6 +733,8 @@ export default function TokenRoutes() {
   const [decisionAutoSkipped, setDecisionAutoSkipped] = useState(false);
   const [visibleRouteCount, setVisibleRouteCount] = useState(ROUTE_RENDER_CHUNK);
   const [expandedSourceGroupMap, setExpandedSourceGroupMap] = useState<Record<string, boolean>>({});
+  const [expandedRouteIds, setExpandedRouteIds] = useState<number[]>([]);
+  const isMobile = useIsMobile(768);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -742,6 +748,217 @@ export default function TokenRoutes() {
   );
 
   const toast = useToast();
+
+  const openFilters = () => {
+    setFilterCollapsed(false);
+    setShowFilters(true);
+  };
+
+  const closeFilters = () => {
+    setFilterCollapsed(true);
+    setShowFilters(false);
+  };
+
+  const renderFilterPanelContent = () => (
+    <div className={`filter-panel filter-collapsible ${filterPanelPresence.isVisible ? '' : 'is-closing'}`.trim()}>
+      <div className="filter-panel-section">
+        <div className="filter-panel-title">
+          品牌
+          {activeBrand && <button onClick={() => setActiveBrand(null)}>重置</button>}
+        </div>
+
+        <div className={`filter-item ${!activeBrand ? 'active' : ''}`} onClick={() => setActiveBrand(null)}>
+          <span
+            className="filter-item-icon"
+            style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}
+          >
+            ✦
+          </span>
+          全部品牌
+          <span className="filter-item-count">{routes.length}</span>
+        </div>
+
+        {brandList.list.map(([brandName, { count, brand }]) => (
+          <div
+            key={brandName}
+            className={`filter-item ${activeBrand === brandName ? 'active' : ''}`}
+            onClick={() => setActiveBrand(activeBrand === brandName ? null : brandName)}
+          >
+            <span className="filter-item-icon" style={{ background: 'var(--color-bg)', borderRadius: 4, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <BrandGlyph brand={brand} size={14} fallbackText={brandName} />
+            </span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{brandName}</span>
+            <span className="filter-item-count">{count}</span>
+          </div>
+        ))}
+
+        {brandList.otherCount > 0 && (
+          <div
+            className={`filter-item ${activeBrand === '__other__' ? 'active' : ''}`}
+            onClick={() => setActiveBrand(activeBrand === '__other__' ? null : '__other__')}
+          >
+            <span
+              className="filter-item-icon"
+              style={{ background: 'var(--color-bg)', color: 'var(--color-text-muted)', fontSize: 10 }}
+            >
+              ?
+            </span>
+            其他
+            <span className="filter-item-count">{brandList.otherCount}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="filter-panel-section">
+        <div className="filter-panel-title">
+          {tr('群组')}
+          {activeGroupFilter !== null && <button onClick={() => setActiveGroupFilter(null)}>重置</button>}
+        </div>
+
+        <div
+          className={`filter-item ${activeGroupFilter === '__all__' ? 'active' : ''}`}
+          onClick={() => setActiveGroupFilter(activeGroupFilter === '__all__' ? null : '__all__')}
+        >
+          <span
+            className="filter-item-icon"
+            style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}
+          >
+            ◎
+          </span>
+          {tr('全部群组')}
+          <span className="filter-item-count">{groupRouteList.length}</span>
+        </div>
+
+        {groupRouteList.map((groupRoute) => (
+          <div
+            key={groupRoute.id}
+            className={`filter-item ${activeGroupFilter === groupRoute.id ? 'active' : ''}`}
+            onClick={() => setActiveGroupFilter(activeGroupFilter === groupRoute.id ? null : groupRoute.id)}
+          >
+            <span
+              className="filter-item-icon"
+              style={{ background: 'var(--color-bg)', borderRadius: 4, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              {groupRoute.icon.kind === 'brand' ? (
+                <BrandGlyph icon={groupRoute.icon.value} alt={groupRoute.title} size={14} fallbackText={groupRoute.title} />
+              ) : groupRoute.icon.kind === 'text' ? (
+                <span style={{ fontSize: 12, lineHeight: 1 }}>{groupRoute.icon.value}</span>
+              ) : groupRoute.brand ? (
+                <BrandGlyph brand={groupRoute.brand} alt={groupRoute.title} size={14} fallbackText={groupRoute.title} />
+              ) : (
+                <InlineBrandIcon model={groupRoute.modelPattern} size={14} />
+              )}
+            </span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{groupRoute.title}</span>
+            <span className="filter-item-count">{groupRoute.channelCount}</span>
+          </div>
+        ))}
+      </div>
+
+      {siteList.length > 0 && (
+        <div className="filter-panel-section">
+          <div className="filter-panel-title">
+            站点
+            {activeSite && <button onClick={() => setActiveSite(null)}>重置</button>}
+          </div>
+
+          <div className={`filter-item ${!activeSite ? 'active' : ''}`} onClick={() => setActiveSite(null)}>
+            <span
+              className="filter-item-icon"
+              style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}
+            >
+              ⚡
+            </span>
+            全部站点
+            <span className="filter-item-count">{routes.length}</span>
+          </div>
+
+          {siteList.map(([siteName, { count }]) => (
+            <div
+              key={siteName}
+              className={`filter-item ${activeSite === siteName ? 'active' : ''}`}
+              onClick={() => setActiveSite(activeSite === siteName ? null : siteName)}
+            >
+              <span
+                className="filter-item-icon"
+                style={{ background: hashColor(siteName), color: 'white', fontSize: 9, borderRadius: 4 }}
+              >
+                {siteAvatarLetters(siteName)}
+              </span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{siteName}</span>
+              <span className="filter-item-count">{count}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="filter-panel-section">
+        <div className="filter-panel-title">
+          接口能力
+          {activeEndpointType && <button onClick={() => setActiveEndpointType(null)}>重置</button>}
+        </div>
+
+        <div className={`filter-item ${!activeEndpointType ? 'active' : ''}`} onClick={() => setActiveEndpointType(null)}>
+          <span
+            className="filter-item-icon"
+            style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}
+          >
+            ⚙
+          </span>
+          全部能力
+          <span className="filter-item-count">{routes.length}</span>
+        </div>
+
+        {endpointTypeList.map(([endpointType, count]) => (
+          <div
+            key={endpointType}
+            className={`filter-item ${activeEndpointType === endpointType ? 'active' : ''}`}
+            onClick={() => setActiveEndpointType(activeEndpointType === endpointType ? null : endpointType)}
+          >
+            <span
+              className="filter-item-icon"
+              style={{
+                background: 'var(--color-bg)',
+                color: 'var(--color-text-muted)',
+                fontSize: 10,
+                borderRadius: 4,
+                overflow: 'hidden',
+              }}
+            >
+              {(() => {
+                const iconModel = resolveEndpointTypeIconModel(endpointType);
+                if (!iconModel) return <span style={{ fontSize: 10 }}>⚙</span>;
+                return <InlineBrandIcon model={iconModel} size={14} />;
+              })()}
+            </span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{endpointType}</span>
+            <span className="filter-item-count">{count}</span>
+          </div>
+        ))}
+
+        {endpointTypeList.length === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', padding: '4px 10px 0' }}>
+            暂无接口能力数据
+          </div>
+        )}
+      </div>
+
+      <button
+        className="btn btn-ghost"
+        style={{
+          width: '100%',
+          fontSize: 12,
+          padding: '6px 10px',
+          marginTop: 8,
+          justifyContent: 'center',
+          border: '1px solid var(--color-border)',
+        }}
+        onClick={closeFilters}
+      >
+        {tr('收起')}
+      </button>
+    </div>
+  );
 
   const loadRouteDecisions = async (
     routeRows: RouteRow[],
@@ -1401,205 +1618,13 @@ export default function TokenRoutes() {
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', gap: 24, minHeight: 400 }}>
-      {filterPanelPresence.shouldRender && (
-        <div className={`filter-panel filter-collapsible ${filterPanelPresence.isVisible ? '' : 'is-closing'}`.trim()}>
-          <div className="filter-panel-section">
-            <div className="filter-panel-title">
-              品牌
-              {activeBrand && <button onClick={() => setActiveBrand(null)}>重置</button>}
-            </div>
-
-            <div className={`filter-item ${!activeBrand ? 'active' : ''}`} onClick={() => setActiveBrand(null)}>
-              <span
-                className="filter-item-icon"
-                style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}
-              >
-                ✦
-              </span>
-              全部品牌
-              <span className="filter-item-count">{routes.length}</span>
-            </div>
-
-            {brandList.list.map(([brandName, { count, brand }]) => (
-              <div
-                key={brandName}
-                className={`filter-item ${activeBrand === brandName ? 'active' : ''}`}
-                onClick={() => setActiveBrand(activeBrand === brandName ? null : brandName)}
-              >
-                <span className="filter-item-icon" style={{ background: 'var(--color-bg)', borderRadius: 4, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <BrandGlyph brand={brand} size={14} fallbackText={brandName} />
-                </span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{brandName}</span>
-                <span className="filter-item-count">{count}</span>
-              </div>
-            ))}
-
-            {brandList.otherCount > 0 && (
-              <div
-                className={`filter-item ${activeBrand === '__other__' ? 'active' : ''}`}
-                onClick={() => setActiveBrand(activeBrand === '__other__' ? null : '__other__')}
-              >
-                <span
-                  className="filter-item-icon"
-                  style={{ background: 'var(--color-bg)', color: 'var(--color-text-muted)', fontSize: 10 }}
-                >
-                  ?
-                </span>
-                其他
-                <span className="filter-item-count">{brandList.otherCount}</span>
-              </div>
-            )}
+      {!isMobile && filterPanelPresence.shouldRender && renderFilterPanelContent()}
+      {isMobile && (
+        <MobileDrawer open={showFilters} onClose={closeFilters}>
+          <div className="mobile-filter-panel">
+            {filterPanelPresence.shouldRender && renderFilterPanelContent()}
           </div>
-
-          <div className="filter-panel-section">
-            <div className="filter-panel-title">
-              {tr('群组')}
-              {activeGroupFilter !== null && <button onClick={() => setActiveGroupFilter(null)}>重置</button>}
-            </div>
-
-            <div
-              className={`filter-item ${activeGroupFilter === '__all__' ? 'active' : ''}`}
-              onClick={() => setActiveGroupFilter(activeGroupFilter === '__all__' ? null : '__all__')}
-            >
-              <span
-                className="filter-item-icon"
-                style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}
-              >
-                ◎
-              </span>
-              {tr('全部群组')}
-              <span className="filter-item-count">{groupRouteList.length}</span>
-            </div>
-
-            {groupRouteList.map((groupRoute) => (
-              <div
-                key={groupRoute.id}
-                className={`filter-item ${activeGroupFilter === groupRoute.id ? 'active' : ''}`}
-                onClick={() => setActiveGroupFilter(activeGroupFilter === groupRoute.id ? null : groupRoute.id)}
-              >
-                <span
-                  className="filter-item-icon"
-                  style={{ background: 'var(--color-bg)', borderRadius: 4, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                >
-                  {groupRoute.icon.kind === 'brand' ? (
-                    <BrandGlyph icon={groupRoute.icon.value} alt={groupRoute.title} size={14} fallbackText={groupRoute.title} />
-                  ) : groupRoute.icon.kind === 'text' ? (
-                    <span style={{ fontSize: 12, lineHeight: 1 }}>{groupRoute.icon.value}</span>
-                  ) : groupRoute.brand ? (
-                    <BrandGlyph brand={groupRoute.brand} alt={groupRoute.title} size={14} fallbackText={groupRoute.title} />
-                  ) : (
-                    <InlineBrandIcon model={groupRoute.modelPattern} size={14} />
-                  )}
-                </span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{groupRoute.title}</span>
-                <span className="filter-item-count">{groupRoute.channelCount}</span>
-              </div>
-            ))}
-          </div>
-
-          {siteList.length > 0 && (
-            <div className="filter-panel-section">
-              <div className="filter-panel-title">
-                站点
-                {activeSite && <button onClick={() => setActiveSite(null)}>重置</button>}
-              </div>
-
-              <div className={`filter-item ${!activeSite ? 'active' : ''}`} onClick={() => setActiveSite(null)}>
-                <span
-                  className="filter-item-icon"
-                  style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}
-                >
-                  ⚡
-                </span>
-                全部站点
-                <span className="filter-item-count">{routes.length}</span>
-              </div>
-
-              {siteList.map(([siteName, { count }]) => (
-                <div
-                  key={siteName}
-                  className={`filter-item ${activeSite === siteName ? 'active' : ''}`}
-                  onClick={() => setActiveSite(activeSite === siteName ? null : siteName)}
-                >
-                  <span
-                    className="filter-item-icon"
-                    style={{ background: hashColor(siteName), color: 'white', fontSize: 9, borderRadius: 4 }}
-                  >
-                    {siteAvatarLetters(siteName)}
-                  </span>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{siteName}</span>
-                  <span className="filter-item-count">{count}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="filter-panel-section">
-            <div className="filter-panel-title">
-              接口能力
-              {activeEndpointType && <button onClick={() => setActiveEndpointType(null)}>重置</button>}
-            </div>
-
-            <div className={`filter-item ${!activeEndpointType ? 'active' : ''}`} onClick={() => setActiveEndpointType(null)}>
-              <span
-                className="filter-item-icon"
-                style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}
-              >
-                ⚙
-              </span>
-              全部能力
-              <span className="filter-item-count">{routes.length}</span>
-            </div>
-
-            {endpointTypeList.map(([endpointType, count]) => (
-              <div
-                key={endpointType}
-                className={`filter-item ${activeEndpointType === endpointType ? 'active' : ''}`}
-                onClick={() => setActiveEndpointType(activeEndpointType === endpointType ? null : endpointType)}
-              >
-                <span
-                  className="filter-item-icon"
-                  style={{
-                    background: 'var(--color-bg)',
-                    color: 'var(--color-text-muted)',
-                    fontSize: 10,
-                    borderRadius: 4,
-                    overflow: 'hidden',
-                  }}
-                >
-                  {(() => {
-                    const iconModel = resolveEndpointTypeIconModel(endpointType);
-                    if (!iconModel) return <span style={{ fontSize: 10 }}>⚙</span>;
-                    return <InlineBrandIcon model={iconModel} size={14} />;
-                  })()}
-                </span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{endpointType}</span>
-                <span className="filter-item-count">{count}</span>
-              </div>
-            ))}
-
-            {endpointTypeList.length === 0 && (
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', padding: '4px 10px 0' }}>
-                暂无接口能力数据
-              </div>
-            )}
-          </div>
-
-          <button
-            className="btn btn-ghost"
-            style={{
-              width: '100%',
-              fontSize: 12,
-              padding: '6px 10px',
-              marginTop: 8,
-              justifyContent: 'center',
-              border: '1px solid var(--color-border)',
-            }}
-            onClick={() => setFilterCollapsed(true)}
-          >
-            {tr('收起')}
-          </button>
-        </div>
+        </MobileDrawer>
       )}
 
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1627,7 +1652,15 @@ export default function TokenRoutes() {
           </div>
 
           <div className="page-actions" style={{ flexWrap: 'wrap' }}>
-            {filterCollapsed && (
+            {isMobile ? (
+              <button
+                className="btn btn-ghost"
+                style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+                onClick={openFilters}
+              >
+                {tr('筛选')}
+              </button>
+            ) : (filterCollapsed && (
               <button
                 className="btn btn-ghost"
                 style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
@@ -1635,7 +1668,7 @@ export default function TokenRoutes() {
               >
                 {tr('筛选')}
               </button>
-            )}
+            ))}
 
             <button
               onClick={handleRefreshRouteDecisions}
@@ -1878,7 +1911,10 @@ export default function TokenRoutes() {
             </div>
           )}
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div
+            className={isMobile ? 'mobile-card-list' : ''}
+            style={isMobile ? undefined : { display: 'flex', flexDirection: 'column', gap: 12 }}
+          >
             {visibleRoutes.map((route, i) => {
               const candidateView = getRouteCandidateView(route.id);
               const routeCandidates = candidateView.routeCandidates;
@@ -1949,7 +1985,7 @@ export default function TokenRoutes() {
               const routeIcon = resolveRouteIcon(route);
               const routeBrand = routeBrandById.get(route.id) || null;
 
-              return (
+              const routeCard = (
                 <div
                   key={route.id}
                   className={`card animate-slide-up stagger-${Math.min(i + 1, 5)}`}
@@ -2326,6 +2362,44 @@ export default function TokenRoutes() {
                     <div style={{ fontSize: 13, color: 'var(--color-text-muted)', paddingLeft: 4 }}>暂无通道</div>
                   )}
                 </div>
+              );
+
+              const isExpanded = expandedRouteIds.includes(route.id);
+
+              return isMobile ? (
+                <MobileCard
+                  key={route.id}
+                  title={resolveRouteTitle(route)}
+                  actions={(
+                    <span className={`badge ${route.enabled ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 10 }}>
+                      {route.enabled ? tr('启用') : tr('禁用')}
+                    </span>
+                  )}
+                >
+                  <MobileField label="模型" value={route.modelPattern} />
+                  <MobileField label="通道" value={route.channels?.length || 0} />
+                  <MobileField label="状态" value={route.enabled ? tr('启用') : tr('禁用')} />
+                  {isExpanded ? (
+                    <div className="mobile-card-extra">
+                      {routeCard}
+                    </div>
+                  ) : null}
+                  <div className="mobile-card-actions">
+                    <button
+                      type="button"
+                      className="btn btn-link"
+                      onClick={() => setExpandedRouteIds((prev) => (
+                        prev.includes(route.id)
+                          ? prev.filter((id) => id !== route.id)
+                          : [...prev, route.id]
+                      ))}
+                    >
+                      {isExpanded ? '收起' : '详情'}
+                    </button>
+                  </div>
+                </MobileCard>
+              ) : (
+                routeCard
               );
             })}
 

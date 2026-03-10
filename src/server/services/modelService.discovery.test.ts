@@ -120,6 +120,10 @@ describe('refreshModelsForAccount credential discovery', () => {
 
     expect(result).toMatchObject({
       accountId: account.id,
+      refreshed: true,
+      modelCount: 0,
+      modelsPreview: [],
+      tokenScanned: 0,
       status: 'failed',
       errorCode: 'unauthorized',
     });
@@ -129,5 +133,8 @@ describe('refreshModelsForAccount credential discovery', () => {
       .get();
     const parsed = JSON.parse(latest!.extraConfig || '{}');
     expect(parsed.runtimeHealth?.state).toBe('unhealthy');
+    expect(parsed.runtimeHealth?.source).toBe('model-discovery');
+    expect(parsed.runtimeHealth?.reason).toBe('模型获取失败，API Key 已无效');
+    expect(parsed.runtimeHealth?.checkedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 });

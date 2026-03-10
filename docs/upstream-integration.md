@@ -34,7 +34,7 @@ Metapi 支持两大类上游站点：
 
 ### New API
 
-**适用平台：** New API 及其衍生版本（Wong-Gongyi、VO-API、Super-API、RIX-API、Neo-API 等）
+**适用平台：** New API 及其衍生版本（AnyRouter、VO-API、Super-API、RIX-API、Neo-API 等）
 
 #### 站点配置
 
@@ -50,37 +50,42 @@ Metapi 支持两大类上游站点：
 
 New API 支持三种凭证类型：
 
-##### 1. 用户名密码登录
+##### 1. 用户名密码登录（推荐AnyRouter使用）
 
-- **适用场景：** 有完整账号权限，需要自动签到、余额查询、Token 管理
+- **适用场景：** 有完整账号权限，需要自动签到、余额查询、账号令牌管理
 - **填写方式：**
   - 用户名：`your-username`
   - 密码：`your-password`
-- **自动获取：** 系统自动登录并获取 Access Token 和 API Token
+- **自动获取：** 系统自动登录并获取 Access Token 和账号令牌
 
 ##### 2. Access Token / Session Cookie
 
 - **适用场景：** 已有登录凭证，无需密码
 - **填写方式：**
   - 在「Access Token」字段填入以下任一格式：
-    - JWT Token：`eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
-    - Session Cookie：`session=MTczNjQxMjM0NXxEdi1CQUFFQ180SUFBUkFCRUFBQVB2LUNBQUVHYzNSeWFXNW5EQThBRFhObGMzTnBiMjVmZEdGaWJHVUdjM1J5YVc1bkRBSUFBQT09fGRlYWRiZWVmMTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWY=`
-    - Cookie 字符串：`session=xxx; token=yyy`
+    - Session Cookie：**（最不推荐）**
+    - 可通过浏览器F12获取 ![Session Cookie 获取](./screenshots/session-cookie-f12.png)
+    - 一般为如下格式：`session=MTczNjQxMjM0NXxEdi1CQUFFQ180SUFBUkFCRUFBQVB2LUNBQUVHYzNSeWFXNW5EQThBRFhObGMzTnBiMjVmZEdGaWJHVUdjM1J5YVc1bkRBSUFBQT09fGRlYWRiZWVmMTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWY=`
+    - 系统访问令牌和用户ID**（推荐非Anyrouter的其他New API站点使用）**
+    - ![](./screenshots/account-management.png)
 - **自动解析：** 系统自动识别凭证类型并提取用户信息
 
-##### 3. API Token（仅代理）
+##### 3. API Key（仅代理）
 
-- **适用场景：** 仅用于模型调用，不需要管理功能
+- **适用场景：** 仅用于模型调用，不需要余额管理、自动签到等功能
 - **填写方式：**
   - 在「API Token」字段填入：`sk-xxxxxxxxxxxxxx`
-- **限制：** 无法使用签到、余额刷新、Token 管理等功能
+- **限制：** 无法使用签到、余额刷新、账号令牌管理等功能
 
 #### 特殊说明
 
-**User ID 自动探测：** New API 的某些衍生版本（如 Wong-Gongyi、VO-API）需要在请求头中携带 `New-API-User` / `Veloera-User` / `voapi-user` 等字段。Metapi 会自动：
+**User ID 自动探测：** New API 通常需要在请求头中携带 `New-API-User` / `Veloera-User` / `voapi-user` 等字段。Metapi 会自动：
+
 1. 从 JWT Token 中解码 User ID
 2. 从 Session Cookie 中提取 User ID（支持 Gob 编码解析）
 3. 通过探测常见 ID 范围验证可用性
+
+如果以上方法都不能获取到ID，则需要用户手动获取。
 
 **防护盾穿透：** 自动处理阿里云盾 / Cloudflare 等 JS 挑战（`acw_sc__v2` / `cdn_sec_tc`），无需手动配置。
 
@@ -100,7 +105,7 @@ New API 支持三种凭证类型：
 
 #### 账号凭证
 
-One API 支持与 New API 相同的三种凭证类型（用户名密码 / Access Token / API Token），配置方式相同。
+One API 支持与 New API 相同的三种凭证类型（用户名密码 / Access Token / API Key），配置方式相同。
 
 ---
 
@@ -118,7 +123,7 @@ One API 支持与 New API 相同的三种凭证类型（用户名密码 / Access
 
 #### 账号凭证
 
-OneHub 继承 One API 的凭证体系，支持用户名密码、Access Token、API Token 三种方式。
+OneHub 继承 One API 的凭证体系，支持用户名密码、Access Token、API Key 三种方式。
 
 **额外功能：** OneHub 支持 Token 分组（`token_group`），Metapi 会自动识别并保留分组信息。
 
@@ -138,7 +143,7 @@ OneHub 继承 One API 的凭证体系，支持用户名密码、Access Token、A
 
 #### 账号凭证
 
-DoneHub 完全兼容 OneHub 的凭证体系，配置方式相同。
+DoneHub 完全兼容 OneHub 的凭证体系，配置方式相同，DoneHub获取令牌位置如下图所示：![DoneHub 令牌位置](./screenshots/donehub-token.png)
 
 ---
 
@@ -158,25 +163,6 @@ DoneHub 完全兼容 OneHub 的凭证体系，配置方式相同。
 
 Veloera 基于 New API 架构，支持相同的凭证类型。特别注意：
 - Veloera 需要 `Veloera-User` 请求头，Metapi 会自动添加
-- 支持 Session Cookie 和 JWT Token
-
----
-
-### AnyRouter
-
-**适用平台：** AnyRouter 通用路由平台
-
-#### 站点配置
-
-| 字段 | 说明 | 示例 |
-|------|------|------|
-| **站点名称** | 自定义名称 | `AnyRouter 平台` |
-| **站点 URL** | AnyRouter 部署地址 | `https://anyrouter.example.com` |
-| **平台类型** | 选择 `anyrouter` | - |
-
-#### 账号凭证
-
-AnyRouter 基于 New API 架构，凭证配置方式相同。
 
 ---
 
@@ -194,12 +180,20 @@ AnyRouter 基于 New API 架构，凭证配置方式相同。
 
 #### 账号凭证
 
-Sub2API 支持：
-- **用户名密码登录**
-- **Access Token**
-- **API Token**（订阅密钥）
+Sub2API 常见 JWT 短期会话机制，和传统 NewAPI 站点差异较大。按下面步骤进行添加：
 
-配置方式与 New API 相同。
+首先去中转站点F12打开如下界面：
+
+![Sub2API 认证字段示例](./screenshots/sub2api-auth-f12.png)
+
+然后回到Metapi账号添加处：
+
+![Sub2API Session 配置](./screenshots/sub2api-session-config.png)
+
+1. 在「凭证模式」里选择 Session 模式，分别粘贴F12界面中的auth_token、refresh_token、token_expires_at字段进行验证，无需配置用户ID。
+2. 不要使用账号密码登录，Metapi 不支持代替 Sub2API 做登录
+3. Sub2API 通常为订阅制使用，不支持签到；如果你只关心代理调用，也可以直接改用 API Key 模式
+4. 若 `GET /v1/models` 为空，先确认该账号下已有可用用户 API Key，Metapi 会再尝试用它发现模型
 
 ---
 
@@ -232,7 +226,7 @@ Sub2API 支持：
 | 代理调用 | ✅ 支持 |
 | 余额查询 | ❌ 不支持（OpenAI 无公开接口） |
 | 自动签到 | ❌ 不适用 |
-| Token 管理 | ❌ 不适用 |
+| 账号令牌管理 | ❌ 不适用 |
 
 ---
 
@@ -261,7 +255,7 @@ Sub2API 支持：
 | 代理调用 | ✅ 支持（自动转换 OpenAI ⇄ Claude 格式） |
 | 余额查询 | ❌ 不支持 |
 | 自动签到 | ❌ 不适用 |
-| Token 管理 | ❌ 不适用 |
+| 账号令牌管理 | ❌ 不适用 |
 
 **协议转换：** Metapi 自动处理 OpenAI 格式与 Claude Messages API 格式的双向转换，下游客户端可使用 OpenAI SDK 调用 Claude 模型。
 
@@ -292,7 +286,7 @@ Sub2API 支持：
 | 代理调用 | ✅ 支持（自动转换 OpenAI ⇄ Gemini 格式） |
 | 余额查询 | ❌ 不支持 |
 | 自动签到 | ❌ 不适用 |
-| Token 管理 | ❌ 不适用 |
+| 账号令牌管理 | ❌ 不适用 |
 
 **协议转换：** Metapi 自动处理 OpenAI 格式与 Gemini `generateContent` API 格式的双向转换。
 
@@ -440,7 +434,7 @@ Metapi 自动追踪每个账号的健康状态：
 
 | 场景 | 推荐凭证类型 | 原因 |
 |------|-------------|------|
-| 个人站点，需要完整功能 | 用户名密码 | 支持自动签到、Token 管理 |
+| 个人站点，需要完整功能 | 用户名密码 | 支持自动签到、账号令牌管理 |
 | 共享账号，只读权限 | Access Token | 避免密码泄露 |
 | 仅用于模型调用 | API Token | 最小权限原则 |
 

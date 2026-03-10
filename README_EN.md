@@ -391,46 +391,9 @@ For Docker Compose, desktop installers, reverse proxy, upgrades, and database op
 | `BALANCE_REFRESH_CRON` | Balance refresh cron expression | `0 * * * *` |
 
 <details>
-<summary><strong>Smart Routing Parameters</strong></summary>
+<summary><strong>Smart Routing, Notification & Security Configuration</strong></summary>
 
-| Variable | Description | Default |
-| --- | --- | --- |
-| `ROUTING_FALLBACK_UNIT_COST` | Default unit price when no cost signal | `1` |
-| `BASE_WEIGHT_FACTOR` | Base weight factor | `0.5` |
-| `VALUE_SCORE_FACTOR` | Value score factor | `0.5` |
-| `COST_WEIGHT` | Cost weight in routing selection | `0.4` |
-| `BALANCE_WEIGHT` | Balance weight in routing selection | `0.3` |
-| `USAGE_WEIGHT` | Usage weight in routing selection | `0.3` |
-
-</details>
-
-<details>
-<summary><strong>Notification Channel Configuration</strong></summary>
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `WEBHOOK_ENABLED` | Enable Webhook notifications | `true` |
-| `WEBHOOK_URL` | Webhook push URL | empty |
-| `BARK_ENABLED` | Enable Bark push | `true` |
-| `BARK_URL` | Bark push URL | empty |
-| `SERVERCHAN_ENABLED` | Enable ServerChan notifications | `true` |
-| `SERVERCHAN_KEY` | ServerChan SendKey | empty |
-| `SMTP_ENABLED` | Enable email notifications | `false` |
-| `SMTP_HOST` | SMTP server address | empty |
-| `SMTP_PORT` | SMTP port | `587` |
-| `SMTP_SECURE` | Use SSL/TLS | `false` |
-| `SMTP_USER` / `SMTP_PASS` | SMTP authentication | empty |
-| `SMTP_FROM` / `SMTP_TO` | Sender / recipient | empty |
-| `NOTIFY_COOLDOWN_SEC` | Same-alert cooldown (seconds) | `300` |
-
-</details>
-
-<details>
-<summary><strong>Security Configuration</strong></summary>
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `ADMIN_IP_ALLOWLIST` | Admin API IP allowlist (comma-separated) | empty (no restriction) |
+See [docs/configuration.md](docs/configuration.md) for full details on smart routing parameters, notification channels (Webhook / Bark / ServerChan / Telegram / SMTP), and security settings (IP allowlist).
 
 </details>
 
@@ -460,7 +423,7 @@ Include `Authorization: Bearer <PROXY_TOKEN>` in request headers.
 The global `PROXY_TOKEN` works by default.
 From `System Settings -> Downstream API Key Strategy` you can create multiple project-level downstream keys with individual configuration:
 
-- Expiration time (ExpireAt)
+- Expiration time (expiresAt)
 - Cost and request limits (MaxCost / MaxRequests)
 - Model allowlist (SupportedModels, supports exact/glob/re:regex)
 - Route allowlist (AllowedRouteIds)

@@ -226,15 +226,6 @@ curl -sS http://localhost:4000/v1/chat/completions \
 
 执行前建议先做一次导出或数据库备份。
 
-## 发布前检查清单
-
-如果你在本地开发并准备发布：
-
-- [ ] `npm test` 通过
-- [ ] `npm run build` 通过
-- [ ] `.env`、`data/`、`tmp/` 未提交到 Git
-- [ ] 敏感凭证已从代码中移除
-
 ## 下一步
 
 - [常见问题](./faq.md) — 常见报错与修复

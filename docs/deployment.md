@@ -97,25 +97,11 @@ docker run -d --name metapi \
 
 ## 桌面版部署（Windows / macOS / Linux）
 
-个人电脑本地部署请直接使用 [Releases](https://github.com/cita-777/metapi/releases) 中的 Electron 安装包：
+桌面版面向个人电脑本地使用，基本安装与配置流程见 [快速上手 → 桌面版启动](./getting-started.md#方式二-桌面版启动-windows-macos-linux)。
 
-1. 下载与你系统匹配的桌面安装包
-2. 安装并启动 Metapi Desktop
-3. 桌面壳会自动启动本地服务并将数据保存到应用数据目录
+以下是部署相关的补充说明。
 
-| 项目 | 说明 |
-|------|------|
-| 适用场景 | 单机本地使用、个人电脑常驻、需要免 Docker 的桌面体验 |
-| 后端监听 | 绑定 `127.0.0.1`，默认会在 `4310..4399` 中选择空闲端口；只有设置 `METAPI_DESKTOP_SERVER_PORT` 时才固定 |
-| 管理界面 | 直接在桌面窗口打开，不建议把桌面版当成固定 `localhost:4000` 的服务来写文档或脚本 |
-| 数据目录 | `app.getPath('userData')/data` |
-| 日志目录 | `app.getPath('userData')/logs`，托盘菜单提供 `Open Logs Folder` |
-
-> [!TIP]
-> - Windows 下常见路径是 `%APPDATA%\Metapi\data` 和 `%APPDATA%\Metapi\logs`。
-> - 如果你想让本机其他客户端调用桌面版内置 `/v1/*`，先从日志确认当前端口。
-
-桌面版特性：
+### 桌面版特性
 
 - 内置本地 Metapi 服务，无需手动准备 Node.js 运行环境
 - 托盘菜单支持重新打开窗口、重启后端、开机自启
@@ -123,23 +109,6 @@ docker run -d --name metapi \
 
 > [!NOTE]
 > 服务器部署不再提供裸 Node.js Release 压缩包，统一推荐 Docker / Docker Compose。
-
-### 桌面版如何找到当前本地地址
-
-桌面版启动后，后端会把当前地址打印到日志中。定位方式：
-
-1. 打开托盘菜单，点击 `Open Logs Folder`
-2. 打开最新日志文件
-3. 搜索 `Dashboard:` 或 `Proxy API:` 行
-
-常见日志内容如下：
-
-```text
-Dashboard: http://127.0.0.1:4312
-Proxy API: http://127.0.0.1:4312/v1/chat/completions
-```
-
-如果你只是通过桌面窗口使用管理后台，可以完全忽略这个端口；只有在本机其他客户端需要直连桌面版内置后端时，才需要读取这里的地址。
 
 ### 桌面版升级
 
@@ -149,22 +118,7 @@ Proxy API: http://127.0.0.1:4312/v1/chat/completions
 
 ## 本地开发运行（源码调试）
 
-如果你的目标是开发、调试或提交 PR，请直接跑源码：
-
-```bash
-git clone https://github.com/cita-777/metapi.git
-cd metapi
-npm install
-npm run db:migrate
-npm run dev
-```
-
-默认访问地址：
-
-| 服务 | 地址 |
-|------|------|
-| 前端（Vite） | `http://localhost:5173` |
-| 后端 API | `http://localhost:4000` |
+开发、调试或提交 PR 的完整流程见 [快速上手 → 本地开发启动](./getting-started.md#方式三-本地开发启动) 和 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 
 > [!NOTE]
 > 这条路径是开发流程，不是下载 `Release` 包后再手动跑 Node.js 的替代说法。
@@ -235,27 +189,9 @@ docker image prune -f
 
 ## 回滚
 
-如果升级后出现问题：
+如果升级后出现问题，请参考 [运维手册 → 数据备份与恢复](./operations.md#数据备份) 进行回滚。
 
-1. **升级前备份**（建议每次升级前执行）：
-
-```bash
-cp -r data/ data-backup-$(date +%Y%m%d)/
-```
-
-2. **回滚到指定版本**：
-
-```bash
-# 修改 docker-compose.yml 中的 image tag
-# 例如：image: 1467078763/metapi:v1.0.0
-
-# 恢复数据
-rm -rf data/
-cp -r data-backup-20260228/ data/
-
-# 重启
-docker compose up -d
-```
+核心思路：升级前备份数据目录（或数据库），出问题时停止服务、还原数据、指定旧版镜像重启。
 
 ## 数据持久化
 
@@ -271,39 +207,7 @@ docker compose up -d
 
 只要备份了对应的数据目录，升级、重启通常都不会丢失现有配置和 SQLite 数据。
 
-### 备份策略建议
-
-- 每日自动备份 `data/` 目录
-- 保留最近 7~30 天的备份
-- 重要操作前手动快照
-
-## 文档站部署
-
-Metapi 使用 [VitePress](https://vitepress.dev) 构建文档站，支持本地预览和 GitHub Pages 自动部署。
-
-### 本地预览
-
-```bash
-npm run docs:dev
-```
-
-访问 `http://localhost:4173` 查看文档站。
-
-### 构建静态站点
-
-```bash
-npm run docs:build
-```
-
-构建产物位于 `docs/.vitepress/dist/`，可部署到任意静态站点托管服务。
-
-### GitHub Pages 自动部署
-
-推送到 `main` 分支后，`.github/workflows/docs-pages.yml` 会自动构建并部署到 GitHub Pages。
-
-首次使用需在仓库设置中开启：
-
-`Settings → Pages → Build and deployment → Source: GitHub Actions`
+完整备份策略见 [运维手册 → 数据备份](./operations.md#数据备份)。
 
 ---
 

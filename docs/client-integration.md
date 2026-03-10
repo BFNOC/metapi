@@ -142,18 +142,9 @@ base_url = "https://your-domain.com/v1"
 
 ## 下游 API Key 策略
 
-除了全局 `PROXY_TOKEN`，你还可以在 **系统设置 → 下游 API Key 策略** 中创建多个项目级下游 Key，每个 Key 可独立配置：
+除了全局 `PROXY_TOKEN`，你还可以创建多个项目级下游 Key，每个 Key 可独立配置过期时间、费用/请求上限、模型白名单、路由白名单和站点倍率，适用于多团队/多项目共用一个 Metapi 实例的场景。
 
-| 配置项 | 说明 |
-|--------|------|
-| **过期时间**（ExpiresAt） | Key 到期后自动失效 |
-| **费用上限**（MaxCost） | 累计消费超限后拒绝请求 |
-| **请求上限**（MaxRequests） | 累计请求数超限后拒绝请求 |
-| **模型白名单**（SupportedModels） | 限制可用模型，支持 exact / glob / `re:regex` |
-| **路由白名单**（AllowedRouteIds） | 限制可走的路由规则 |
-| **站点倍率**（SiteWeightMultipliers） | 按站点调整路由权重，控制上游偏好 |
-
-适用于多团队/多项目共用一个 Metapi 实例但需要独立计量和权限控制的场景。
+详细字段说明见 [配置说明 → 下游 API Key 策略](./configuration.md#下游-api-key-策略)。
 
 ---
 
@@ -187,27 +178,7 @@ curl -sS https://your-domain.com/v1/chat/completions \
 
 ## 常见问题
 
-### 流式响应异常
-
-如果非流式正常但流式异常，原因几乎都是反向代理配置问题：
-
-1. Nginx 未设置 `proxy_buffering off`
-2. CDN 或中间层缓存了 SSE 响应
-3. 中间层改写了 `text/event-stream` Content-Type
-
-参考 [部署指南 → Nginx 配置](./deployment.md#nginx) 解决。
-
-### 模型列表为空
-
-- 检查是否已添加站点和账号
-- 检查账号是否处于 `healthy` 状态
-- 检查是否已同步 Token
-- 在管理后台手动触发「刷新模型」
-
-### 客户端提示 401 / 403
-
-- 确认使用的是 `PROXY_TOKEN` 而非 `AUTH_TOKEN`
-- 确认反向代理透传了 `Authorization` 请求头
+遇到流式响应异常、模型列表为空、客户端提示 401/403 等问题，请参阅 [常见问题 FAQ](./faq.md)。
 
 ## 下一步
 

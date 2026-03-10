@@ -116,6 +116,8 @@ npm run dev
 > [!TIP] 从 ALL-API-Hub 迁移（可选）
 > 如果你使用过 ALL-API-Hub，Metapi 兼容其导出的备份设置，可直接导入，无需手动逐项配置。
 >
+> 导入后刷新账号状态可能出现个别账号令牌过期，点击重新绑定按钮按照下面步骤2的方法获取Access Token或者Cookie等即可。
+>
 > ![ALL-API-Hub备份导入](./screenshots/allapi-hub-backup.png)
 
 ### 步骤 1：添加站点
@@ -123,16 +125,17 @@ npm run dev
 进入 **站点管理**，添加你使用的上游中转站：
 
 - 填写站点名称（自己想怎么取就怎么取）和 URL
-- 选择平台类型（`new-api` / `one-api` / `one-hub` / `done-hub` / `veloera` / `anyrouter` / `sub2api` / `openai` / `claude` / `gemini` / `cliproxyapi`），通常可自动检测
-- 填写站点的管理员 API Key（可选，部分功能需要）
+- 选择平台类型（`new-api` / `one-api` / `one-hub` / `done-hub` / `veloera` / `anyrouter` / `sub2api` / `openai` / `claude` / `gemini` / `cliproxyapi`），通常可自动检测，检测有误或者因为防护页导致检测失败可以手动选择。
+- 可选是否开启系统代理，方便国内机器访问国外中转站。
+- 可选站点权重，站点权重越大，路由将更加频繁使用这个站点的模型。
 
 如果你不确定该选哪个平台，先看 [上游接入](./upstream-integration.md)。
 
 ![站点管理](./screenshots/site-management.png)
 
-### 步骤 2：添加账号
+### 步骤 2：添加账号(可签到、查询余额等)
 
-进入 **账号管理**，为每个站点添加已注册的账号：
+进入 **连接管理中的账号管理**，为每个站点添加已注册的账号：
 
 ![账号管理](./screenshots/account-management.png)
 
@@ -146,28 +149,45 @@ npm run dev
 
 - 启用自动签到（如站点支持）
 
-### 步骤 3：同步 Token
+### 步骤 3：添加 API Key（Base URL+Key模式，只可获取模型和使用模型）
 
-进入 **Token 管理**：
+首先你需要在步骤1中，确保添加了（`new-api` / `one-api` / `one-hub` / `done-hub` / `veloera` / `anyrouter` / `sub2api` / `openai` / `claude` / `gemini` / `cliproxyapi`）的类型的Base URL。
 
-- 点击「同步」从上游账号拉取 API Key
+- 进入 **连接管理中的API Key管理**，为每个站点添加你的API Key：
 
-- 或手动添加已有的 API Key，如下图所示。
+![API Key 管理](./screenshots/api-key-management.png)
+
+### 步骤 4：同步账号令牌
+
+进入 **连接管理中的账号令牌管理**：
+
+- 点击「同步」从上游账号拉取 账号令牌
+
+- 或手动添加已有的账号令牌，添加后上游站点的令牌管理页面会同步出现令牌，如下图所示。
 
   ![Token管理](./screenshots/token-management.png)
 
-### 步骤 4：检查路由
+### 步骤 5：路由管理
 
 进入 **路由管理**：
 
 - 系统会自动发现模型并生成路由规则
+- 点击右上角的刷新选中概率可以显示并将概率载入缓存中
 - 可以手动调整通道的优先级和权重
 - 关于路由权重参数调优，参考 [配置说明 → 智能路由](./configuration.md#智能路由)
+- 左侧可以进行品牌、站点、接口等的筛选，如下图所示：
 
-<!-- TODO: 补充路由管理截图 -->
-<!-- ![路由管理](./screenshots/route-management.png) -->
+![路由筛选](./screenshots/routes-filter.png)
+
+- **可以通过创建群组，从而对上游模型进行匹配和重定向，如果建立下图群组，下游访问Metapi时获取的claude-opus-4-6模型将在命中样本中智能选取，日志中可以看见映射。** ![路由群组示例](./screenshots/route-group.png)
+
+- **可以在使用日志中看见下游的请求模型和实际分配给下游使用的模型**
+
+  ![日志中的模型映射](./screenshots/proxy-logs-mapping.png)
 
 ### 步骤 5：验证代理
+
+**Metapi还有更多功能，可以在设置中寻找，请尽情探索，有建议可以提出Issue改进。**
 
 按运行方式选择验证入口：
 
@@ -175,7 +195,7 @@ npm run dev
 |----------|----------|----------------|
 | Docker / Docker Compose | `http://localhost:4000` | `http://localhost:4000` |
 | 本地开发 | `http://localhost:5173` | `http://localhost:4000` |
-| 桌面版 | 直接使用桌面窗口 | 先从日志里的 `Proxy API:` 行确认当前 `http://127.0.0.1:<port>` |
+| 桌面版 | 直接使用桌面窗口 | 通常是4312，先从日志里的 `Proxy API:` 行确认当前 `http://127.0.0.1:<port>` |
 
 ### Docker / 本地开发：直接用 curl 验证
 

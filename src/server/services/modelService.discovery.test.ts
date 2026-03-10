@@ -95,4 +95,39 @@ describe('refreshModelsForAccount credential discovery', () => {
     const tokenRows = await db.select().from(schema.tokenModelAvailability).all();
     expect(tokenRows).toHaveLength(0);
   });
+
+  it('marks runtime health unhealthy when model discovery fails', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('HTTP 401: invalid token'));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-fail',
+      url: 'https://site-fail.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'fail-user',
+      accessToken: '',
+      apiToken: 'sk-invalid',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      status: 'failed',
+      errorCode: 'unauthorized',
+    });
+
+    const latest = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    const parsed = JSON.parse(latest!.extraConfig || '{}');
+    expect(parsed.runtimeHealth?.state).toBe('unhealthy');
+  });
 });

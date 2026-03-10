@@ -79,7 +79,9 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(result).toMatchObject({
       accountId: account.id,
       refreshed: true,
+      status: 'success',
       modelCount: 2,
+      modelsPreview: ['claude-sonnet-4-5-20250929', 'claude-opus-4-6'],
       tokenScanned: 0,
       discoveredByCredential: true,
     });

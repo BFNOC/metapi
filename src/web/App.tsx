@@ -17,6 +17,7 @@ import { resolveLoginErrorMessage } from './loginError.js';
 import { SITE_DOCS_URL } from './docsLink.js';
 import { useAnimatedVisibility } from './components/useAnimatedVisibility.js';
 import { useIsMobile } from './components/useIsMobile.js';
+import { MobileDrawer } from './components/MobileDrawer.js';
 const Dashboard = lazy(() => import('./pages/Dashboard.js'));
 const Sites = lazy(() => import('./pages/Sites.js'));
 const Accounts = lazy(() => import('./pages/Accounts.js'));
@@ -378,6 +379,7 @@ function AppShell() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const themeMenuPresence = useAnimatedVisibility(showThemeMenu, 160);
   const userMenuPresence = useAnimatedVisibility(showUserMenu, 160);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -551,6 +553,17 @@ function AppShell() {
   return (
     <>
       <header className="topbar">
+        {isMobile && (
+          <button
+            className="topbar-icon-btn"
+            aria-label="Open navigation"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        )}
         <div className="topbar-logo">
           <img src="/logo.png" alt="Metapi" style={{ width: 28, height: 28, borderRadius: 6 }} />
           <span className="topbar-logo-text">Metapi</span>
@@ -673,32 +686,56 @@ function AppShell() {
       </header>
 
       <div className="app-layout">
-        <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
-          {sidebarGroups.map((group) => (
-            <div key={group.label} className="sidebar-group">
-              {!sidebarCollapsed && <div className="sidebar-group-label">{t(group.label)}</div>}
-              {group.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.to === '/' || item.to === '/settings'}
-                  className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}
-                  data-tooltip={sidebarCollapsed ? t(item.label) : undefined}
-                  aria-label={sidebarCollapsed ? t(item.label) : undefined}
-                >
-                  {item.icon}
-                  {!sidebarCollapsed && <span>{t(item.label)}</span>}
-                </NavLink>
+        {isMobile ? (
+          <MobileDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
+            <nav className="mobile-nav">
+              {sidebarGroups.map((group) => (
+                <div key={group.label} className="mobile-nav-group">
+                  <div className="mobile-nav-label">{t(group.label)}</div>
+                  {group.items.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.to === '/' || item.to === '/settings'}
+                      className={({ isActive }) => `mobile-nav-item ${isActive ? 'active' : ''}`}
+                      onClick={() => setDrawerOpen(false)}
+                    >
+                      {item.icon}
+                      <span>{t(item.label)}</span>
+                    </NavLink>
+                  ))}
+                </div>
               ))}
-            </div>
-          ))}
-          <button className="sidebar-collapse-btn" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ transform: sidebarCollapsed ? 'rotate(180deg)' : 'none', transition: 'transform 0.3s ease', flexShrink: 0 }}>
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-            </svg>
-            {!sidebarCollapsed && <span>{t('收起侧边栏')}</span>}
-          </button>
-        </aside>
+            </nav>
+          </MobileDrawer>
+        ) : (
+          <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+            {sidebarGroups.map((group) => (
+              <div key={group.label} className="sidebar-group">
+                {!sidebarCollapsed && <div className="sidebar-group-label">{t(group.label)}</div>}
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === '/' || item.to === '/settings'}
+                    className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}
+                    data-tooltip={sidebarCollapsed ? t(item.label) : undefined}
+                    aria-label={sidebarCollapsed ? t(item.label) : undefined}
+                  >
+                    {item.icon}
+                    {!sidebarCollapsed && <span>{t(item.label)}</span>}
+                  </NavLink>
+                ))}
+              </div>
+            ))}
+            <button className="sidebar-collapse-btn" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ transform: sidebarCollapsed ? 'rotate(180deg)' : 'none', transition: 'transform 0.3s ease', flexShrink: 0 }}>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+              </svg>
+              {!sidebarCollapsed && <span>{t('收起侧边栏')}</span>}
+            </button>
+          </aside>
+        )}
 
         <main className="main-content">
           <PageTransition>

@@ -7,7 +7,7 @@ type MobileDrawerProps = {
 };
 
 function MobileDrawer({ open, onClose, children }: MobileDrawerProps) {
-  const [shouldRender, setShouldRender] = useState(false);
+  const [shouldRender, setShouldRender] = useState(open);
   const [isClosing, setIsClosing] = useState(false);
 
   useEffect(() => {
@@ -26,12 +26,7 @@ function MobileDrawer({ open, onClose, children }: MobileDrawerProps) {
 
   const handleClose = useCallback(() => {
     setIsClosing(true);
-    const timer = setTimeout(() => {
-      setShouldRender(false);
-      setIsClosing(false);
-      onClose();
-    }, 280);
-    return () => clearTimeout(timer);
+    onClose();
   }, [onClose]);
 
   if (!shouldRender) return null;

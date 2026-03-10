@@ -6,7 +6,7 @@ type MobileDrawerProps = {
   children: React.ReactNode;
 };
 
-export default function MobileDrawer({ open, onClose, children }: MobileDrawerProps) {
+function MobileDrawer({ open, onClose, children }: MobileDrawerProps) {
   if (!open) return null;
 
   return (
@@ -23,3 +23,6 @@ export default function MobileDrawer({ open, onClose, children }: MobileDrawerPr
     </div>
   );
 }
+
+export { MobileDrawer };
+export default MobileDrawer;

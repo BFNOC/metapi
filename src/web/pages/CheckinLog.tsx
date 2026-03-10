@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { MobileCard, MobileField } from '../components/MobileCard.js';
+import { MobileDrawer } from '../components/MobileDrawer.js';
 import { useToast } from '../components/Toast.js';
+import { useIsMobile } from '../components/useIsMobile.js';
 import { formatCheckinLogTime } from './helpers/checkinLogTime.js';
 import { tr } from '../i18n.js';
 
@@ -19,6 +22,9 @@ export default function CheckinLog() {
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
   const [filter, setFilter] = useState<LogFilter>('all');
+  const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const isMobile = useIsMobile(768);
   const toast = useToast();
 
   const load = async () => {
@@ -82,6 +88,19 @@ export default function CheckinLog() {
     return reason;
   };
 
+  const filterTabs = (
+    <div className="tabs" style={{ marginBottom: 0 }}>
+      {(['all', 'success', 'failed', 'skipped'] as const).map((tab) => (
+        <button key={tab} className={`tab ${filter === tab ? 'active' : ''}`} onClick={() => setFilter(tab)}>
+          {tab === 'all' && `全部 (${logs.length})`}
+          {tab === 'success' && `成功 (${countBy('success')})`}
+          {tab === 'failed' && `失败 (${countBy('failed')})`}
+          {tab === 'skipped' && `跳过 (${countBy('skipped')})`}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <div className="animate-fade-in">
       <div className="page-header">
@@ -102,16 +121,27 @@ export default function CheckinLog() {
         </button>
       </div>
 
-      <div className="tabs" style={{ marginBottom: 0 }}>
-        {(['all', 'success', 'failed', 'skipped'] as const).map((tab) => (
-          <button key={tab} className={`tab ${filter === tab ? 'active' : ''}`} onClick={() => setFilter(tab)}>
-            {tab === 'all' && `全部 (${logs.length})`}
-            {tab === 'success' && `成功 (${countBy('success')})`}
-            {tab === 'failed' && `失败 (${countBy('failed')})`}
-            {tab === 'skipped' && `跳过 (${countBy('skipped')})`}
-          </button>
-        ))}
-      </div>
+      {isMobile ? (
+        <>
+          <div className="mobile-filter-row">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ border: '1px solid var(--color-border)' }}
+              onClick={() => setShowFilters(true)}
+            >
+              筛选
+            </button>
+          </div>
+          <MobileDrawer open={showFilters} onClose={() => setShowFilters(false)}>
+            <div className="mobile-filter-panel">
+              {filterTabs}
+            </div>
+          </MobileDrawer>
+        </>
+      ) : (
+        filterTabs
+      )}
 
       <div className="card" style={{ overflowX: 'auto', borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
         {loading ? (
@@ -126,6 +156,79 @@ export default function CheckinLog() {
                 <div className="skeleton" style={{ width: 60, height: 16 }} />
               </div>
             ))}
+          </div>
+        ) : isMobile ? (
+          <div className="mobile-card-list">
+            {filtered.map((log: any) => {
+              const status = getStatus(log);
+              const reason = getFailureReason(log);
+              const isExpanded = expandedLogId === (log.checkin_logs?.id || log.id);
+              const logId = log.checkin_logs?.id || log.id;
+              return (
+                <MobileCard
+                  key={logId}
+                  title={log.accounts?.username || '未知'}
+                  actions={(
+                    <span className={`badge ${statusClass(status)}`} style={{ fontSize: 10 }}>
+                      {statusLabel(status)}
+                    </span>
+                  )}
+                >
+                  <MobileField label="时间" value={formatCheckinLogTime(log.checkin_logs?.createdAt || log.createdAt)} />
+                  <MobileField
+                    label="站点"
+                    value={log.sites?.url ? (
+                      <a
+                        href={log.sites.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="badge-link"
+                      >
+                        <span className="badge badge-muted" style={{ fontSize: 11 }}>
+                          {log.sites?.name || '-'}
+                        </span>
+                      </a>
+                    ) : (
+                      <span className="badge badge-muted" style={{ fontSize: 11 }}>
+                        {log.sites?.name || '-'}
+                      </span>
+                    )}
+                  />
+                  <MobileField
+                    label="分类"
+                    value={reason ? (
+                      <span className="badge badge-info" data-tooltip={reason.detailHint}>
+                        {reason.title}
+                      </span>
+                    ) : (
+                      <span className="badge badge-muted">-</span>
+                    )}
+                  />
+                  <MobileField label="奖励" value={log.checkin_logs?.reward || '-'} />
+                  {isExpanded ? (
+                    <div className="mobile-card-extra">
+                      <MobileField
+                        label="信息"
+                        value={log.checkin_logs?.message || log.message}
+                      />
+                      <MobileField
+                        label="建议"
+                        value={reason?.actionHint || '-'}
+                      />
+                    </div>
+                  ) : null}
+                  <div className="mobile-card-actions">
+                    <button
+                      type="button"
+                      className="btn btn-link"
+                      onClick={() => setExpandedLogId(isExpanded ? null : logId)}
+                    >
+                      {isExpanded ? '收起' : '详情'}
+                    </button>
+                  </div>
+                </MobileCard>
+              );
+            })}
           </div>
         ) : (
           <table className="data-table">

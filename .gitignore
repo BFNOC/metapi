@@ -9,6 +9,7 @@ data/*
 logs/
 tmp/*
 !tmp/.gitkeep
+.worktrees/
 
 # Local desktop/debug artifacts
 /.tmp-*

@@ -291,14 +291,12 @@ export async function refreshModelsForAccount(accountId: number) {
     })),
   ).run();
 
-  if (isApiKeyConnection(account)) {
-    await setAccountRuntimeHealth(account.id, {
-      state: 'healthy',
-      reason: '模型探测成功',
-      source: 'model-discovery',
-      checkedAt,
-    });
-  }
+  await setAccountRuntimeHealth(account.id, {
+    state: 'healthy',
+    reason: '模型探测成功',
+    source: 'model-discovery',
+    checkedAt,
+  });
 
   const modelsPreview = Array.from(accountModels).slice(0, 10);
   return {

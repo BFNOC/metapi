@@ -3,7 +3,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { MobileCard, MobileField } from '../components/MobileCard.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
+import { useIsMobile } from '../components/useIsMobile.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import { clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js';
 import { tr } from '../i18n.js';
@@ -78,6 +80,8 @@ export default function Sites() {
   const [orderingSiteId, setOrderingSiteId] = useState<number | null>(null);
   const [pinningSiteId, setPinningSiteId] = useState<number | null>(null);
   const [selectedSiteIds, setSelectedSiteIds] = useState<number[]>([]);
+  const [expandedSiteIds, setExpandedSiteIds] = useState<number[]>([]);
+  const isMobile = useIsMobile(768);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
   const editorPresence = useAnimatedVisibility(Boolean(editor), 220);
   const lastEditorRef = useRef<SiteEditorState | null>(null);
@@ -327,6 +331,14 @@ export default function Sites() {
     setSelectedSiteIds(sortedSites.map((site) => site.id));
   };
 
+  const toggleSiteDetails = (siteId: number) => {
+    setExpandedSiteIds((current) => (
+      current.includes(siteId)
+        ? current.filter((id) => id !== siteId)
+        : [...current, siteId]
+    ));
+  };
+
   const runBatchAction = async (action: 'enable' | 'disable' | 'delete' | 'enableSystemProxy' | 'disableSystemProxy') => {
     if (selectedSiteIds.length === 0) return;
     if (action === 'delete' && typeof globalThis.confirm === 'function' && !globalThis.confirm(`确认删除选中的 ${selectedSiteIds.length} 个站点？`)) return;
@@ -555,7 +567,138 @@ export default function Sites() {
 
       <div className="card" style={{ overflowX: 'auto' }}>
         {sites.length > 0 ? (
-          <table className="data-table sites-table">
+          isMobile ? (
+            <div className="mobile-card-list">
+              {sortedSites.map((site) => {
+                const isExpanded = expandedSiteIds.includes(site.id);
+                return (
+                  <MobileCard
+                    key={site.id}
+                    title={site.name || '-'}
+                    actions={(
+                      <input
+                        type="checkbox"
+                        aria-label={`选择站点 ${site.name || site.id}`}
+                        checked={selectedSiteIds.includes(site.id)}
+                        onChange={(event) => toggleSiteSelection(site.id, event.target.checked)}
+                      />
+                    )}
+                  >
+                    <MobileField
+                      label="状态"
+                      value={(
+                        <span className={`badge ${site.status === 'disabled' ? 'badge-muted' : 'badge-success'}`} style={{ fontSize: 11 }}>
+                          {site.status === 'disabled' ? '禁用' : '启用'}
+                        </span>
+                      )}
+                    />
+                    <MobileField
+                      label="平台"
+                      value={(
+                        <span className={`badge ${platformColors[site.platform || ''] || 'badge-muted'}`} style={{ fontSize: 11 }}>
+                          {site.platform || '-'}
+                        </span>
+                      )}
+                    />
+                    <MobileField label="余额" value={`$${(site.totalBalance || 0).toFixed(2)}`} />
+                    <MobileField label="权重" value={(site.globalWeight || 1).toFixed(2)} />
+                    {isExpanded ? (
+                      <div className="mobile-card-extra">
+                        <MobileField
+                          label="系统代理"
+                          value={(
+                            <span className={`badge ${site.useSystemProxy ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
+                              {site.useSystemProxy ? '已开启' : '未开启'}
+                            </span>
+                          )}
+                        />
+                        <MobileField
+                          label="外部签到站URL"
+                          value={site.externalCheckinUrl ? (
+                            <a
+                              href={site.externalCheckinUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="sites-url-link"
+                              style={{
+                                fontSize: 12,
+                                fontFamily: 'var(--font-mono)',
+                                color: 'var(--color-primary)',
+                                textDecoration: 'underline',
+                                wordBreak: 'break-all',
+                              }}
+                            >
+                              {site.externalCheckinUrl}
+                            </a>
+                          ) : '-'}
+                        />
+                        <MobileField
+                          label="创建时间"
+                          value={formatDateTimeLocal(site.createdAt)}
+                        />
+                      </div>
+                    ) : null}
+                    <div className="mobile-card-actions">
+                      <button
+                        type="button"
+                        onClick={() => toggleSiteDetails(site.id)}
+                        className="btn btn-link"
+                      >
+                        {isExpanded ? '收起' : '详情'}
+                      </button>
+                      <button
+                        onClick={() => handleTogglePin(site)}
+                        disabled={pinningSiteId === site.id}
+                        className={`btn btn-link ${site.isPinned ? 'btn-link-warning' : 'btn-link-primary'}`}
+                      >
+                        {pinningSiteId === site.id ? <span className="spinner spinner-sm" /> : (site.isPinned ? '取消置顶' : '置顶')}
+                      </button>
+                      {sortMode === 'custom' && (
+                        <>
+                          <button
+                            onClick={() => handleMoveCustomOrder(site, 'up')}
+                            disabled={orderingSiteId === site.id}
+                            className="btn btn-link btn-link-muted"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            onClick={() => handleMoveCustomOrder(site, 'down')}
+                            disabled={orderingSiteId === site.id}
+                            className="btn btn-link btn-link-muted"
+                          >
+                            ↓
+                          </button>
+                        </>
+                      )}
+                      <button
+                        onClick={() => openEdit(site)}
+                        className="btn btn-link btn-link-primary"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleToggleStatus(site)}
+                        disabled={togglingSiteId === site.id}
+                        className={`btn btn-link ${site.status === 'disabled' ? 'btn-link-primary' : 'btn-link-warning'}`}
+                      >
+                        {togglingSiteId === site.id ? <span className="spinner spinner-sm" /> : (site.status === 'disabled' ? '启用' : '禁用')}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(site)}
+                        disabled={deleting === site.id}
+                        className="btn btn-link btn-link-danger"
+                      >
+                        {deleting === site.id ? <span className="spinner spinner-sm" /> : null}
+                        删除
+                      </button>
+                    </div>
+                  </MobileCard>
+                );
+              })}
+            </div>
+          ) : (
+            <table className="data-table sites-table">
             <thead>
               <tr>
                 <th style={{ width: 44 }}>
@@ -720,6 +863,7 @@ export default function Sites() {
               ))}
             </tbody>
           </table>
+          )
         ) : (
           <div className="empty-state">
             <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">

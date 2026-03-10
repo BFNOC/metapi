@@ -4,6 +4,8 @@ import { api } from '../api.js';
 import CenteredModal from '../components/CenteredModal.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { MobileCard, MobileField } from '../components/MobileCard.js';
+import { useIsMobile } from '../components/useIsMobile.js';
 import {
   buildAddAccountPrereqHint,
   buildVerifyFailureHint,
@@ -76,6 +78,8 @@ export default function Accounts() {
   const [loaded, setLoaded] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('custom');
   const [highlightAccountId, setHighlightAccountId] = useState<number | null>(null);
+  const [expandedAccountIds, setExpandedAccountIds] = useState<number[]>([]);
+  const isMobile = useIsMobile(768);
   const [showAdd, setShowAdd] = useState(false);
   const [addMode, setAddMode] = useState<'token' | 'login'>('token');
   const [loginForm, setLoginForm] = useState(createLoginForm);
@@ -536,6 +540,14 @@ export default function Accounts() {
       return;
     }
     setSelectedAccountIds(visibleAccounts.map((account) => account.id));
+  };
+
+  const toggleAccountDetails = (accountId: number) => {
+    setExpandedAccountIds((current) => (
+      current.includes(accountId)
+        ? current.filter((id) => id !== accountId)
+        : [...current, accountId]
+    ));
   };
 
   const runBatchAccountAction = async (action: 'enable' | 'disable' | 'delete' | 'refreshBalance') => {
@@ -1303,7 +1315,192 @@ export default function Accounts() {
 
           <div className="card">
             {visibleAccounts.length > 0 ? (
-              <table className="data-table accounts-table">
+              isMobile ? (
+                <div className="mobile-card-list">
+                  {visibleAccounts.map((a: any) => {
+                    const capabilities = resolveAccountCapabilities(a);
+                    const connectionMode = resolveAccountCredentialMode(a);
+                    const health = resolveRuntimeHealth(a);
+                    const isExpanded = expandedAccountIds.includes(a.id);
+                    return (
+                      <MobileCard
+                        key={a.id}
+                        title={resolveAccountDisplayName(a)}
+                        actions={(
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <input
+                              type="checkbox"
+                              aria-label={`选择账号 ${resolveAccountDisplayName(a)}`}
+                              checked={selectedAccountIds.includes(a.id)}
+                              onChange={(event) => toggleAccountSelection(a.id, event.target.checked)}
+                            />
+                            <span className={`badge ${connectionMode === 'apikey' ? 'badge-warning' : 'badge-info'}`} style={{ fontSize: 10 }}>
+                              {connectionMode === 'apikey' ? 'API Key' : 'Session'}
+                            </span>
+                          </div>
+                        )}
+                      >
+                        <MobileField
+                          label="运行健康状态"
+                          value={(
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <span className={`badge ${health.cls}`} style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, width: 'fit-content' }}>
+                                <span className={`status-dot ${health.dotClass} ${health.pulse ? 'animate-pulse-dot' : ''}`} style={{ marginRight: 0 }} />
+                                {health.label}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  color: 'var(--color-text-muted)',
+                                  maxWidth: 240,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                data-tooltip={health.reason}
+                              >
+                                {health.reason}
+                              </span>
+                            </div>
+                          )}
+                        />
+                        <MobileField
+                          label="余额"
+                          value={(
+                            <div>
+                              <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>${(a.balance || 0).toFixed(2)}</div>
+                              <div style={{ fontSize: 11, color: (a.todayReward || 0) > 0 ? 'var(--color-success)' : 'var(--color-text-muted)', fontWeight: 500 }}>
+                                +{(a.todayReward || 0).toFixed(2)}
+                              </div>
+                            </div>
+                          )}
+                        />
+                        <MobileField
+                          label="已用"
+                          value={(
+                            <div>
+                              <div>${(a.balanceUsed || 0).toFixed(2)}</div>
+                              <div style={{ fontSize: 11, color: (a.todaySpend || 0) > 0 ? 'var(--color-danger)' : 'var(--color-text-muted)', fontWeight: 500 }}>
+                                -{(a.todaySpend || 0).toFixed(2)}
+                              </div>
+                            </div>
+                          )}
+                        />
+                        {isExpanded ? (
+                          <div className="mobile-card-extra">
+                            <MobileField
+                              label="站点"
+                              value={a.site?.url ? (
+                                <a
+                                  href={a.site.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="badge-link"
+                                >
+                                  <span className="badge badge-muted" style={{ fontSize: 11 }}>
+                                    {a.site?.name || '-'}
+                                  </span>
+                                </a>
+                              ) : (
+                                <span className="badge badge-muted" style={{ fontSize: 11 }}>
+                                  {a.site?.name || '-'}
+                                </span>
+                              )}
+                            />
+                            <MobileField
+                              label="签到"
+                              value={capabilities.canCheckin ? (
+                                <button
+                                  type="button"
+                                  className={`checkin-toggle-badge ${a.checkinEnabled ? 'is-on' : 'is-off'}`}
+                                  onClick={() => handleToggleCheckin(a)}
+                                  disabled={!!actionLoading[`checkin-toggle-${a.id}`]}
+                                  data-tooltip={a.checkinEnabled ? '点击关闭签到，全部签到会忽略此账号' : '点击开启签到'}
+                                  aria-label={a.checkinEnabled ? '点击关闭签到，全部签到会忽略此账号' : '点击开启签到'}
+                                >
+                                  {actionLoading[`checkin-toggle-${a.id}`]
+                                    ? <span className="spinner spinner-sm" />
+                                    : (a.checkinEnabled ? '开启' : '关闭')}
+                                </button>
+                              ) : (
+                                <span className="badge badge-muted" style={{ fontSize: 11 }}>
+                                  不支持
+                                </span>
+                              )}
+                            />
+                            <MobileField
+                              label="账号状态"
+                              value={a.status === 'expired' ? '已过期' : (a.status || '-')}
+                            />
+                          </div>
+                        ) : null}
+                        <div className="mobile-card-actions">
+                          <button
+                            type="button"
+                            onClick={() => toggleAccountDetails(a.id)}
+                            className="btn btn-link"
+                          >
+                            {isExpanded ? '收起' : '详情'}
+                          </button>
+                          <button
+                            onClick={() => handleTogglePin(a)}
+                            disabled={!!actionLoading[`pin-toggle-${a.id}`]}
+                            className={`btn btn-link ${a.isPinned ? 'btn-link-warning' : 'btn-link-primary'}`}
+                          >
+                            {actionLoading[`pin-toggle-${a.id}`] ? <span className="spinner spinner-sm" /> : (a.isPinned ? '取消置顶' : '置顶')}
+                          </button>
+                          {sortMode === 'custom' && (
+                            <>
+                              <button
+                                onClick={() => handleMoveCustomOrder(a, 'up')}
+                                disabled={!!actionLoading[`reorder-${a.id}`]}
+                                className="btn btn-link btn-link-muted"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                onClick={() => handleMoveCustomOrder(a, 'down')}
+                                disabled={!!actionLoading[`reorder-${a.id}`]}
+                                className="btn btn-link btn-link-muted"
+                              >
+                                ↓
+                              </button>
+                            </>
+                          )}
+                          {capabilities.canRefreshBalance && (
+                            <button onClick={() => withLoading(`refresh-${a.id}`, () => api.refreshBalance(a.id), '余额已刷新')} disabled={actionLoading[`refresh-${a.id}`]} className="btn btn-link btn-link-primary">
+                              {actionLoading[`refresh-${a.id}`] ? <span className="spinner spinner-sm" /> : '刷新'}
+                            </button>
+                          )}
+                          <button onClick={() => withLoading(`models-${a.id}`, () => api.checkModels(a.id), '模型已更新')} disabled={actionLoading[`models-${a.id}`]} className="btn btn-link btn-link-info">
+                            {actionLoading[`models-${a.id}`] ? <span className="spinner spinner-sm" /> : '模型'}
+                          </button>
+                          {capabilities.canCheckin && (
+                            <button onClick={() => withLoading(`checkin-${a.id}`, () => api.triggerCheckin(a.id), '签到完成')} disabled={actionLoading[`checkin-${a.id}`]} className="btn btn-link btn-link-warning">
+                              {actionLoading[`checkin-${a.id}`] ? <span className="spinner spinner-sm" /> : '签到'}
+                            </button>
+                          )}
+                          {a.status === 'expired' && !capabilities.proxyOnly && (
+                            <button
+                              onClick={() => openRebindPanel(a)}
+                              className="btn btn-link btn-link-warning"
+                            >
+                              重新绑定
+                            </button>
+                          )}
+                          <button onClick={() => openEditPanel(a)} className="btn btn-link btn-link-info">
+                            编辑
+                          </button>
+                          <button onClick={() => withLoading(`delete-${a.id}`, () => api.deleteAccount(a.id), '已删除')} disabled={actionLoading[`delete-${a.id}`]} className="btn btn-link btn-link-danger">
+                            {actionLoading[`delete-${a.id}`] ? <span className="spinner spinner-sm" /> : '删除'}
+                          </button>
+                        </div>
+                      </MobileCard>
+                    );
+                  })}
+                </div>
+              ) : (
+                <table className="data-table accounts-table">
                 <thead>
                   <tr>
                     <th style={{ width: 44 }}>
@@ -1490,6 +1687,7 @@ export default function Accounts() {
                   })}
                 </tbody>
               </table>
+              )
             ) : (
               <div className="empty-state">
                 <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>

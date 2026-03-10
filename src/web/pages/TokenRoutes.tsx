@@ -759,7 +759,7 @@ export default function TokenRoutes() {
     setShowFilters(false);
   };
 
-  const filterPanelContent = (
+  const renderFilterPanelContent = () => (
     <div className={`filter-panel filter-collapsible ${filterPanelPresence.isVisible ? '' : 'is-closing'}`.trim()}>
       <div className="filter-panel-section">
         <div className="filter-panel-title">
@@ -1618,11 +1618,11 @@ export default function TokenRoutes() {
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', gap: 24, minHeight: 400 }}>
-      {!isMobile && filterPanelPresence.shouldRender && filterPanelContent}
+      {!isMobile && filterPanelPresence.shouldRender && renderFilterPanelContent()}
       {isMobile && (
         <MobileDrawer open={showFilters} onClose={closeFilters}>
           <div className="mobile-filter-panel">
-            {filterPanelPresence.shouldRender && filterPanelContent}
+            {filterPanelPresence.shouldRender && renderFilterPanelContent()}
           </div>
         </MobileDrawer>
       )}

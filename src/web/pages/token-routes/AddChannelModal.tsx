@@ -195,6 +195,7 @@ export default function AddChannelModal({
                 return (
                   <div
                     key={account.id}
+                    onClick={() => toggleAccount(account)}
                     style={{
                       padding: '8px 10px',
                       borderRadius: 'var(--radius-sm)',
@@ -203,15 +204,12 @@ export default function AddChannelModal({
                       cursor: 'pointer',
                     }}
                   >
-                    <div
-                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                      onClick={() => toggleAccount(account)}
-                    >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input
                         type="checkbox"
                         checked={isSelected}
-                        onChange={() => toggleAccount(account)}
-                        style={{ cursor: 'pointer' }}
+                        readOnly
+                        style={{ cursor: 'pointer', pointerEvents: 'none' }}
                       />
                       <span style={{ fontSize: 13, fontWeight: 500 }}>{account.label}</span>
                       {isExisting && (
@@ -220,7 +218,7 @@ export default function AddChannelModal({
                     </div>
 
                     {isSelected && tokens.length > 0 && (
-                      <div style={{ marginTop: 6, paddingLeft: 24 }}>
+                      <div style={{ marginTop: 6, paddingLeft: 24 }} onClick={(e) => e.stopPropagation()}>
                         <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>{tr('令牌')}:</div>
                         <ModernSelect
                           size="sm"

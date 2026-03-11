@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from './siteSchemaCompatibility.js';
 import { ensureRouteGroupingSchemaCompatibility } from './routeGroupingSchemaCompatibility.js';
 import { ensureProxyFileSchemaCompatibility } from './proxyFileSchemaCompatibility.js';
+import { ensureAccountTokenSchemaCompatibility } from './accountTokenSchemaCompatibility.js';
 
 export type RuntimeSchemaDialect = 'sqlite' | 'mysql' | 'postgres';
 
@@ -241,6 +242,7 @@ export async function ensureRuntimeDatabaseSchema(client: RuntimeSchemaClient): 
   await ensureSiteSchemaCompatibility(createSiteSchemaInspector(client));
   await ensureRouteGroupingSchemaCompatibility(createSiteSchemaInspector(client));
   await ensureProxyFileSchemaCompatibility(createSiteSchemaInspector(client));
+  await ensureAccountTokenSchemaCompatibility(createSiteSchemaInspector(client));
 }
 
 export async function bootstrapRuntimeDatabaseSchema(input: RuntimeSchemaConnectionInput): Promise<void> {

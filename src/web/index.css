@@ -4066,3 +4066,162 @@ textarea {
     display: none;
   }
 }
+
+/* ===== Route Filter Bar (Collapsible, horizontal chips) ===== */
+.route-filter-bar {
+  margin-bottom: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-card);
+}
+
+.route-filter-bar-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  text-align: left;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+
+.route-filter-bar-summary:hover {
+  background: var(--color-bg);
+}
+
+.route-filter-bar-expanded {
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--color-border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: filter-bar-slide-down 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.route-filter-bar-expanded.is-closing {
+  animation: filter-bar-slide-up 0.18s ease forwards;
+}
+
+@keyframes filter-bar-slide-down {
+  from { opacity: 0; max-height: 0; transform: translateY(-4px); }
+  to { opacity: 1; max-height: 600px; transform: translateY(0); }
+}
+
+@keyframes filter-bar-slide-up {
+  from { opacity: 1; max-height: 600px; }
+  to { opacity: 0; max-height: 0; overflow: hidden; }
+}
+
+.route-filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.route-filter-row-label {
+  min-width: 40px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding-top: 5px;
+  flex-shrink: 0;
+}
+
+.route-filter-row-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Filter chip (pill button) */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  line-height: 1.3;
+}
+
+.filter-chip:hover {
+  background: var(--color-bg);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.filter-chip.active {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 500;
+}
+
+.filter-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.filter-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.filter-chip-count {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.filter-chip.active .filter-chip-count {
+  color: var(--color-primary);
+}
+
+/* ===== Route Card Grid (multi-column) ===== */
+.route-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+/* Collapsed route card */
+.route-card-collapsed {
+  padding: 10px 14px;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.route-card-collapsed:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+
+/* Expanded route card spans full width */
+.route-card-expanded {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 768px) {
+  .route-card-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -352,7 +352,7 @@ export default function Settings() {
   const loadRouteSelectorRoutes = async () => {
     setSelectorLoading(true);
     try {
-      const rows = await api.getRoutes();
+      const rows = await api.getRoutesLite();
       setSelectorRoutes((Array.isArray(rows) ? rows : []).map((row: any) => ({
         id: row.id,
         modelPattern: row.modelPattern,
@@ -374,7 +374,7 @@ export default function Settings() {
         api.getAuthInfo(),
         api.getRuntimeSettings(),
         api.getDownstreamApiKeys(),
-        api.getRoutes(),
+        api.getRoutesLite(),
         api.getRuntimeDatabaseConfig(),
       ]);
       setMaskedToken(authInfo.masked || '****');

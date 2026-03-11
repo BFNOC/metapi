@@ -273,6 +273,11 @@ export const api = {
 
   // Routes
   getRoutes: () => request('/api/routes'),
+  getRoutesLite: () => request('/api/routes/lite'),
+  getRoutesSummary: () => request('/api/routes/summary'),
+  getRouteChannels: (routeId: number) => request(`/api/routes/${routeId}/channels`),
+  batchAddChannels: (routeId: number, channels: Array<{ accountId: number; tokenId?: number; sourceModel?: string }>) =>
+    request(`/api/routes/${routeId}/channels/batch`, { method: 'POST', body: JSON.stringify({ channels }) }),
   addRoute: (data: any) => request('/api/routes', { method: 'POST', body: JSON.stringify(data) }),
   updateRoute: (id: number, data: any) => request(`/api/routes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteRoute: (id: number) => request(`/api/routes/${id}`, { method: 'DELETE' }),

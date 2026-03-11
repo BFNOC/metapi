@@ -1,6 +1,7 @@
 import { asc } from 'drizzle-orm';
 import cron from 'node-cron';
 import { db, schema } from '../db/index.js';
+import { upsertSetting } from '../db/upsertSetting.js';
 
 const BACKUP_VERSION = '2.0';
 
@@ -558,13 +559,7 @@ async function importPreferencesSection(section: PreferencesBackupSection): Prom
     for (const row of section.settings) {
       if (!isSettingValueAcceptable(row.key, row.value)) continue;
 
-      await tx.insert(schema.settings).values({
-        key: row.key,
-        value: stringifySettingValue(row.value),
-      }).onConflictDoUpdate({
-        target: schema.settings.key,
-        set: { value: stringifySettingValue(row.value) },
-      }).run();
+      await upsertSetting(row.key, row.value, tx);
       applied.push({ key: row.key, value: row.value });
     }
   });

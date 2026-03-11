@@ -2,6 +2,7 @@
 import cron from 'node-cron';
 import { config } from '../../config.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
+import { upsertSetting } from '../../db/upsertSetting.js';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { updateBalanceRefreshCron, updateCheckinCron } from '../../services/checkinScheduler.js';
 import { sendNotification } from '../../services/notifyService.js';
@@ -77,15 +78,7 @@ function maskSecret(value: string): string {
   return `${value.slice(0, 4)}****${value.slice(-4)}`;
 }
 
-async function upsertSetting(key: string, value: unknown) {
-  await db.insert(schema.settings)
-    .values({ key, value: JSON.stringify(value) })
-    .onConflictDoUpdate({
-      target: schema.settings.key,
-      set: { value: JSON.stringify(value) },
-    })
-    .run();
-}
+
 
 async function appendSettingsEvent(input: {
   type: 'checkin' | 'balance' | 'proxy' | 'status' | 'token';
@@ -103,7 +96,7 @@ async function appendSettingsEvent(input: {
       relatedType: 'settings',
       createdAt,
     }).run();
-  } catch {}
+  } catch { }
 }
 
 function toPositiveNumberOrFallback(value: unknown, fallback: number) {

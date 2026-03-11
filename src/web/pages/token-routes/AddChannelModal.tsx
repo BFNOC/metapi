@@ -5,6 +5,7 @@ import { api } from '../../api.js';
 import { useToast } from '../../components/Toast.js';
 import { tr } from '../../i18n.js';
 import type { RouteCandidateView, RouteAccountOption, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
+import type { RouteMissingTokenHint } from '../helpers/routeMissingTokenHints.js';
 
 type ChannelSelection = {
   accountId: number;
@@ -19,6 +20,9 @@ type AddChannelModalProps = {
   routeTitle: string;
   candidateView: RouteCandidateView;
   onSuccess: () => void;
+  missingTokenHints?: RouteMissingTokenHint[];
+  onCreateTokenForMissing?: (accountId: number, modelName: string) => void;
+  existingChannelAccountIds?: Set<number>;
 };
 
 export default function AddChannelModal({
@@ -28,6 +32,9 @@ export default function AddChannelModal({
   routeTitle,
   candidateView,
   onSuccess,
+  missingTokenHints,
+  onCreateTokenForMissing,
+  existingChannelAccountIds,
 }: AddChannelModalProps) {
   const toast = useToast();
   const [searchQuery, setSearchQuery] = useState('');
@@ -41,6 +48,26 @@ export default function AddChannelModal({
       option.label.toLowerCase().includes(q),
     );
   }, [candidateView.accountOptions, searchQuery]);
+
+  const missingAccounts = useMemo(() => {
+    if (!missingTokenHints || missingTokenHints.length === 0) return [];
+    const seen = new Map<number, { accountId: number; label: string; modelName: string }>();
+    for (const hint of missingTokenHints) {
+      for (const account of hint.accounts) {
+        if (!seen.has(account.accountId)) {
+          const label = `${account.username || `account-${account.accountId}`} @ ${account.siteName}`;
+          seen.set(account.accountId, { accountId: account.accountId, label, modelName: hint.modelName });
+        }
+      }
+    }
+    return Array.from(seen.values());
+  }, [missingTokenHints]);
+
+  const filteredMissingAccounts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return missingAccounts;
+    return missingAccounts.filter((item) => item.label.toLowerCase().includes(q));
+  }, [missingAccounts, searchQuery]);
 
   const selectedCount = Object.keys(selectedAccounts).length;
 
@@ -151,71 +178,110 @@ export default function AddChannelModal({
         </div>
 
         <div style={{ maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {filteredAccounts.length === 0 ? (
+          {filteredAccounts.length === 0 && filteredMissingAccounts.length === 0 ? (
             <div style={{ fontSize: 13, color: 'var(--color-text-muted)', padding: '12px 0', textAlign: 'center' }}>
-              {candidateView.accountOptions.length === 0 ? tr('当前没有可用的账号') : tr('没有匹配的账号')}
+              {candidateView.accountOptions.length === 0 && missingAccounts.length === 0
+                ? tr('当前没有可用的账号，请确认已有账号的令牌支持调用此模型')
+                : tr('没有匹配的账号')}
             </div>
           ) : (
-            filteredAccounts.map((account) => {
-              const isSelected = !!selectedAccounts[account.id];
-              const tokens = candidateView.tokenOptionsByAccountId[account.id] || [];
-              const selection = selectedAccounts[account.id];
+            <>
+              {filteredAccounts.map((account) => {
+                const isSelected = !!selectedAccounts[account.id];
+                const tokens = candidateView.tokenOptionsByAccountId[account.id] || [];
+                const selection = selectedAccounts[account.id];
+                const isExisting = existingChannelAccountIds?.has(account.id);
 
-              return (
-                <div
-                  key={account.id}
-                  style={{
-                    padding: '8px 10px',
-                    borderRadius: 'var(--radius-sm)',
-                    border: `1px solid ${isSelected ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                    background: isSelected ? 'color-mix(in srgb, var(--color-primary) 6%, transparent)' : 'transparent',
-                    cursor: 'pointer',
-                  }}
-                >
+                return (
                   <div
-                    style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                    onClick={() => toggleAccount(account)}
+                    key={account.id}
+                    style={{
+                      padding: '8px 10px',
+                      borderRadius: 'var(--radius-sm)',
+                      border: `1px solid ${isSelected ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                      background: isSelected ? 'color-mix(in srgb, var(--color-primary) 6%, transparent)' : 'transparent',
+                      cursor: 'pointer',
+                    }}
                   >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleAccount(account)}
-                      style={{ cursor: 'pointer' }}
-                    />
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>{account.label}</span>
-                  </div>
-
-                  {isSelected && tokens.length > 0 && (
-                    <div style={{ marginTop: 6, paddingLeft: 24 }}>
-                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>{tr('令牌')}:</div>
-                      <ModernSelect
-                        size="sm"
-                        value={(() => {
-                          if (!selection?.tokenId) return '0';
-                          return `${selection.tokenId}::${selection.sourceModel || ''}`;
-                        })()}
-                        onChange={(nextValue) => {
-                          if (nextValue === '0') {
-                            updateTokenForAccount(account.id, 0, '');
-                            return;
-                          }
-                          const [tokenRaw, ...sourceParts] = nextValue.split('::');
-                          updateTokenForAccount(account.id, Number.parseInt(tokenRaw, 10) || 0, sourceParts.join('::'));
-                        }}
-                        options={[
-                          { value: '0', label: tr('默认令牌') },
-                          ...tokens.map((token: RouteTokenOption) => ({
-                            value: `${token.id}::${token.sourceModel || ''}`,
-                            label: `${token.name}${token.isDefault ? '（默认）' : ''}${token.sourceModel ? ` [${token.sourceModel}]` : ''}`,
-                          })),
-                        ]}
-                        placeholder={tr('选择令牌')}
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                      onClick={() => toggleAccount(account)}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleAccount(account)}
+                        style={{ cursor: 'pointer' }}
                       />
+                      <span style={{ fontSize: 13, fontWeight: 500 }}>{account.label}</span>
+                      {isExisting && (
+                        <span className="badge badge-muted" style={{ fontSize: 10 }}>{tr('已添加')}</span>
+                      )}
                     </div>
-                  )}
+
+                    {isSelected && tokens.length > 0 && (
+                      <div style={{ marginTop: 6, paddingLeft: 24 }}>
+                        <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>{tr('令牌')}:</div>
+                        <ModernSelect
+                          size="sm"
+                          value={(() => {
+                            if (!selection?.tokenId) return '0';
+                            return `${selection.tokenId}::${selection.sourceModel || ''}`;
+                          })()}
+                          onChange={(nextValue) => {
+                            if (nextValue === '0') {
+                              updateTokenForAccount(account.id, 0, '');
+                              return;
+                            }
+                            const [tokenRaw, ...sourceParts] = nextValue.split('::');
+                            updateTokenForAccount(account.id, Number.parseInt(tokenRaw, 10) || 0, sourceParts.join('::'));
+                          }}
+                          options={[
+                            { value: '0', label: tr('默认令牌') },
+                            ...tokens.map((token: RouteTokenOption) => ({
+                              value: `${token.id}::${token.sourceModel || ''}`,
+                              label: `${token.name}${token.isDefault ? '（默认）' : ''}${token.sourceModel ? ` [${token.sourceModel}]` : ''}`,
+                            })),
+                          ]}
+                          placeholder={tr('选择令牌')}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Missing token hints */}
+              {filteredMissingAccounts.length > 0 && (
+                <div style={{ borderTop: '1px dashed var(--color-border)', paddingTop: 8, marginTop: 4, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 2 }}>
+                    {tr('以下账号可用此模型但缺少令牌')}:
+                  </div>
+                  {filteredMissingAccounts.map((item) => (
+                    <div
+                      key={item.accountId}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '6px 10px', borderRadius: 'var(--radius-sm)',
+                        border: '1px dashed var(--color-border)', background: 'var(--color-bg)',
+                      }}
+                    >
+                      <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{item.label}</span>
+                      {onCreateTokenForMissing && (
+                        <button
+                          type="button"
+                          className="btn btn-link"
+                          style={{ fontSize: 11, padding: '2px 6px' }}
+                          onClick={() => onCreateTokenForMissing(item.accountId, item.modelName)}
+                        >
+                          {tr('创建令牌')}
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              );
-            })
+              )}
+            </>
           )}
         </div>
       </div>

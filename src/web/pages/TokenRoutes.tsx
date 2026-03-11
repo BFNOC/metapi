@@ -1020,6 +1020,9 @@ export default function TokenRoutes() {
           routeTitle={resolveRouteTitle(addChannelModalRoute)}
           candidateView={getRouteCandidateView(addChannelModalRoute.id)}
           onSuccess={handleAddChannelSuccess}
+          missingTokenHints={routeMissingTokenIndex[addChannelModalRoute.id] || []}
+          onCreateTokenForMissing={handleCreateTokenForMissingAccount}
+          existingChannelAccountIds={new Set((channelsByRouteId[addChannelModalRoute.id] || []).map((c) => c.accountId))}
         />
       )}
     </div>

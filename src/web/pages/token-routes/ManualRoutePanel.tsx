@@ -174,7 +174,7 @@ export default function ManualRoutePanel({
                   className="spinner spinner-sm"
                   style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }}
                 />{' '}
-                保存中...
+                {tr('保存中...')}
               </>
             ) : (
               tr(editingRouteId ? '保存群组' : '创建群组')

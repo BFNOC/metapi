@@ -539,7 +539,7 @@ export async function tokensRoutes(app: FastifyInstance) {
         await db.insert(schema.routeChannels).values({
           routeId,
           accountId: item.accountId,
-          tokenId: item.tokenId,
+          tokenId: effectiveTokenId,
           sourceModel: sourceModel || null,
           priority: 0,
           weight: 10,

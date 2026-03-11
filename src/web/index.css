@@ -4101,19 +4101,19 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  animation: filterBarSlideDown 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: filter-bar-slide-down 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .route-filter-bar-expanded.is-closing {
-  animation: filterBarSlideUp 0.18s ease forwards;
+  animation: filter-bar-slide-up 0.18s ease forwards;
 }
 
-@keyframes filterBarSlideDown {
+@keyframes filter-bar-slide-down {
   from { opacity: 0; max-height: 0; transform: translateY(-4px); }
   to { opacity: 1; max-height: 600px; transform: translateY(0); }
 }
 
-@keyframes filterBarSlideUp {
+@keyframes filter-bar-slide-up {
   from { opacity: 1; max-height: 600px; }
   to { opacity: 0; max-height: 0; overflow: hidden; }
 }

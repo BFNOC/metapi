@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -57,6 +57,7 @@ const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
   accountOptions: [],
   tokenOptionsByAccountId: {},
 };
+const EMPTY_MISSING_ITEMS: MissingTokenRouteSiteActionItem[] = [];
 const ROUTE_ICON_OPTIONS: RouteIconOption[] = [
   { value: '', label: '自动品牌图标', description: '按模型匹配规则自动识别品牌', iconText: '✦' },
 ];
@@ -348,6 +349,13 @@ export default function TokenRoutes() {
     }
   };
 
+  // Stable derived value: only changes when route patterns change (not on enabled toggle)
+  const routePatterns = useMemo(
+    () => routeSummaries.map((r) => ({ id: r.id, modelPattern: r.modelPattern })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [routeSummaries.map((r) => `${r.id}:${r.modelPattern}`).join(',')],
+  );
+
   const routeBrandById = useMemo(() => {
     const next = new Map<number, BrandInfo | null>();
     for (const route of routeSummaries) {
@@ -416,7 +424,7 @@ export default function TokenRoutes() {
   const routeEndpointTypesByRouteId = useMemo(() => {
     const index: Record<number, Set<string>> = {};
     const entries = Object.entries(endpointTypesByModel || {});
-    for (const route of routeSummaries) {
+    for (const route of routePatterns) {
       const pattern = (route.modelPattern || '').trim();
       if (!pattern) {
         index[route.id] = new Set<string>();
@@ -436,7 +444,7 @@ export default function TokenRoutes() {
       index[route.id] = endpointTypes;
     }
     return index;
-  }, [routeSummaries, endpointTypesByModel]);
+  }, [routePatterns, endpointTypesByModel]);
 
   const endpointTypeList = useMemo(() => {
     const grouped = new Map<string, number>();
@@ -563,9 +571,22 @@ export default function TokenRoutes() {
     setVisibleRouteCount(getInitialVisibleCount(filteredRoutes.length, ROUTE_RENDER_CHUNK));
   }, [filteredRoutes.length]);
 
-  const handleLoadMoreRoutes = () => {
+  const handleLoadMoreRoutes = useCallback(() => {
     setVisibleRouteCount((current) => getNextVisibleCount(current, filteredRoutes.length, ROUTE_RENDER_CHUNK));
-  };
+  }, [filteredRoutes.length]);
+
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = loadMoreSentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0]?.isIntersecting) handleLoadMoreRoutes(); },
+      { rootMargin: '200px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [handleLoadMoreRoutes]);
 
   const visibleRoutes = useMemo(
     () => filteredRoutes.slice(0, visibleRouteCount),
@@ -573,13 +594,13 @@ export default function TokenRoutes() {
   );
 
   const routeModelCandidateIndex = useMemo(
-    () => buildRouteModelCandidatesIndex(routeSummaries, modelCandidates, matchesModelPattern),
-    [routeSummaries, modelCandidates],
+    () => buildRouteModelCandidatesIndex(routePatterns, modelCandidates, matchesModelPattern),
+    [routePatterns, modelCandidates],
   );
 
   const routeMissingTokenIndex = useMemo(
-    () => buildRouteMissingTokenIndex(routeSummaries, missingTokenModelsByName, matchesModelPattern),
-    [routeSummaries, missingTokenModelsByName],
+    () => buildRouteMissingTokenIndex(routePatterns, missingTokenModelsByName, matchesModelPattern),
+    [routePatterns, missingTokenModelsByName],
   );
 
   const getRouteCandidateView = (routeId: number): RouteCandidateView => {
@@ -698,30 +719,81 @@ export default function TokenRoutes() {
     }
   };
 
-  const getMissingTokenSiteItems = (routeId: number): MissingTokenRouteSiteActionItem[] => {
-    const missingTokenHints = routeMissingTokenIndex[routeId] || [];
-    const siteMap = new Map<string, MissingTokenRouteSiteActionItem>();
-    for (const hint of missingTokenHints) {
-      for (const account of hint.accounts) {
-        if (!Number.isFinite(account.accountId) || account.accountId <= 0) continue;
-        const siteName = (account.siteName || '').trim() || `site-${account.siteId || 'unknown'}`;
-        const key = `${account.siteId || 0}::${siteName.toLowerCase()}`;
-        const accountLabel = account.username || `account-${account.accountId}`;
-        const existing = siteMap.get(key);
-        if (!existing) {
-          siteMap.set(key, { key, siteName, accountId: account.accountId, accountLabel });
-          continue;
-        }
-        if (account.accountId < existing.accountId) {
-          existing.accountId = account.accountId;
-          existing.accountLabel = accountLabel;
+  const missingTokenSiteItemsByRouteId = useMemo(() => {
+    const result: Record<number, MissingTokenRouteSiteActionItem[]> = {};
+    for (const routeId of Object.keys(routeMissingTokenIndex).map(Number)) {
+      const missingTokenHints = routeMissingTokenIndex[routeId] || [];
+      const siteMap = new Map<string, MissingTokenRouteSiteActionItem>();
+      for (const hint of missingTokenHints) {
+        for (const account of hint.accounts) {
+          if (!Number.isFinite(account.accountId) || account.accountId <= 0) continue;
+          const siteName = (account.siteName || '').trim() || `site-${account.siteId || 'unknown'}`;
+          const key = `${account.siteId || 0}::${siteName.toLowerCase()}`;
+          const accountLabel = account.username || `account-${account.accountId}`;
+          const existing = siteMap.get(key);
+          if (!existing) {
+            siteMap.set(key, { key, siteName, accountId: account.accountId, accountLabel });
+            continue;
+          }
+          if (account.accountId < existing.accountId) {
+            existing.accountId = account.accountId;
+            existing.accountLabel = accountLabel;
+          }
         }
       }
+      result[routeId] = Array.from(siteMap.values()).sort((a, b) => (
+        a.siteName.localeCompare(b.siteName, undefined, { sensitivity: 'base' })
+      ));
     }
-    return Array.from(siteMap.values()).sort((a, b) => (
-      a.siteName.localeCompare(b.siteName, undefined, { sensitivity: 'base' })
-    ));
-  };
+    return result;
+  }, [routeMissingTokenIndex]);
+
+  // Stable callbacks for RouteCard memo (use refs to avoid dependency on closure variables)
+  const toggleExpandRef = useRef(toggleExpand);
+  toggleExpandRef.current = toggleExpand;
+  const stableToggleExpand = useCallback((routeId: number) => toggleExpandRef.current(routeId), []);
+  const handleEditRouteRef = useRef(handleEditRoute);
+  handleEditRouteRef.current = handleEditRoute;
+  const stableEditRoute = useCallback((route: RouteSummaryRow) => handleEditRouteRef.current(route), []);
+  const handleDeleteRouteRef = useRef(handleDeleteRoute);
+  handleDeleteRouteRef.current = handleDeleteRoute;
+  const stableDeleteRoute = useCallback((routeId: number) => { handleDeleteRouteRef.current(routeId); }, []);
+  const handleToggleEnabledRef = useRef(handleToggleRouteEnabled);
+  handleToggleEnabledRef.current = handleToggleRouteEnabled;
+  const stableToggleEnabled = useCallback((route: RouteSummaryRow) => { handleToggleEnabledRef.current(route); }, []);
+  const stableTokenDraftChange = useCallback(
+    (channelId: number, tokenId: number) => setChannelTokenDraft((prev) => ({ ...prev, [channelId]: tokenId })),
+    [],
+  );
+  const stableAddChannel = useCallback((routeId: number) => setAddChannelModalRouteId(routeId), []);
+  const stableToggleSourceGroup = useCallback(
+    (groupKey: string) => setExpandedSourceGroupMap((prev) => ({ ...prev, [groupKey]: !prev[groupKey] })),
+    [],
+  );
+  const handleChannelTokenSaveRef = useRef(handleChannelTokenSave);
+  handleChannelTokenSaveRef.current = handleChannelTokenSave;
+  const stableChannelTokenSave = useCallback(
+    (routeId: number, channelId: number, accountId: number) => handleChannelTokenSaveRef.current(routeId, channelId, accountId),
+    [],
+  );
+  const handleDeleteChannelRef = useRef(handleDeleteChannel);
+  handleDeleteChannelRef.current = handleDeleteChannel;
+  const stableDeleteChannel = useCallback(
+    (channelId: number, routeId: number) => handleDeleteChannelRef.current(channelId, routeId),
+    [],
+  );
+  const handleChannelDragEndRef = useRef(handleChannelDragEnd);
+  handleChannelDragEndRef.current = handleChannelDragEnd;
+  const stableChannelDragEnd = useCallback(
+    (routeId: number, event: DragEndEvent) => handleChannelDragEndRef.current(routeId, event),
+    [],
+  );
+  const handleCreateTokenRef = useRef(handleCreateTokenForMissingAccount);
+  handleCreateTokenRef.current = handleCreateTokenForMissingAccount;
+  const stableCreateTokenForMissing = useCallback(
+    (accountId: number, modelName: string) => handleCreateTokenRef.current(accountId, modelName),
+    [],
+  );
 
   const addChannelModalRoute = addChannelModalRouteId
     ? routeSummaries.find((r) => r.id === addChannelModalRouteId) || null
@@ -944,10 +1016,10 @@ export default function TokenRoutes() {
               route={route}
               brand={routeBrandById.get(route.id) || null}
               expanded={isExpanded}
-              onToggleExpand={() => toggleExpand(route.id)}
-              onEdit={() => handleEditRoute(route)}
-              onDelete={() => handleDeleteRoute(route.id)}
-              onToggleEnabled={() => handleToggleRouteEnabled(route)}
+              onToggleExpand={stableToggleExpand}
+              onEdit={stableEditRoute}
+              onDelete={stableDeleteRoute}
+              onToggleEnabled={stableToggleEnabled}
               channels={channelsByRouteId[route.id]}
               loadingChannels={!!loadingChannelsByRouteId[route.id]}
               routeDecision={decisionByRoute[route.id] || null}
@@ -956,37 +1028,26 @@ export default function TokenRoutes() {
               channelTokenDraft={channelTokenDraft}
               updatingChannel={updatingChannel}
               savingPriority={!!savingPriorityByRoute[route.id]}
-              onTokenDraftChange={(channelId, tokenId) =>
-                setChannelTokenDraft((prev) => ({ ...prev, [channelId]: tokenId }))
-              }
-              onSaveToken={(channelId, accountId) => handleChannelTokenSave(route.id, channelId, accountId)}
-              onDeleteChannel={(channelId) => handleDeleteChannel(channelId, route.id)}
-              onChannelDragEnd={(event) => handleChannelDragEnd(route.id, event)}
-              missingTokenSiteItems={getMissingTokenSiteItems(route.id)}
-              onCreateTokenForMissing={handleCreateTokenForMissingAccount}
-              onAddChannel={() => setAddChannelModalRouteId(route.id)}
+              onTokenDraftChange={stableTokenDraftChange}
+              onSaveToken={stableChannelTokenSave}
+              onDeleteChannel={stableDeleteChannel}
+              onChannelDragEnd={stableChannelDragEnd}
+              missingTokenSiteItems={missingTokenSiteItemsByRouteId[route.id] || EMPTY_MISSING_ITEMS}
+              onCreateTokenForMissing={stableCreateTokenForMissing}
+              onAddChannel={stableAddChannel}
               expandedSourceGroupMap={expandedSourceGroupMap}
-              onToggleSourceGroup={(groupKey) =>
-                setExpandedSourceGroupMap((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }))
-              }
+              onToggleSourceGroup={stableToggleSourceGroup}
             />
           );
         })}
       </div>
 
       {filteredRoutes.length > 0 && visibleRouteCount < filteredRoutes.length && (
-        <div style={{ textAlign: 'center', padding: '8px 0 14px', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-            {tr('当前已加载路由')} {visibleRouteCount} / {filteredRoutes.length}
-          </div>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '7px 14px', fontSize: 12 }}
-            onClick={handleLoadMoreRoutes}
-          >
-            {tr('加载更多路由')}
-          </button>
+        <div
+          ref={loadMoreSentinelRef}
+          style={{ textAlign: 'center', padding: '12px 0', fontSize: 12, color: 'var(--color-text-muted)' }}
+        >
+          {tr('当前已加载路由')} {visibleRouteCount} / {filteredRoutes.length}
         </div>
       )}
 

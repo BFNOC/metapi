@@ -882,7 +882,10 @@ export async function settingsRoutes(app: FastifyInstance) {
       totalLatencyMs: 0,
       totalCost: 0,
       lastUsedAt: null,
+      lastSelectedAt: null,
       lastFailAt: null,
+      consecutiveFailCount: 0,
+      cooldownLevel: 0,
       cooldownUntil: null,
     }).run();
 

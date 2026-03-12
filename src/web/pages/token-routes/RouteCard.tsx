@@ -14,9 +14,17 @@ import {
   sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
 import { BrandGlyph, InlineBrandIcon, type BrandInfo } from '../../components/BrandIcon.js';
+import ModernSelect from '../../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../../components/useAnimatedVisibility.js';
 import { tr } from '../../i18n.js';
-import type { RouteSummaryRow, RouteChannel, RouteDecision, RouteDecisionCandidate, MissingTokenRouteSiteActionItem } from './types.js';
+import type {
+  RouteSummaryRow,
+  RouteChannel,
+  RouteDecision,
+  RouteDecisionCandidate,
+  MissingTokenRouteSiteActionItem,
+  RouteRoutingStrategy,
+} from './types.js';
 import type { RouteCandidateView, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
 import { SortableChannelRow } from './SortableChannelRow.js';
 import {
@@ -34,6 +42,8 @@ type RouteCardProps = {
   onEdit: (route: RouteSummaryRow) => void;
   onDelete: (routeId: number) => void;
   onToggleEnabled: (route: RouteSummaryRow) => void;
+  onRoutingStrategyChange: (route: RouteSummaryRow, strategy: RouteRoutingStrategy) => void;
+  updatingRoutingStrategy: boolean;
   // Channel data (loaded on demand)
   channels: RouteChannel[] | undefined;
   loadingChannels: boolean;
@@ -79,6 +89,8 @@ function RouteCardInner({
   onEdit,
   onDelete,
   onToggleEnabled,
+  onRoutingStrategyChange,
+  updatingRoutingStrategy,
   channels,
   loadingChannels,
   routeDecision,
@@ -100,6 +112,19 @@ function RouteCardInner({
   const routeIcon = resolveRouteIcon(route);
   const exactRoute = isExactModelPattern(route.modelPattern);
   const title = resolveRouteTitle(route);
+  const routingStrategy = route.routingStrategy === 'round_robin' ? 'round_robin' : 'weighted';
+  const routingStrategyOptions = [
+    {
+      value: 'weighted',
+      label: tr('权重随机'),
+      description: tr('按优先级、权重和成本信号综合选择'),
+    },
+    {
+      value: 'round_robin',
+      label: tr('轮询'),
+      description: tr('按全局顺序轮流调用，忽略优先级，连续失败 3 次后进入分级冷却'),
+    },
+  ] as const;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -170,6 +195,10 @@ function RouteCardInner({
 
           <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0 }}>
             {route.channelCount} {tr('通道')}
+          </span>
+
+          <span className="badge badge-muted" style={{ fontSize: 10, flexShrink: 0 }}>
+            {routingStrategy === 'round_robin' ? tr('轮询') : tr('权重随机')}
           </span>
 
           <svg
@@ -250,6 +279,23 @@ function RouteCardInner({
           {tr('通配符路由按请求实时决策；概率解释在当前路由内统一估算。')}
         </div>
       )}
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+          {tr('路由策略')}
+        </div>
+        <div style={{ minWidth: 220, maxWidth: 320, flex: '1 1 220px' }}>
+          <ModernSelect
+            size="sm"
+            value={routingStrategy}
+            disabled={updatingRoutingStrategy}
+            onChange={(nextValue) => onRoutingStrategyChange(route, nextValue as RouteRoutingStrategy)}
+            options={routingStrategyOptions.map((option) => ({ ...option }))}
+            placeholder={tr('选择路由策略')}
+            emptyLabel={tr('暂无可选策略')}
+          />
+        </div>
+      </div>
 
       {/* Missing token hints + Add channel button */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>

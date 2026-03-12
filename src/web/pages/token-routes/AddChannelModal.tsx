@@ -6,6 +6,11 @@ import { useToast } from '../../components/Toast.js';
 import { tr } from '../../i18n.js';
 import type { RouteCandidateView, RouteAccountOption, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
 import type { RouteMissingTokenHint } from '../helpers/routeMissingTokenHints.js';
+import {
+  buildFixedTokenOptionDescription,
+  buildFixedTokenOptionLabel,
+  describeTokenBinding,
+} from './tokenBindingPresentation.js';
 
 type ChannelSelection = {
   accountId: number;
@@ -79,13 +84,10 @@ export default function AddChannelModal({
         return next;
       }
       const tokens = candidateView.tokenOptionsByAccountId[account.id] || [];
-      const defaultToken = tokens.find((t) => t.isDefault) || tokens[0] || null;
       return {
         ...prev,
         [account.id]: {
           accountId: account.id,
-          tokenId: defaultToken?.id,
-          sourceModel: defaultToken?.sourceModel,
         },
       };
     });
@@ -191,6 +193,7 @@ export default function AddChannelModal({
                 const tokens = candidateView.tokenOptionsByAccountId[account.id] || [];
                 const selection = selectedAccounts[account.id];
                 const isExisting = existingChannelAccountIds?.has(account.id);
+                const tokenBinding = describeTokenBinding(tokens, selection?.tokenId || 0);
 
                 return (
                   <div
@@ -219,7 +222,7 @@ export default function AddChannelModal({
 
                     {isSelected && tokens.length > 0 && (
                       <div style={{ marginTop: 6, paddingLeft: 24 }} onClick={(e) => e.stopPropagation()}>
-                        <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>{tr('令牌')}:</div>
+                        <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>{tr('令牌绑定')}:</div>
                         <ModernSelect
                           size="sm"
                           value={(() => {
@@ -235,14 +238,25 @@ export default function AddChannelModal({
                             updateTokenForAccount(account.id, Number.parseInt(tokenRaw, 10) || 0, sourceParts.join('::'));
                           }}
                           options={[
-                            { value: '0', label: tr('默认令牌') },
+                            {
+                              value: '0',
+                              label: tr('跟随账号默认'),
+                              description: tokenBinding.followOptionDescription,
+                            },
                             ...tokens.map((token: RouteTokenOption) => ({
                               value: `${token.id}::${token.sourceModel || ''}`,
-                              label: `${token.name}${token.isDefault ? '（默认）' : ''}${token.sourceModel ? ` [${token.sourceModel}]` : ''}`,
+                              label: buildFixedTokenOptionLabel(token, {
+                                includeDefaultTag: true,
+                                includeSourceModel: true,
+                              }),
+                              description: buildFixedTokenOptionDescription(token),
                             })),
                           ]}
-                          placeholder={tr('选择令牌')}
+                          placeholder={tr('选择绑定方式')}
                         />
+                        <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                          {tokenBinding.helperText}
+                        </div>
                       </div>
                     )}
                   </div>

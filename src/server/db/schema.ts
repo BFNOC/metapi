@@ -111,6 +111,7 @@ export const tokenRoutes = sqliteTable('token_routes', {
   modelMapping: text('model_mapping'), // JSON
   decisionSnapshot: text('decision_snapshot'), // JSON
   decisionRefreshedAt: text('decision_refreshed_at'),
+  routingStrategy: text('routing_strategy').default('weighted'),
   enabled: integer('enabled', { mode: 'boolean' }).default(true),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
@@ -134,7 +135,10 @@ export const routeChannels = sqliteTable('route_channels', {
   totalLatencyMs: integer('total_latency_ms').default(0),
   totalCost: real('total_cost').default(0),
   lastUsedAt: text('last_used_at'),
+  lastSelectedAt: text('last_selected_at'),
   lastFailAt: text('last_fail_at'),
+  consecutiveFailCount: integer('consecutive_fail_count').default(0),
+  cooldownLevel: integer('cooldown_level').default(0),
   cooldownUntil: text('cooldown_until'),
 }, (table) => ({
   routeIdIdx: index('route_channels_route_id_idx').on(table.routeId),

@@ -292,26 +292,50 @@ export default function Models() {
     });
   }, [data.models, search, activeSite, activeBrand, sortBy, sortDir]);
 
+  // Keep expanded detail consistent with filters (especially site filter).
+  // The list-level filter uses "model has at least one account on this site" semantics;
+  // once a model is shown, its detail should honor the active site as well.
+  const detailModels = useMemo(() => {
+    if (!activeSite) return filteredModels;
+    return filteredModels.map((model) => {
+      const accounts = model.accounts.filter((account) => account.site === activeSite);
+      const pricingSources = model.pricingSources.filter((source) => source.siteName === activeSite);
+      const latencyValues = accounts
+        .map((account) => account.latency)
+        .filter((latency): latency is number => typeof latency === 'number' && Number.isFinite(latency));
+      return {
+        ...model,
+        accounts,
+        pricingSources,
+        accountCount: accounts.length,
+        tokenCount: accounts.reduce((sum, account) => sum + account.tokens.length, 0),
+        avgLatency: latencyValues.length > 0
+          ? Math.round(latencyValues.reduce((sum, latency) => sum + latency, 0) / latencyValues.length)
+          : model.avgLatency,
+      };
+    });
+  }, [filteredModels, activeSite]);
+
   /* ---- pagination ---- */
   const totalPages = Math.max(1, Math.ceil(filteredModels.length / pageSize));
   const safePageVal = Math.min(page, totalPages);
-  const paged = filteredModels.slice((safePageVal - 1) * pageSize, safePageVal * pageSize);
+  const paged = detailModels.slice((safePageVal - 1) * pageSize, safePageVal * pageSize);
 
   useEffect(() => { setPage(1); }, [search, activeSite, activeBrand, pageSize]);
 
   /* ---- stats ---- */
-  const totalCoverageSlots = filteredModels.reduce((s, m) => s + m.accountCount, 0);
+  const totalCoverageSlots = detailModels.reduce((s, m) => s + m.accountCount, 0);
   const uniqueAccountCount = (() => {
     const ids = new Set<number>();
-    for (const model of filteredModels) {
+    for (const model of detailModels) {
       for (const account of model.accounts) {
         ids.add(account.id);
       }
     }
     return ids.size;
   })();
-  const avgLatency = filteredModels.length
-    ? Math.round(filteredModels.reduce((s, m) => s + m.avgLatency, 0) / filteredModels.length)
+  const avgLatency = detailModels.length
+    ? Math.round(detailModels.reduce((s, m) => s + m.avgLatency, 0) / detailModels.length)
     : 0;
 
   /* ---- copy ---- */
@@ -898,5 +922,3 @@ export default function Models() {
     </div>
   );
 }
-
-

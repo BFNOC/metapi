@@ -28,6 +28,7 @@ import type {
   RouteSortDir,
   GroupFilter,
   RouteSummaryRow,
+  RouteRoutingStrategy,
   RouteDecision,
   RouteIconOption,
   MissingTokenRouteSiteActionItem,
@@ -88,6 +89,7 @@ export default function TokenRoutes() {
   const [channelTokenDraft, setChannelTokenDraft] = useState<Record<number, number>>({});
   const [updatingChannel, setUpdatingChannel] = useState<Record<number, boolean>>({});
   const [savingPriorityByRoute, setSavingPriorityByRoute] = useState<Record<number, boolean>>({});
+  const [updatingRoutingStrategyByRoute, setUpdatingRoutingStrategyByRoute] = useState<Record<number, boolean>>({});
 
   const [decisionByRoute, setDecisionByRoute] = useState<Record<number, RouteDecision | null>>({});
   const [loadingDecision, setLoadingDecision] = useState(false);
@@ -346,6 +348,32 @@ export default function TokenRoutes() {
         prev.map((item) => (item.id === route.id ? { ...item, enabled: route.enabled } : item)),
       );
       toast.error(e.message || '切换路由状态失败');
+    }
+  };
+
+  const handleRoutingStrategyChange = async (route: RouteSummaryRow, routingStrategy: RouteRoutingStrategy) => {
+    const currentStrategy = route.routingStrategy === 'round_robin' ? 'round_robin' : 'weighted';
+    if (routingStrategy === currentStrategy) return;
+
+    setUpdatingRoutingStrategyByRoute((prev) => ({ ...prev, [route.id]: true }));
+    setRouteSummaries((prev) => prev.map((item) => (
+      item.id === route.id
+        ? { ...item, routingStrategy }
+        : item
+    )));
+    try {
+      await api.updateRoute(route.id, { routingStrategy });
+      toast.success(routingStrategy === 'round_robin' ? '已切换为轮询策略' : '已切换为权重随机策略');
+      await load();
+    } catch (e: any) {
+      setRouteSummaries((prev) => prev.map((item) => (
+        item.id === route.id
+          ? { ...item, routingStrategy: currentStrategy }
+          : item
+      )));
+      toast.error(e.message || '更新路由策略失败');
+    } finally {
+      setUpdatingRoutingStrategyByRoute((prev) => ({ ...prev, [route.id]: false }));
     }
   };
 
@@ -761,6 +789,12 @@ export default function TokenRoutes() {
   const handleToggleEnabledRef = useRef(handleToggleRouteEnabled);
   handleToggleEnabledRef.current = handleToggleRouteEnabled;
   const stableToggleEnabled = useCallback((route: RouteSummaryRow) => { handleToggleEnabledRef.current(route); }, []);
+  const handleRoutingStrategyChangeRef = useRef(handleRoutingStrategyChange);
+  handleRoutingStrategyChangeRef.current = handleRoutingStrategyChange;
+  const stableRoutingStrategyChange = useCallback(
+    (route: RouteSummaryRow, strategy: RouteRoutingStrategy) => handleRoutingStrategyChangeRef.current(route, strategy),
+    [],
+  );
   const stableTokenDraftChange = useCallback(
     (channelId: number, tokenId: number) => setChannelTokenDraft((prev) => ({ ...prev, [channelId]: tokenId })),
     [],
@@ -995,6 +1029,7 @@ export default function TokenRoutes() {
               >
                 <MobileField label="模型" value={route.modelPattern} />
                 <MobileField label="通道" value={route.channelCount} />
+                <MobileField label="策略" value={route.routingStrategy === 'round_robin' ? tr('轮询') : tr('权重随机')} />
                 <MobileField label="状态" value={route.enabled ? tr('启用') : tr('禁用')} />
                 <div className="mobile-card-actions">
                   <button
@@ -1019,6 +1054,8 @@ export default function TokenRoutes() {
               onEdit={stableEditRoute}
               onDelete={stableDeleteRoute}
               onToggleEnabled={stableToggleEnabled}
+              onRoutingStrategyChange={stableRoutingStrategyChange}
+              updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
               channels={channelsByRouteId[route.id]}
               loadingChannels={!!loadingChannelsByRouteId[route.id]}
               routeDecision={decisionByRoute[route.id] || null}

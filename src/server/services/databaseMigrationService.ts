@@ -374,7 +374,7 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
   for (const row of snapshot.accounts.tokenRoutes) {
     statements.push({
       table: 'token_routes',
-      columns: ['id', 'model_pattern', 'display_name', 'display_icon', 'model_mapping', 'decision_snapshot', 'decision_refreshed_at', 'enabled', 'created_at', 'updated_at'],
+      columns: ['id', 'model_pattern', 'display_name', 'display_icon', 'model_mapping', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy', 'enabled', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNullableString(row.modelPattern),
@@ -383,6 +383,7 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
         asNullableString(row.modelMapping),
         asNullableString(row.decisionSnapshot),
         asNullableString(row.decisionRefreshedAt),
+        asNullableString(row.routingStrategy),
         asBoolean(row.enabled, true),
         asNullableString(row.createdAt),
         asNullableString(row.updatedAt),
@@ -393,7 +394,7 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
   for (const row of snapshot.accounts.routeChannels) {
     statements.push({
       table: 'route_channels',
-      columns: ['id', 'route_id', 'account_id', 'token_id', 'source_model', 'priority', 'weight', 'enabled', 'manual_override', 'success_count', 'fail_count', 'total_latency_ms', 'total_cost', 'last_used_at', 'last_fail_at', 'cooldown_until'],
+      columns: ['id', 'route_id', 'account_id', 'token_id', 'source_model', 'priority', 'weight', 'enabled', 'manual_override', 'success_count', 'fail_count', 'total_latency_ms', 'total_cost', 'last_used_at', 'last_selected_at', 'last_fail_at', 'consecutive_fail_count', 'cooldown_level', 'cooldown_until'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.routeId, 0),
@@ -409,7 +410,10 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
         asNumber(row.totalLatencyMs, 0),
         asNumber(row.totalCost, 0),
         asNullableString(row.lastUsedAt),
+        asNullableString(row.lastSelectedAt),
         asNullableString(row.lastFailAt),
+        asNumber(row.consecutiveFailCount, 0),
+        asNumber(row.cooldownLevel, 0),
         asNullableString(row.cooldownUntil),
       ],
     });

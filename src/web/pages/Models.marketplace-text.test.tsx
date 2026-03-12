@@ -190,4 +190,134 @@ describe('Models marketplace text', () => {
       root?.unmount();
     }
   });
+
+  it('limits expanded account and pricing detail to the selected site filter', async () => {
+    apiMock.getModelsMarketplace.mockResolvedValue({
+      models: [
+        {
+          name: 'gpt-4o',
+          accountCount: 2,
+          tokenCount: 3,
+          avgLatency: 500,
+          successRate: 96,
+          description: 'demo model',
+          tags: ['chat'],
+          supportedEndpointTypes: ['openai'],
+          pricingSources: [
+            {
+              siteId: 1,
+              siteName: '站点 A',
+              accountId: 1,
+              username: 'user-a',
+              ownerBy: null,
+              enableGroups: [],
+              groupPricing: {
+                default: {
+                  quotaType: 0,
+                  inputPerMillion: 1,
+                  outputPerMillion: 2,
+                },
+              },
+            },
+            {
+              siteId: 2,
+              siteName: '站点 B',
+              accountId: 2,
+              username: 'user-b',
+              ownerBy: null,
+              enableGroups: [],
+              groupPricing: {
+                default: {
+                  quotaType: 0,
+                  inputPerMillion: 3,
+                  outputPerMillion: 4,
+                },
+              },
+            },
+          ],
+          accounts: [
+            {
+              id: 1,
+              site: '站点 A',
+              username: 'user-a',
+              latency: 320,
+              balance: 12.5,
+              tokens: [
+                { id: 1, name: 'token-a-1', isDefault: true },
+                { id: 2, name: 'token-a-2', isDefault: false },
+              ],
+            },
+            {
+              id: 2,
+              site: '站点 B',
+              username: 'user-b',
+              latency: 680,
+              balance: 8.4,
+              tokens: [
+                { id: 3, name: 'token-b-1', isDefault: true },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const siteFilterItem = root!.root.find((node) => (
+        node.type === 'div'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('filter-item')
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('站点 A')
+      ));
+
+      await act(async () => {
+        siteFilterItem.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const cards = root!.root.findAll((node) => (
+        node.type === 'div'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('model-card')
+        && typeof node.props.onClick === 'function'
+      ));
+      expect(cards.length).toBeGreaterThan(0);
+
+      await act(async () => {
+        cards[0]!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const expandedSections = root!.root.findAll((node) => (
+        node.type === 'div'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('model-card-expand')
+      ));
+      expect(expandedSections.length).toBe(1);
+
+      const expandedText = collectText(expandedSections[0]!);
+      expect(expandedText).toContain('站点 A');
+      expect(expandedText).toContain('user-a');
+      expect(expandedText).toContain('token-a-1');
+      expect(expandedText).not.toContain('站点 B');
+      expect(expandedText).not.toContain('user-b');
+      expect(expandedText).not.toContain('token-b-1');
+    } finally {
+      root?.unmount();
+    }
+  });
 });

@@ -69,8 +69,30 @@ function getAvailabilityColor(value: number | null | undefined): string {
   if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) {
     return 'var(--color-border-light)';
   }
-  const hue = Math.max(0, Math.min(120, value * 1.2));
-  return `hsl(${hue}, 72%, 45%)`;
+  const clamped = Math.max(0, Math.min(100, value));
+  const low = { r: 229, g: 80, b: 69 };   // 鲜亮红
+  const mid = { r: 217, g: 161, b: 37 };  // 鲜亮黄
+  const high = { r: 82, g: 196, b: 26 };  // 鲜亮绿
+
+  const lerp = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
+
+  let r: number;
+  let g: number;
+  let b: number;
+
+  if (clamped <= 50) {
+    const t = clamped / 50;
+    r = lerp(low.r, mid.r, t);
+    g = lerp(low.g, mid.g, t);
+    b = lerp(low.b, mid.b, t);
+  } else {
+    const t = (clamped - 50) / 50;
+    r = lerp(mid.r, high.r, t);
+    g = lerp(mid.g, high.g, t);
+    b = lerp(mid.b, high.b, t);
+  }
+
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 function padDateTimeSegment(value: number): string {
@@ -147,6 +169,7 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
   const [sites, setSites] = useState<any[]>([]);
   const [siteSpeedStates, setSiteSpeedStates] = useState<Record<string, SiteSpeedState>>({});
   const [trendDays, setTrendDays] = useState(7);
+  const [showInactiveSites, setShowInactiveSites] = useState(false);
   const toast = useToast();
   const normalizedAdminName = (adminName || '').trim() || '\u7ba1\u7406\u5458';
 
@@ -313,9 +336,14 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
   const performanceWindowSeconds = Math.max(1, safeNumber(data?.performance?.windowSeconds) || 60);
   const requestsPerMinute = safeNumber(data?.performance?.requestsPerMinute);
   const tokensPerMinute = safeNumber(data?.performance?.tokensPerMinute);
-  const siteAvailability: SiteAvailabilitySummary[] = Array.isArray(data?.siteAvailability)
+  const rawSiteAvailability: SiteAvailabilitySummary[] = Array.isArray(data?.siteAvailability)
     ? data.siteAvailability
     : [];
+  const activeSites = rawSiteAvailability
+    .filter((s) => s.totalRequests > 0)
+    .sort((a, b) => (b.totalRequests || 0) - (a.totalRequests || 0));
+  const inactiveSites = rawSiteAvailability.filter((s) => !s.totalRequests || s.totalRequests === 0);
+  const siteAvailability = showInactiveSites ? [...activeSites, ...inactiveSites] : activeSites;
 
   const getLatencyColor = (ms: number) => (
     ms <= 500
@@ -570,68 +598,79 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
             <div className="site-observability-title">
               <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12h4l3 8 4-16 3 8h4" /></svg>
               站点可用性观测
+              <span className="site-observability-count-badge">{activeSites.length}/{rawSiteAvailability.length}</span>
             </div>
-            <div className="site-observability-subtitle">最近 24 小时，每个色块代表 1 小时，按单次上游请求统计</div>
+            <div className="site-observability-subtitle">最近 24 小时 · 每色块 = 1h · 按使用量排序</div>
           </div>
-          <div className="site-observability-legend">
-            <span className="site-observability-legend-text">低</span>
-            <span className="site-observability-legend-chip" style={{ background: getAvailabilityColor(0) }} />
-            <span className="site-observability-legend-chip" style={{ background: getAvailabilityColor(50) }} />
-            <span className="site-observability-legend-chip" style={{ background: getAvailabilityColor(100) }} />
-            <span className="site-observability-legend-text">高</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div className="site-observability-legend">
+              <span className="site-observability-legend-text">低</span>
+              <span className="site-observability-legend-chip" style={{ background: getAvailabilityColor(0) }} />
+              <span className="site-observability-legend-chip" style={{ background: getAvailabilityColor(50) }} />
+              <span className="site-observability-legend-chip" style={{ background: getAvailabilityColor(100) }} />
+              <span className="site-observability-legend-text">高</span>
+            </div>
+            {inactiveSites.length > 0 && (
+              <button
+                className="site-observability-toggle-btn"
+                onClick={() => setShowInactiveSites((v) => !v)}
+              >
+                {showInactiveSites ? '隐藏未使用' : `显示未使用 (${inactiveSites.length})`}
+              </button>
+            )}
           </div>
         </div>
 
         {siteAvailability.length > 0 ? (
-          <div className="site-observability-list">
+          <div className="site-observability-grid">
             {siteAvailability.map((site) => (
-              <div key={site.siteId} className="site-observability-row">
-                <div className="site-observability-row-header">
-                  <div className="site-observability-site-meta">
-                    <div className="site-observability-site-name-row">
-                      <span className="site-observability-site-name">{site.siteName}</span>
-                      {site.platform && (
-                        <span className="site-observability-platform-badge">{site.platform}</span>
-                      )}
-                      {site.siteUrl && (
-                        <a
-                          href={site.siteUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="site-observability-link"
-                        >
-                          打开
-                        </a>
-                      )}
-                    </div>
-                    <div className="site-observability-site-stats">
-                      <span>{formatAvailabilityPercent(site.availabilityPercent)} 可用性</span>
-                      <span style={site.averageLatencyMs != null ? { color: getLatencyColor(site.averageLatencyMs) } : undefined}>
-                        {site.averageLatencyMs != null ? `${site.averageLatencyMs}ms` : '—'} 平均响应
-                      </span>
-                      <span>{Math.round(site.totalRequests || 0)} 次请求</span>
-                      <span>{Math.round(site.successCount || 0)} 成功 / {Math.round(site.failedCount || 0)} 失败</span>
-                    </div>
+              <div key={site.siteId} className={`site-observability-card${site.totalRequests > 0 ? '' : ' site-observability-card--inactive'}`}>
+                <div className="site-observability-card-top">
+                  <div className="site-observability-card-title">
+                    <span className="site-observability-site-name">{site.siteName}</span>
+                    {site.platform && (
+                      <span className="site-observability-platform-badge">{site.platform}</span>
+                    )}
                   </div>
-                  <div className="site-observability-row-actions">
-                    <Link
-                      to={buildSiteLast24hLogsRoute(site.siteId)}
-                      className="site-observability-log-link"
-                    >
-                      查看日志
-                    </Link>
-                  </div>
+                  <Link
+                    to={buildSiteLast24hLogsRoute(site.siteId)}
+                    className="site-observability-log-link-compact"
+                    title="查看日志"
+                  >
+                    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                  </Link>
                 </div>
-                <div className="site-availability-strip">
+                <div className="site-observability-card-metrics">
+                  <span className="site-observability-metric-main" style={{ color: getAvailabilityColor(site.availabilityPercent) }}>
+                    {formatAvailabilityPercent(site.availabilityPercent)}
+                  </span>
+                  <span className="site-observability-metric-sep">·</span>
+                  <span style={site.averageLatencyMs != null ? { color: getLatencyColor(site.averageLatencyMs) } : undefined}>
+                    {site.averageLatencyMs != null ? `${site.averageLatencyMs}ms` : '—'}
+                  </span>
+                  <span className="site-observability-metric-sep">·</span>
+                  <span>{Math.round(site.totalRequests || 0)} 次</span>
+                </div>
+                <div className="site-availability-strip-compact">
                   {site.buckets.map((bucket, index) => (
                     <Link
                       key={`${site.siteId}-${index}`}
                       to={buildAvailabilityBucketLogsRoute(site.siteId, bucket)}
-                      className="site-availability-cell site-availability-cell-link"
+                      className="site-availability-cell site-availability-cell-link site-availability-cell-pill"
                       style={{
                         background: getAvailabilityColor(bucket.availabilityPercent),
-                        opacity: bucket.totalRequests > 0 ? 1 : 0.35,
+                        opacity: bucket.totalRequests > 0 ? 1 : 0.3,
                       }}
+                      data-tooltip={[
+                        `时间：${formatAvailabilityBucketLabel(bucket)}`,
+                        bucket.totalRequests > 0
+                          ? `可用性：${formatAvailabilityPercent(bucket.availabilityPercent)}`
+                          : '可用性：无请求',
+                        `请求：${bucket.totalRequests} 次`,
+                        `成功/失败：${bucket.successCount}/${bucket.failedCount}`,
+                        bucket.averageLatencyMs != null ? `平均响应：${bucket.averageLatencyMs}ms` : '平均响应：—',
+                      ].join(' · ')}
+                      data-tooltip-align="start"
                       title={[
                         formatAvailabilityBucketLabel(bucket),
                         bucket.totalRequests > 0

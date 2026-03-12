@@ -120,10 +120,13 @@ describe('Dashboard site observability panel', () => {
       expect(collectText(panel)).toContain('Demo Site');
       expect(collectText(panel)).toContain('75%');
       expect(collectText(panel)).toContain('320ms');
-      expect(collectText(panel)).toContain('查看日志');
+      expect(logLink.props.title).toBe('查看日志');
       expect(cells).toHaveLength(24);
       expect(String(cells[0]?.props.title || '')).toContain('可用性 100%');
       expect(String(cells[7]?.props.title || '')).toContain('可用性 0%');
+      expect(String(cells[0]?.props['data-tooltip'] || '')).toContain('时间：');
+      expect(String(cells[0]?.props['data-tooltip'] || '')).toContain('可用性：100%');
+      expect(String(cells[0]?.props['data-tooltip'] || '')).toContain('成功/失败：1/0');
       expect(String(logLink.props.href || logLink.props.to || '')).toContain('/logs?siteId=1');
     } finally {
       root?.unmount();

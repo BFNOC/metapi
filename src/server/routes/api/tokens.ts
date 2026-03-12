@@ -2,6 +2,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import { rebuildTokenRoutesFromAvailability, refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
+import { normalizeRouteRoutingStrategy } from '../../services/routeRoutingStrategy.js';
 import { invalidateTokenRouterCache, matchesModelPattern, tokenRouter } from '../../services/tokenRouter.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import {
@@ -420,6 +421,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       modelPattern: schema.tokenRoutes.modelPattern,
       displayName: schema.tokenRoutes.displayName,
       displayIcon: schema.tokenRoutes.displayIcon,
+      routingStrategy: schema.tokenRoutes.routingStrategy,
       enabled: schema.tokenRoutes.enabled,
     }).from(schema.tokenRoutes).all();
   });
@@ -462,6 +464,7 @@ export async function tokensRoutes(app: FastifyInstance) {
         displayName: route.displayName ?? null,
         displayIcon: route.displayIcon ?? null,
         modelMapping: route.modelMapping ?? null,
+        routingStrategy: route.routingStrategy ?? 'weighted',
         enabled: route.enabled,
         channelCount: agg?.channelCount ?? 0,
         enabledChannelCount: agg?.enabledChannelCount ?? 0,
@@ -676,13 +679,14 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Create a route
-  app.post<{ Body: { modelPattern: string; displayName?: string; displayIcon?: string; modelMapping?: string; enabled?: boolean } }>('/api/routes', async (request) => {
+  app.post<{ Body: { modelPattern: string; displayName?: string; displayIcon?: string; modelMapping?: string; routingStrategy?: string; enabled?: boolean } }>('/api/routes', async (request) => {
     const body = request.body;
     const insertedRoute = await db.insert(schema.tokenRoutes).values({
       modelPattern: body.modelPattern,
       displayName: body.displayName,
       displayIcon: body.displayIcon,
       modelMapping: body.modelMapping,
+      routingStrategy: normalizeRouteRoutingStrategy(body.routingStrategy),
       enabled: body.enabled ?? true,
     }).run();
     const routeId = Number(insertedRoute.lastInsertRowid || 0);
@@ -718,12 +722,16 @@ export async function tokensRoutes(app: FastifyInstance) {
       updates.modelPattern = nextModelPattern;
     }
     if (body.modelMapping !== undefined) updates.modelMapping = body.modelMapping;
+    if (body.routingStrategy !== undefined) updates.routingStrategy = normalizeRouteRoutingStrategy(body.routingStrategy);
     if (body.enabled !== undefined) updates.enabled = body.enabled;
     updates.updatedAt = new Date().toISOString();
 
     await db.update(schema.tokenRoutes).set(updates).where(eq(schema.tokenRoutes.id, id)).run();
     const modelPatternChanged = body.modelPattern !== undefined && nextModelPattern !== existingRoute.modelPattern;
-    const routeBehaviorChanged = modelPatternChanged || body.modelMapping !== undefined || body.enabled !== undefined;
+    const routeBehaviorChanged = modelPatternChanged
+      || body.modelMapping !== undefined
+      || body.routingStrategy !== undefined
+      || body.enabled !== undefined;
     if (modelPatternChanged) {
       await rebuildAutomaticRouteChannelsByModelPattern(id, nextModelPattern);
     }

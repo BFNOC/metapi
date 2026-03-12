@@ -415,8 +415,24 @@ function ensureRouteGroupingSchema() {
     sqlite.exec(`ALTER TABLE token_routes ADD COLUMN decision_refreshed_at text;`);
   }
 
+  if (!tableColumnExists('token_routes', 'routing_strategy')) {
+    sqlite.exec(`ALTER TABLE token_routes ADD COLUMN routing_strategy text DEFAULT 'weighted';`);
+  }
+
   if (!tableColumnExists('route_channels', 'source_model')) {
     sqlite.exec(`ALTER TABLE route_channels ADD COLUMN source_model text;`);
+  }
+
+  if (!tableColumnExists('route_channels', 'last_selected_at')) {
+    sqlite.exec(`ALTER TABLE route_channels ADD COLUMN last_selected_at text;`);
+  }
+
+  if (!tableColumnExists('route_channels', 'consecutive_fail_count')) {
+    sqlite.exec(`ALTER TABLE route_channels ADD COLUMN consecutive_fail_count integer DEFAULT 0;`);
+  }
+
+  if (!tableColumnExists('route_channels', 'cooldown_level')) {
+    sqlite.exec(`ALTER TABLE route_channels ADD COLUMN cooldown_level integer DEFAULT 0;`);
   }
 }
 

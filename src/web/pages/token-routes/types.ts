@@ -4,6 +4,7 @@ import type { BrandInfo } from '../../components/BrandIcon.js';
 export type RouteSortBy = 'modelPattern' | 'channelCount';
 export type RouteSortDir = 'asc' | 'desc';
 export type GroupFilter = null | '__all__' | number;
+export type RouteRoutingStrategy = 'weighted' | 'round_robin';
 
 export type RouteChannelDraft = {
   accountId: number;
@@ -46,6 +47,7 @@ export type RouteRow = {
   displayName?: string | null;
   displayIcon?: string | null;
   modelMapping?: string | null;
+  routingStrategy?: RouteRoutingStrategy | null;
   decisionSnapshot?: RouteDecision | null;
   decisionRefreshedAt?: string | null;
   enabled: boolean;
@@ -58,6 +60,7 @@ export type RouteSummaryRow = {
   displayName: string | null;
   displayIcon: string | null;
   modelMapping: string | null;
+  routingStrategy?: RouteRoutingStrategy | null;
   enabled: boolean;
   channelCount: number;
   enabledChannelCount: number;

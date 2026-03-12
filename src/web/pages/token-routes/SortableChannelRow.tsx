@@ -3,6 +3,11 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import ModernSelect from '../../components/ModernSelect.js';
 import type { SortableChannelRowProps } from './types.js';
+import {
+  buildFixedTokenOptionDescription,
+  buildFixedTokenOptionLabel,
+  describeTokenBinding,
+} from './tokenBindingPresentation.js';
 import { getChannelDecisionState, getPriorityTagStyle, getProbabilityColor } from './utils.js';
 
 export function SortableChannelRow({
@@ -48,6 +53,7 @@ export function SortableChannelRow({
   };
 
   const decisionState = getChannelDecisionState(decisionCandidate, channel, isExactRoute, loadingDecision);
+  const tokenBinding = describeTokenBinding(tokenOptions, activeTokenId, channel.token?.name ?? null);
 
   return (
     <div ref={setNodeRef} style={rowStyle}>
@@ -105,11 +111,29 @@ export function SortableChannelRow({
           className="badge"
           style={{
             fontSize: 10,
-            background: 'color-mix(in srgb, var(--color-info) 15%, transparent)',
-            color: 'var(--color-info)',
+            background: tokenBinding.isFollowingAccountDefault
+              ? 'color-mix(in srgb, var(--color-info) 15%, transparent)'
+              : 'color-mix(in srgb, var(--color-warning) 15%, transparent)',
+            color: tokenBinding.isFollowingAccountDefault ? 'var(--color-info)' : 'var(--color-warning)',
           }}
         >
-          {channel.token?.name || '默认令牌'}
+          {tokenBinding.bindingModeLabel}
+        </span>
+
+        <span
+          className="badge"
+          style={{
+            fontSize: 10,
+            background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)',
+            color: 'var(--color-primary)',
+            maxWidth: 220,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          data-tooltip={`当前生效：${tokenBinding.effectiveTokenName}`}
+        >
+          当前生效：{tokenBinding.effectiveTokenName}
         </span>
 
         {channel.sourceModel ? (
@@ -174,28 +198,36 @@ export function SortableChannelRow({
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <div style={{ minWidth: 150, flex: 1 }}>
+        <div style={{ minWidth: 220, flex: 1 }}>
           <ModernSelect
             size="sm"
             value={String(activeTokenId || 0)}
             onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
             disabled={isUpdatingToken}
             options={[
-              { value: '0', label: '默认令牌' },
+              {
+                value: '0',
+                label: '跟随账号默认',
+                description: tokenBinding.followOptionDescription,
+              },
               ...tokenOptions.map((token) => ({
                 value: String(token.id),
-                label: `${token.name}${token.isDefault ? '（默认）' : ''}`,
+                label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
+                description: buildFixedTokenOptionDescription(token),
               })),
             ]}
-            placeholder="默认令牌"
+            placeholder="选择令牌绑定方式"
           />
+          <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+            {tokenBinding.helperText}
+          </div>
         </div>
         <button
           onClick={onSaveToken}
           disabled={isUpdatingToken}
           className="btn btn-link btn-link-info"
         >
-          {isUpdatingToken ? <span className="spinner spinner-sm" /> : '改令牌'}
+          {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
         </button>
       </div>
 

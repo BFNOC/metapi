@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
+import CenteredModal from '../components/CenteredModal.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
-import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import { clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js';
@@ -14,7 +14,9 @@ import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
 import { resolveInitialConnectionSegment } from './helpers/defaultConnectionSegment.js';
 import {
   buildSiteSaveAction,
+  emptySiteCustomHeader,
   emptySiteForm,
+  serializeSiteCustomHeaders,
   siteFormFromSite,
   type SiteEditorState,
   type SiteForm,
@@ -28,12 +30,17 @@ type SiteRow = {
   platform?: string;
   status?: string;
   useSystemProxy?: boolean;
+  customHeaders?: string | null;
   globalWeight?: number;
   isPinned?: boolean;
   sortOrder?: number;
   totalBalance?: number;
   createdAt?: string;
 };
+
+function hasConfiguredCustomHeaders(customHeaders?: string | null): boolean {
+  return typeof customHeaders === 'string' && customHeaders.trim().length > 0;
+}
 
 const platformColors: Record<string, string> = {
   'new-api': 'badge-info',
@@ -83,7 +90,6 @@ export default function Sites() {
   const [expandedSiteIds, setExpandedSiteIds] = useState<number[]>([]);
   const isMobile = useIsMobile(768);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
-  const editorPresence = useAnimatedVisibility(Boolean(editor), 220);
   const lastEditorRef = useRef<SiteEditorState | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<number | null>(null);
@@ -93,6 +99,16 @@ export default function Sites() {
   const activeEditor = editor || lastEditorRef.current;
   const isEditing = activeEditor?.mode === 'edit';
   const isAdding = activeEditor?.mode === 'add';
+  const formInputStyle = {
+    width: '100%',
+    padding: '10px 14px',
+    border: '1px solid var(--color-border)',
+    borderRadius: 'var(--radius-sm)',
+    fontSize: 13,
+    outline: 'none',
+    background: 'var(--color-bg)',
+    color: 'var(--color-text-primary)',
+  } as const;
 
   const load = async () => {
     try {
@@ -190,6 +206,11 @@ export default function Sites() {
       toast.error('全局权重必须是大于 0 的数字');
       return;
     }
+    const serializedCustomHeaders = serializeSiteCustomHeaders(form.customHeaders);
+    if (!serializedCustomHeaders.valid) {
+      toast.error(serializedCustomHeaders.error || '自定义请求头格式不正确');
+      return;
+    }
 
     const payload = {
       name: form.name.trim(),
@@ -197,6 +218,7 @@ export default function Sites() {
       externalCheckinUrl: form.externalCheckinUrl.trim(),
       platform: form.platform.trim(),
       useSystemProxy: !!form.useSystemProxy,
+      customHeaders: serializedCustomHeaders.customHeaders,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
     };
     if (!payload.name || !payload.url) {
@@ -236,6 +258,34 @@ export default function Sites() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const updateCustomHeaderRow = (index: number, field: 'key' | 'value', value: string) => {
+    setForm((prev) => ({
+      ...prev,
+      customHeaders: prev.customHeaders.map((item, itemIndex) => (
+        itemIndex === index
+          ? { ...item, [field]: value }
+          : item
+      )),
+    }));
+  };
+
+  const addCustomHeaderRow = () => {
+    setForm((prev) => ({
+      ...prev,
+      customHeaders: [...prev.customHeaders, emptySiteCustomHeader()],
+    }));
+  };
+
+  const removeCustomHeaderRow = (index: number) => {
+    setForm((prev) => {
+      const nextHeaders = prev.customHeaders.filter((_, itemIndex) => itemIndex !== index);
+      return {
+        ...prev,
+        customHeaders: nextHeaders.length > 0 ? nextHeaders : [emptySiteCustomHeader()],
+      };
+    });
   };
 
   const handleDetect = async () => {
@@ -465,138 +515,174 @@ export default function Sites() {
         站点权重说明：最终站点倍率 = 站点全局权重 × 设置页中下游 API Key 的站点倍率。它会与路由策略因子（基础权重、价值分、成本、余额、使用频次）共同作用。数值越大，该站点在同优先级下越容易被选中。建议范围 0.5-3，默认 1；长期不建议超过 5。
       </div>
 
-      {editorPresence.shouldRender && activeEditor && (
-        <div className={`card panel-presence ${editorPresence.isVisible ? '' : 'is-closing'}`.trim()} style={{ padding: 20, marginBottom: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+      {activeEditor && (
+        <CenteredModal
+          open={Boolean(editor)}
+          onClose={closeEditor}
+          title={(
             <div style={{ fontSize: 14, fontWeight: 600 }}>
               {isEditing ? '编辑站点' : '添加站点'}
             </div>
-            <button onClick={closeEditor} className="btn btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }}>
-              取消
+          )}
+          maxWidth={920}
+          bodyStyle={{
+            maxHeight: isMobile ? '78vh' : '72vh',
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+          }}
+          footer={(
+            <>
+              <button onClick={closeEditor} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
+                取消
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving || !form.name.trim() || !form.url.trim()}
+                className="btn btn-primary"
+              >
+                {saving ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : (isEditing ? '保存修改' : '保存站点')}
+              </button>
+            </>
+          )}
+        >
+          <input
+            placeholder="站点名称"
+            value={form.name}
+            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+            style={formInputStyle}
+          />
+          <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row' }}>
+            <input
+              placeholder="站点 URL (例如 https://api.example.com)"
+              value={form.url}
+              onChange={(e) => setForm((prev) => ({ ...prev, url: e.target.value }))}
+              onBlur={() => {
+                if (form.url.trim() && !form.platform.trim()) {
+                  handleDetect();
+                }
+              }}
+              style={{ ...formInputStyle, flex: 1 }}
+            />
+            <button
+              onClick={handleDetect}
+              disabled={detecting || !form.url.trim()}
+              className="btn btn-ghost"
+              style={{ padding: '10px 14px', minWidth: 96, border: '1px solid var(--color-border)' }}
+            >
+              {detecting ? <><span className="spinner spinner-sm" /> 检测中</> : '自动检测'}
             </button>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <input
-              placeholder="站点名称"
-              value={form.name}
-              onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              style={{
-                width: '100%',
-                padding: '10px 14px',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: 13,
-                outline: 'none',
-                background: 'var(--color-bg)',
-                color: 'var(--color-text-primary)',
-              }}
+          <div
+            style={{
+              border: `1px solid ${form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 48%, transparent)' : 'var(--color-border)'}`,
+              borderRadius: 'var(--radius-sm)',
+              background: form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 10%, var(--color-bg))' : 'var(--color-bg)',
+              transition: 'all 0.2s',
+            }}
+          >
+            <ModernSelect
+              value={form.platform}
+              onChange={(value) => setForm((prev) => ({ ...prev, platform: value }))}
+              options={platformOptions}
+              placeholder="平台类型（可自动检测）"
             />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                placeholder="站点 URL (例如 https://api.example.com)"
-                value={form.url}
-                onChange={(e) => setForm((prev) => ({ ...prev, url: e.target.value }))}
-                onBlur={() => {
-                  if (form.url.trim() && !form.platform.trim()) {
-                    handleDetect();
-                  }
-                }}
-                style={{
-                  flex: 1,
-                  padding: '10px 14px',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: 13,
-                  outline: 'none',
-                  background: 'var(--color-bg)',
-                  color: 'var(--color-text-primary)',
-                }}
-              />
-              <button
-                onClick={handleDetect}
-                disabled={detecting || !form.url.trim()}
-                className="btn btn-ghost"
-                style={{ padding: '10px 14px', minWidth: 96, border: '1px solid var(--color-border)' }}
-              >
-                {detecting ? <><span className="spinner spinner-sm" /> 检测中</> : '自动检测'}
-              </button>
-            </div>
-            <div
-              style={{
-                border: `1px solid ${form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 48%, transparent)' : 'var(--color-border)'}`,
-                borderRadius: 'var(--radius-sm)',
-                background: form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 10%, var(--color-bg))' : 'var(--color-bg)',
-                transition: 'all 0.2s',
-              }}
-            >
-              <ModernSelect
-                value={form.platform}
-                onChange={(value) => setForm((prev) => ({ ...prev, platform: value }))}
-                options={platformOptions}
-                placeholder="平台类型（可自动检测）"
-              />
-            </div>
-            <input
-              placeholder="外部签到/福利站点 URL（可选）"
-              value={form.externalCheckinUrl}
-              onChange={(e) => setForm((prev) => ({ ...prev, externalCheckinUrl: e.target.value }))}
-              style={{
-                width: '100%',
-                padding: '10px 14px',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: 13,
-                outline: 'none',
-                background: 'var(--color-bg)',
-                color: 'var(--color-text-primary)',
-              }}
-            />
-            <label style={{
+          </div>
+          <input
+            placeholder="外部签到/福利站点 URL（可选）"
+            value={form.externalCheckinUrl}
+            onChange={(e) => setForm((prev) => ({ ...prev, externalCheckinUrl: e.target.value }))}
+            style={formInputStyle}
+          />
+          <div
+            style={{
               display: 'flex',
-              alignItems: 'center',
+              flexDirection: 'column',
               gap: 10,
-              padding: '10px 14px',
+              padding: 12,
               border: '1px solid var(--color-border)',
               borderRadius: 'var(--radius-sm)',
-              fontSize: 13,
-              background: 'var(--color-bg)',
-              color: 'var(--color-text-primary)',
-            }}>
-              <input
-                type="checkbox"
-                checked={form.useSystemProxy}
-                onChange={(e) => setForm((prev) => ({ ...prev, useSystemProxy: e.target.checked }))}
-              />
-              使用系统代理
-            </label>
-            <input
-              placeholder="站点全局权重（默认 1）"
-              value={form.globalWeight}
-              onChange={(e) => setForm((prev) => ({ ...prev, globalWeight: e.target.value }))}
-              style={{
-                width: '100%',
-                padding: '10px 14px',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: 13,
-                outline: 'none',
-                background: 'var(--color-bg)',
-                color: 'var(--color-text-primary)',
-              }}
-            />
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              越大越容易被路由选中。建议 0.5-3，默认 1。
+              background: 'color-mix(in srgb, var(--color-surface) 82%, transparent)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                站点自定义请求头
+              </div>
+              <button
+                type="button"
+                onClick={addCustomHeaderRow}
+                className="btn btn-ghost"
+                style={{ border: '1px solid var(--color-border)' }}
+              >
+                + 添加请求头
+              </button>
             </div>
-            <button
-              onClick={handleSave}
-              disabled={saving || !form.name.trim() || !form.url.trim()}
-              className="btn btn-primary"
-              style={{ alignSelf: 'flex-start' }}
-            >
-              {saving ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : (isEditing ? '保存修改' : '保存站点')}
-            </button>
+            {form.customHeaders.map((header, index) => (
+              <div
+                key={`custom-header-${index}`}
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  flexDirection: isMobile ? 'column' : 'row',
+                  alignItems: isMobile ? 'stretch' : 'center',
+                }}
+              >
+                <input
+                  placeholder="Header 名称"
+                  value={header.key}
+                  onChange={(e) => updateCustomHeaderRow(index, 'key', e.target.value)}
+                  style={{ ...formInputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
+                />
+                <input
+                  placeholder="Header 值"
+                  value={header.value}
+                  onChange={(e) => updateCustomHeaderRow(index, 'value', e.target.value)}
+                  style={{ ...formInputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => removeCustomHeaderRow(index)}
+                  className="btn btn-link btn-link-danger"
+                  style={isMobile ? { alignSelf: 'flex-end' } : undefined}
+                >
+                  删除
+                </button>
+              </div>
+            ))}
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+              按 key/value 逐条填写。整行留空会自动忽略；同名请求头不允许重复；请求本身显式传入的请求头优先级更高。
+            </div>
           </div>
-        </div>
+          <label style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 14px',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: 13,
+            background: 'var(--color-bg)',
+            color: 'var(--color-text-primary)',
+          }}>
+            <input
+              type="checkbox"
+              checked={form.useSystemProxy}
+              onChange={(e) => setForm((prev) => ({ ...prev, useSystemProxy: e.target.checked }))}
+            />
+            使用系统代理
+          </label>
+          <input
+            placeholder="站点全局权重（默认 1）"
+            value={form.globalWeight}
+            onChange={(e) => setForm((prev) => ({ ...prev, globalWeight: e.target.value }))}
+            style={formInputStyle}
+          />
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+            越大越容易被路由选中。建议 0.5-3，默认 1。
+          </div>
+        </CenteredModal>
       )}
 
       <div className="card" style={{ overflowX: 'auto' }}>
@@ -665,6 +751,10 @@ export default function Sites() {
                               {site.externalCheckinUrl}
                             </a>
                           ) : '-'}
+                        />
+                        <MobileField
+                          label="自定义头"
+                          value={hasConfiguredCustomHeaders(site.customHeaders) ? '已配置' : '-'}
                         />
                         <MobileField
                           label="创建时间"
@@ -774,17 +864,24 @@ export default function Sites() {
                     />
                   </td>
                   <td style={{ fontWeight: 600 }}>
-                    <a
-                      href={site.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        color: 'var(--color-text-primary)',
-                        textDecoration: 'underline',
-                      }}
-                    >
-                      {site.name}
-                    </a>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                      <a
+                        href={site.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          color: 'var(--color-text-primary)',
+                          textDecoration: 'underline',
+                        }}
+                      >
+                        {site.name}
+                      </a>
+                      {hasConfiguredCustomHeaders(site.customHeaders) ? (
+                        <span className="badge badge-info" style={{ fontSize: 11 }}>
+                          自定义头
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="sites-url-cell" style={{ maxWidth: 300 }}>
                     {site.externalCheckinUrl ? (

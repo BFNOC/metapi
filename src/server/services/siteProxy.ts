@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { config } from '../config.js';
 import type { Dispatcher, RequestInit as UndiciRequestInit } from 'undici';
 import { ProxyAgent } from 'undici';
+import { mergeHeadersWithSiteCustomHeaders } from './siteCustomHeaders.js';
 
 const SITE_PROXY_CACHE_TTL_MS = 3_000;
 const SUPPORTED_PROXY_PROTOCOLS = new Set([
@@ -18,6 +19,7 @@ const SUPPORTED_PROXY_PROTOCOLS = new Set([
 type SiteProxyRow = {
   siteUrl: string;
   useSystemProxy: boolean;
+  customHeaders: string | null;
 };
 
 type ParsedSiteProxyInput = {
@@ -28,6 +30,7 @@ type ParsedSiteProxyInput = {
 
 type SiteProxyConfigLike = {
   useSystemProxy?: boolean | null;
+  customHeaders?: string | null;
 };
 
 let siteProxyCache: {
@@ -67,6 +70,7 @@ async function getCachedSiteProxyRows(nowMs = Date.now()): Promise<SiteProxyRow[
         .select({
           siteUrl: schema.sites.url,
           useSystemProxy: schema.sites.useSystemProxy,
+          customHeaders: schema.sites.customHeaders,
         })
         .from(schema.sites)
         .all(),
@@ -92,6 +96,7 @@ async function getCachedSiteProxyRows(nowMs = Date.now()): Promise<SiteProxyRow[
       rows: rows.map((row) => ({
         siteUrl: normalizeSiteUrl(row.siteUrl),
         useSystemProxy: !!row.useSystemProxy,
+        customHeaders: typeof row.customHeaders === 'string' ? row.customHeaders : null,
       })),
       systemProxyUrl: parsedSystemProxyUrl,
     };
@@ -167,18 +172,11 @@ export function invalidateSiteProxyCache(): void {
   siteProxyCache = { loadedAt: 0, rows: [], systemProxyUrl: null };
 }
 
-export async function resolveSiteProxyUrlByRequestUrl(requestUrl: string): Promise<string | null> {
-  const normalizedRequestUrl = normalizeSiteUrl(requestUrl);
-  if (!normalizedRequestUrl) return null;
-
-  const rows = await getCachedSiteProxyRows();
-  const systemProxyUrl = siteProxyCache.systemProxyUrl;
-  if (!systemProxyUrl) return null;
-  let bestMatch: string | null = null;
+function findBestMatchingSiteRow(rows: SiteProxyRow[], normalizedRequestUrl: string): SiteProxyRow | null {
+  let bestMatch: SiteProxyRow | null = null;
   let bestMatchLength = -1;
 
   for (const row of rows) {
-    if (!row.useSystemProxy) continue;
     if (!row.siteUrl) continue;
 
     const isPrefixMatch = (
@@ -189,7 +187,7 @@ export async function resolveSiteProxyUrlByRequestUrl(requestUrl: string): Promi
     if (!isPrefixMatch) continue;
 
     if (row.siteUrl.length > bestMatchLength) {
-      bestMatch = systemProxyUrl;
+      bestMatch = row;
       bestMatchLength = row.siteUrl.length;
     }
   }
@@ -197,18 +195,53 @@ export async function resolveSiteProxyUrlByRequestUrl(requestUrl: string): Promi
   return bestMatch;
 }
 
+async function resolveSiteRequestConfigByRequestUrl(requestUrl: string): Promise<{
+  proxyUrl: string | null;
+  customHeaders: string | null;
+}> {
+  const normalizedRequestUrl = normalizeSiteUrl(requestUrl);
+  if (!normalizedRequestUrl) {
+    return { proxyUrl: null, customHeaders: null };
+  }
+
+  const rows = await getCachedSiteProxyRows();
+  const matchedRow = findBestMatchingSiteRow(rows, normalizedRequestUrl);
+  const proxyUrl = matchedRow?.useSystemProxy ? siteProxyCache.systemProxyUrl : null;
+  return {
+    proxyUrl: proxyUrl || null,
+    customHeaders: matchedRow?.customHeaders ?? null,
+  };
+}
+
+export async function resolveSiteProxyUrlByRequestUrl(requestUrl: string): Promise<string | null> {
+  const resolved = await resolveSiteRequestConfigByRequestUrl(requestUrl);
+  return resolved.proxyUrl;
+}
+
 export async function withSiteProxyRequestInit(
   requestUrl: string,
   options?: UndiciRequestInit,
 ): Promise<UndiciRequestInit> {
-  const proxyUrl = await resolveSiteProxyUrlByRequestUrl(requestUrl);
-  if (!proxyUrl) return options ?? {};
+  const resolved = await resolveSiteRequestConfigByRequestUrl(requestUrl);
+  const nextOptions: UndiciRequestInit = {
+    ...(options || {}),
+  };
+  const mergedHeaders = mergeHeadersWithSiteCustomHeaders(resolved.customHeaders, options?.headers);
+  if (mergedHeaders) {
+    nextOptions.headers = mergedHeaders;
+  }
 
-  const dispatcher = getDispatcherByProxyUrl(proxyUrl);
-  if (!dispatcher) return options ?? {};
+  if (!resolved.proxyUrl) {
+    return nextOptions;
+  }
+
+  const dispatcher = getDispatcherByProxyUrl(resolved.proxyUrl);
+  if (!dispatcher) {
+    return nextOptions;
+  }
 
   return {
-    ...(options || {}),
+    ...nextOptions,
     dispatcher,
   };
 }
@@ -238,5 +271,12 @@ export function withSiteRecordProxyRequestInit(
   site: SiteProxyConfigLike | null | undefined,
   options?: UndiciRequestInit,
 ): UndiciRequestInit {
-  return withExplicitProxyRequestInit(resolveProxyUrlForSite(site), options);
+  const nextOptions: UndiciRequestInit = {
+    ...(options || {}),
+  };
+  const mergedHeaders = mergeHeadersWithSiteCustomHeaders(site?.customHeaders, options?.headers);
+  if (mergedHeaders) {
+    nextOptions.headers = mergedHeaders;
+  }
+  return withExplicitProxyRequestInit(resolveProxyUrlForSite(site), nextOptions);
 }

@@ -164,6 +164,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         platform,
         proxyUrl: null,
         useSystemProxy: false,
+        customHeaders: null,
         status: 'active',
         isPinned: false,
         sortOrder: sites.length,
@@ -293,8 +294,16 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 function isSettingValueAcceptable(key: string, value: unknown): boolean {
-  if (key === 'checkin_cron' || key === 'balance_refresh_cron') {
+  if (key === 'checkin_cron' || key === 'balance_refresh_cron' || key === 'log_cleanup_cron') {
     return typeof value === 'string' && cron.validate(value);
+  }
+
+  if (key === 'log_cleanup_usage_logs_enabled' || key === 'log_cleanup_program_logs_enabled') {
+    return typeof value === 'boolean';
+  }
+
+  if (key === 'log_cleanup_retention_days') {
+    return isFiniteNumber(value) && value >= 1;
   }
 
   if (key === 'proxy_token') {
@@ -465,8 +474,11 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         id: row.id,
         name: row.name,
         url: row.url,
+        externalCheckinUrl: row.externalCheckinUrl ?? null,
         platform: row.platform,
         proxyUrl: row.proxyUrl ?? null,
+        useSystemProxy: row.useSystemProxy ?? false,
+        customHeaders: row.customHeaders ?? null,
         status: row.status || 'active',
         isPinned: row.isPinned ?? false,
         sortOrder: row.sortOrder ?? 0,

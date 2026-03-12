@@ -1,7 +1,8 @@
 import { buildConfig, config } from '../config.js';
 import { db, schema, switchRuntimeDatabase } from '../db/index.js';
-import { updateBalanceRefreshCron, updateCheckinCron } from './checkinScheduler.js';
+import { updateBalanceRefreshCron, updateCheckinCron, updateLogCleanupSettings } from './checkinScheduler.js';
 import { ensureDefaultSitesSeeded } from './defaultSiteSeedService.js';
+import { startProxyLogRetentionService } from './proxyLogRetentionService.js';
 import { invalidateSiteProxyCache } from './siteProxy.js';
 
 export const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
@@ -38,8 +39,19 @@ function resetRuntimeConfigToInitialState() {
   config.dbType = 'sqlite';
   config.dbUrl = '';
   config.dbSsl = false;
+  config.logCleanupConfigured = false;
+  config.logCleanupUsageLogsEnabled = config.proxyLogRetentionDays > 0;
+  config.logCleanupProgramLogsEnabled = false;
+  config.logCleanupRetentionDays = Math.max(1, Math.trunc(config.proxyLogRetentionDays || config.logCleanupRetentionDays || 30));
   updateCheckinCron(config.checkinCron);
   updateBalanceRefreshCron(config.balanceRefreshCron);
+  updateLogCleanupSettings({
+    cronExpr: config.logCleanupCron,
+    usageLogsEnabled: config.logCleanupUsageLogsEnabled,
+    programLogsEnabled: config.logCleanupProgramLogsEnabled,
+    retentionDays: config.logCleanupRetentionDays,
+  });
+  startProxyLogRetentionService();
   invalidateSiteProxyCache();
 }
 

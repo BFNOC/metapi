@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
+import { Headers } from 'undici';
 
 type DbModule = typeof import('../db/index.js');
 
@@ -68,5 +69,50 @@ describe('siteProxy', () => {
     });
 
     expect('dispatcher' in requestInit).toBe(true);
+  });
+
+  it('merges site custom headers by matched request url and keeps explicit headers authoritative', async () => {
+    await db.insert(schema.sites).values({
+      name: 'headers-site',
+      url: 'https://headers-site.example.com',
+      platform: 'new-api',
+      customHeaders: JSON.stringify({
+        'cf-access-client-id': 'site-client',
+        authorization: 'Bearer site-default',
+      }),
+    }).run();
+
+    const { withSiteProxyRequestInit } = await import('./siteProxy.js');
+    const requestInit = await withSiteProxyRequestInit('https://headers-site.example.com/v1/models', {
+      method: 'GET',
+      headers: {
+        Authorization: 'Bearer request-token',
+        'X-Trace-Id': 'trace-1',
+      },
+    });
+    const headers = new Headers(requestInit.headers);
+
+    expect(headers.get('cf-access-client-id')).toBe('site-client');
+    expect(headers.get('authorization')).toBe('Bearer request-token');
+    expect(headers.get('x-trace-id')).toBe('trace-1');
+  });
+
+  it('merges site custom headers from site records even without cache lookup', async () => {
+    const { withSiteRecordProxyRequestInit } = await import('./siteProxy.js');
+    const requestInit = withSiteRecordProxyRequestInit({
+      useSystemProxy: false,
+      customHeaders: JSON.stringify({
+        'x-site-scope': 'site-level',
+      }),
+    }, {
+      method: 'POST',
+      headers: {
+        'X-Request-Id': 'req-1',
+      },
+    });
+    const headers = new Headers(requestInit.headers);
+
+    expect(headers.get('x-site-scope')).toBe('site-level');
+    expect(headers.get('x-request-id')).toBe('req-1');
   });
 });

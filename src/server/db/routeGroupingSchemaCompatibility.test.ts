@@ -38,6 +38,20 @@ function createInspector(
 describe('ensureRouteGroupingSchemaCompatibility', () => {
   it.each([
     {
+      dialect: 'sqlite' as const,
+      expectedSql: [
+        'ALTER TABLE token_routes ADD COLUMN display_name text;',
+        'ALTER TABLE token_routes ADD COLUMN display_icon text;',
+        'ALTER TABLE token_routes ADD COLUMN decision_snapshot text;',
+        'ALTER TABLE token_routes ADD COLUMN decision_refreshed_at text;',
+        'ALTER TABLE token_routes ADD COLUMN routing_strategy text DEFAULT \'weighted\';',
+        'ALTER TABLE route_channels ADD COLUMN source_model text;',
+        'ALTER TABLE route_channels ADD COLUMN last_selected_at text;',
+        'ALTER TABLE route_channels ADD COLUMN consecutive_fail_count integer NOT NULL DEFAULT 0;',
+        'ALTER TABLE route_channels ADD COLUMN cooldown_level integer NOT NULL DEFAULT 0;',
+      ],
+    },
+    {
       dialect: 'postgres' as const,
       expectedSql: [
         'ALTER TABLE "token_routes" ADD COLUMN "display_name" TEXT',
@@ -47,8 +61,8 @@ describe('ensureRouteGroupingSchemaCompatibility', () => {
         'ALTER TABLE "token_routes" ADD COLUMN "routing_strategy" TEXT DEFAULT \'weighted\'',
         'ALTER TABLE "route_channels" ADD COLUMN "source_model" TEXT',
         'ALTER TABLE "route_channels" ADD COLUMN "last_selected_at" TEXT',
-        'ALTER TABLE "route_channels" ADD COLUMN "consecutive_fail_count" INTEGER DEFAULT 0',
-        'ALTER TABLE "route_channels" ADD COLUMN "cooldown_level" INTEGER DEFAULT 0',
+        'ALTER TABLE "route_channels" ADD COLUMN "consecutive_fail_count" INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE "route_channels" ADD COLUMN "cooldown_level" INTEGER NOT NULL DEFAULT 0',
       ],
     },
     {

@@ -19,7 +19,7 @@ import { monitorRoutes } from './routes/api/monitor.js';
 import { downstreamApiKeysRoutes } from './routes/api/downstreamApiKeys.js';
 import { proxyRoutes } from './routes/proxy/router.js';
 import { startScheduler } from './services/checkinScheduler.js';
-import { startProxyLogRetentionService, stopProxyLogRetentionService } from './services/proxyLogRetentionService.js';
+import { setLegacyProxyLogRetentionFallbackEnabled, stopProxyLogRetentionService } from './services/proxyLogRetentionService.js';
 import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
@@ -29,6 +29,7 @@ import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, normalize, resolve, sep } from 'path';
+import { normalizeLogCleanupRetentionDays } from './services/logCleanupService.js';
 import {
   db,
   ensureProxyFileCompatibilityColumns,
@@ -104,6 +105,17 @@ function extractSavedRuntimeDatabaseConfig(settingsMap: Map<string, string>): { 
   };
 }
 
+const LOG_CLEANUP_SETTING_KEYS = [
+  'log_cleanup_cron',
+  'log_cleanup_usage_logs_enabled',
+  'log_cleanup_program_logs_enabled',
+  'log_cleanup_retention_days',
+] as const;
+
+function hasExplicitLogCleanupSettings(settingsMap: Map<string, string>): boolean {
+  return LOG_CLEANUP_SETTING_KEYS.some((key) => settingsMap.has(key));
+}
+
 function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const authToken = parseSettingFromMap<string>(settingsMap, 'auth_token');
   if (typeof authToken === 'string' && authToken) config.authToken = authToken;
@@ -119,6 +131,24 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
 
   const balanceRefreshCron = parseSettingFromMap<string>(settingsMap, 'balance_refresh_cron');
   if (typeof balanceRefreshCron === 'string' && balanceRefreshCron) config.balanceRefreshCron = balanceRefreshCron;
+
+  const logCleanupCron = parseSettingFromMap<string>(settingsMap, 'log_cleanup_cron');
+  if (typeof logCleanupCron === 'string' && logCleanupCron) config.logCleanupCron = logCleanupCron;
+
+  const logCleanupUsageLogsEnabled = parseSettingFromMap<boolean>(settingsMap, 'log_cleanup_usage_logs_enabled');
+  if (typeof logCleanupUsageLogsEnabled === 'boolean') {
+    config.logCleanupUsageLogsEnabled = logCleanupUsageLogsEnabled;
+  }
+
+  const logCleanupProgramLogsEnabled = parseSettingFromMap<boolean>(settingsMap, 'log_cleanup_program_logs_enabled');
+  if (typeof logCleanupProgramLogsEnabled === 'boolean') {
+    config.logCleanupProgramLogsEnabled = logCleanupProgramLogsEnabled;
+  }
+
+  const logCleanupRetentionDays = parseSettingFromMap<number>(settingsMap, 'log_cleanup_retention_days');
+  if (typeof logCleanupRetentionDays === 'number' && Number.isFinite(logCleanupRetentionDays) && logCleanupRetentionDays >= 1) {
+    config.logCleanupRetentionDays = normalizeLogCleanupRetentionDays(logCleanupRetentionDays);
+  }
 
   const routingWeights = parseSettingFromMap<Partial<typeof config.routingWeights>>(settingsMap, 'routing_weights');
   if (routingWeights && typeof routingWeights === 'object') {
@@ -232,6 +262,12 @@ try {
   const finalRows = await db.select().from(schema.settings).all();
   const finalMap = toSettingsMap(finalRows);
   applyRuntimeSettings(finalMap);
+  config.logCleanupConfigured = hasExplicitLogCleanupSettings(finalMap);
+  if (!config.logCleanupConfigured && config.proxyLogRetentionDays > 0) {
+    config.logCleanupUsageLogsEnabled = true;
+    config.logCleanupProgramLogsEnabled = false;
+    config.logCleanupRetentionDays = normalizeLogCleanupRetentionDays(config.proxyLogRetentionDays);
+  }
   await ensureProxyLogBillingDetailsColumn();
   await repairStoredCreatedAtValues();
   await migrateSiteApiKeysToAccounts();
@@ -302,7 +338,7 @@ if (existsSync(webDir)) {
 
 // Start scheduler
 await startScheduler();
-startProxyLogRetentionService();
+setLegacyProxyLogRetentionFallbackEnabled(!config.logCleanupConfigured);
 app.addHook('onClose', async () => {
   stopProxyLogRetentionService();
 });

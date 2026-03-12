@@ -4,7 +4,7 @@ import { config } from '../../config.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
-import { updateBalanceRefreshCron, updateCheckinCron } from '../../services/checkinScheduler.js';
+import { updateBalanceRefreshCron, updateCheckinCron, updateLogCleanupSettings } from '../../services/checkinScheduler.js';
 import { sendNotification } from '../../services/notifyService.js';
 import { exportBackup, importBackup, type BackupExportType } from '../../services/backupService.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
@@ -19,6 +19,8 @@ import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { extractClientIp, isIpAllowed } from '../../middleware/auth.js';
 import { invalidateSiteProxyCache, normalizeSiteProxyUrl } from '../../services/siteProxy.js';
 import { performFactoryReset } from '../../services/factoryResetService.js';
+import { normalizeLogCleanupRetentionDays } from '../../services/logCleanupService.js';
+import { stopProxyLogRetentionService } from '../../services/proxyLogRetentionService.js';
 
 type RoutingWeights = typeof config.routingWeights;
 
@@ -27,6 +29,10 @@ interface RuntimeSettingsBody {
   systemProxyUrl?: string;
   checkinCron?: string;
   balanceRefreshCron?: string;
+  logCleanupCron?: string;
+  logCleanupUsageLogsEnabled?: boolean;
+  logCleanupProgramLogsEnabled?: boolean;
+  logCleanupRetentionDays?: number;
   webhookUrl?: string;
   barkUrl?: string;
   webhookEnabled?: boolean;
@@ -143,6 +149,35 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       if (typeof value !== 'string' || !value || !cron.validate(value)) return;
       config.balanceRefreshCron = value;
       updateBalanceRefreshCron(value);
+      return;
+    }
+    case 'log_cleanup_cron': {
+      if (typeof value !== 'string' || !value || !cron.validate(value)) return;
+      config.logCleanupConfigured = true;
+      updateLogCleanupSettings({ cronExpr: value });
+      stopProxyLogRetentionService();
+      return;
+    }
+    case 'log_cleanup_usage_logs_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.logCleanupConfigured = true;
+      updateLogCleanupSettings({ usageLogsEnabled: value });
+      stopProxyLogRetentionService();
+      return;
+    }
+    case 'log_cleanup_program_logs_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.logCleanupConfigured = true;
+      updateLogCleanupSettings({ programLogsEnabled: value });
+      stopProxyLogRetentionService();
+      return;
+    }
+    case 'log_cleanup_retention_days': {
+      const retentionDays = Number(value);
+      if (!Number.isFinite(retentionDays) || retentionDays < 1) return;
+      config.logCleanupConfigured = true;
+      updateLogCleanupSettings({ retentionDays: Math.trunc(retentionDays) });
+      stopProxyLogRetentionService();
       return;
     }
     case 'proxy_token': {
@@ -274,6 +309,10 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
   return {
     checkinCron: config.checkinCron,
     balanceRefreshCron: config.balanceRefreshCron,
+    logCleanupCron: config.logCleanupCron,
+    logCleanupUsageLogsEnabled: config.logCleanupUsageLogsEnabled,
+    logCleanupProgramLogsEnabled: config.logCleanupProgramLogsEnabled,
+    logCleanupRetentionDays: config.logCleanupRetentionDays,
     routingFallbackUnitCost: config.routingFallbackUnitCost,
     routingWeights: config.routingWeights,
     webhookUrl: config.webhookUrl,
@@ -456,6 +495,61 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       updateBalanceRefreshCron(body.balanceRefreshCron);
       upsertSetting('balance_refresh_cron', body.balanceRefreshCron);
+    }
+
+    const logCleanupTouched =
+      body.logCleanupCron !== undefined
+      || body.logCleanupUsageLogsEnabled !== undefined
+      || body.logCleanupProgramLogsEnabled !== undefined
+      || body.logCleanupRetentionDays !== undefined;
+
+    if (logCleanupTouched) {
+      const nextLogCleanupCron = body.logCleanupCron !== undefined
+        ? String(body.logCleanupCron || '').trim()
+        : config.logCleanupCron;
+      if (!cron.validate(nextLogCleanupCron)) {
+        return reply.code(400).send({ success: false, message: '日志清理 Cron 表达式无效' });
+      }
+
+      const rawRetentionDays = body.logCleanupRetentionDays !== undefined
+        ? Number(body.logCleanupRetentionDays)
+        : config.logCleanupRetentionDays;
+      if (!Number.isFinite(rawRetentionDays) || rawRetentionDays < 1) {
+        return reply.code(400).send({ success: false, message: '日志清理保留天数必须是大于等于 1 的整数' });
+      }
+      const nextLogCleanupRetentionDays = normalizeLogCleanupRetentionDays(rawRetentionDays);
+      const nextUsageLogsEnabled = body.logCleanupUsageLogsEnabled !== undefined
+        ? !!body.logCleanupUsageLogsEnabled
+        : config.logCleanupUsageLogsEnabled;
+      const nextProgramLogsEnabled = body.logCleanupProgramLogsEnabled !== undefined
+        ? !!body.logCleanupProgramLogsEnabled
+        : config.logCleanupProgramLogsEnabled;
+
+      if (nextLogCleanupCron !== config.logCleanupCron) {
+        changedLabels.push(`日志清理 Cron（${config.logCleanupCron} -> ${nextLogCleanupCron}）`);
+      }
+      if (nextUsageLogsEnabled !== config.logCleanupUsageLogsEnabled) {
+        changedLabels.push(`自动清理使用日志（${config.logCleanupUsageLogsEnabled ? '开启' : '关闭'} -> ${nextUsageLogsEnabled ? '开启' : '关闭'}）`);
+      }
+      if (nextProgramLogsEnabled !== config.logCleanupProgramLogsEnabled) {
+        changedLabels.push(`自动清理程序日志（${config.logCleanupProgramLogsEnabled ? '开启' : '关闭'} -> ${nextProgramLogsEnabled ? '开启' : '关闭'}）`);
+      }
+      if (nextLogCleanupRetentionDays !== config.logCleanupRetentionDays) {
+        changedLabels.push(`日志清理保留天数（${config.logCleanupRetentionDays} -> ${nextLogCleanupRetentionDays}）`);
+      }
+
+      config.logCleanupConfigured = true;
+      updateLogCleanupSettings({
+        cronExpr: nextLogCleanupCron,
+        usageLogsEnabled: nextUsageLogsEnabled,
+        programLogsEnabled: nextProgramLogsEnabled,
+        retentionDays: nextLogCleanupRetentionDays,
+      });
+      stopProxyLogRetentionService();
+      upsertSetting('log_cleanup_cron', nextLogCleanupCron);
+      upsertSetting('log_cleanup_usage_logs_enabled', nextUsageLogsEnabled);
+      upsertSetting('log_cleanup_program_logs_enabled', nextProgramLogsEnabled);
+      upsertSetting('log_cleanup_retention_days', nextLogCleanupRetentionDays);
     }
 
     if (body.proxyToken !== undefined) {

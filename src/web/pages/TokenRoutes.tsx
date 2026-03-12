@@ -364,7 +364,6 @@ export default function TokenRoutes() {
     try {
       await api.updateRoute(route.id, { routingStrategy });
       toast.success(routingStrategy === 'round_robin' ? '已切换为轮询策略' : '已切换为权重随机策略');
-      await load();
     } catch (e: any) {
       setRouteSummaries((prev) => prev.map((item) => (
         item.id === route.id
@@ -372,8 +371,15 @@ export default function TokenRoutes() {
           : item
       )));
       toast.error(e.message || '更新路由策略失败');
+      return;
     } finally {
       setUpdatingRoutingStrategyByRoute((prev) => ({ ...prev, [route.id]: false }));
+    }
+
+    try {
+      await load();
+    } catch (e: any) {
+      toast.error(e?.message || '路由策略已保存，但刷新列表失败');
     }
   };
 

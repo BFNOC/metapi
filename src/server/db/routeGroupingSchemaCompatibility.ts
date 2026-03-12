@@ -81,18 +81,18 @@ const ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS: RouteGroupingColumnCompatibilit
     table: 'route_channels',
     column: 'consecutive_fail_count',
     addSql: {
-      sqlite: 'ALTER TABLE route_channels ADD COLUMN consecutive_fail_count integer DEFAULT 0;',
+      sqlite: 'ALTER TABLE route_channels ADD COLUMN consecutive_fail_count integer NOT NULL DEFAULT 0;',
       mysql: 'ALTER TABLE `route_channels` ADD COLUMN `consecutive_fail_count` INT NOT NULL DEFAULT 0',
-      postgres: 'ALTER TABLE "route_channels" ADD COLUMN "consecutive_fail_count" INTEGER DEFAULT 0',
+      postgres: 'ALTER TABLE "route_channels" ADD COLUMN "consecutive_fail_count" INTEGER NOT NULL DEFAULT 0',
     },
   },
   {
     table: 'route_channels',
     column: 'cooldown_level',
     addSql: {
-      sqlite: 'ALTER TABLE route_channels ADD COLUMN cooldown_level integer DEFAULT 0;',
+      sqlite: 'ALTER TABLE route_channels ADD COLUMN cooldown_level integer NOT NULL DEFAULT 0;',
       mysql: 'ALTER TABLE `route_channels` ADD COLUMN `cooldown_level` INT NOT NULL DEFAULT 0',
-      postgres: 'ALTER TABLE "route_channels" ADD COLUMN "cooldown_level" INTEGER DEFAULT 0',
+      postgres: 'ALTER TABLE "route_channels" ADD COLUMN "cooldown_level" INTEGER NOT NULL DEFAULT 0',
     },
   },
 ];

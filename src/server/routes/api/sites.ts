@@ -5,6 +5,7 @@ import { detectSite } from '../../services/siteDetector.js';
 import { invalidateSiteProxyCache } from '../../services/siteProxy.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
+import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
 
 function normalizeSiteStatus(input: unknown): 'active' | 'disabled' | null {
   if (input === undefined || input === null) return null;
@@ -160,13 +161,14 @@ export async function sitesRoutes(app: FastifyInstance) {
     url: string;
     platform?: string;
     useSystemProxy?: boolean;
+    customHeaders?: string | null;
     externalCheckinUrl?: string | null;
     status?: string;
     isPinned?: boolean;
     sortOrder?: number;
     globalWeight?: number;
   } }>('/api/sites', async (request, reply) => {
-    const { name, url, platform, useSystemProxy, externalCheckinUrl, status, isPinned, sortOrder, globalWeight } = request.body;
+    const { name, url, platform, useSystemProxy, customHeaders, externalCheckinUrl, status, isPinned, sortOrder, globalWeight } = request.body;
     const normalizedStatus = normalizeSiteStatus(status);
     if (status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });
@@ -191,6 +193,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (globalWeight !== undefined && normalizedGlobalWeight === null) {
       return reply.code(400).send({ error: 'Invalid globalWeight value. Expected a positive number.' });
     }
+    const normalizedCustomHeaders = parseSiteCustomHeadersInput(customHeaders);
+    if (!normalizedCustomHeaders.valid) {
+      return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
+    }
 
     const existingSites = await db.select().from(schema.sites).all();
     const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
@@ -208,6 +214,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       url: url.replace(/\/+$/, ''),
       platform: detectedPlatform,
       useSystemProxy: normalizedUseSystemProxy ?? false,
+      customHeaders: normalizedCustomHeaders.customHeaders,
       externalCheckinUrl: normalizedExternalCheckinUrl.url,
       status: normalizedStatus ?? 'active',
       isPinned: normalizedPinned ?? false,
@@ -232,6 +239,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     url?: string;
     platform?: string;
     useSystemProxy?: boolean;
+    customHeaders?: string | null;
     externalCheckinUrl?: string | null;
     status?: string;
     isPinned?: boolean;
@@ -274,11 +282,16 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.globalWeight !== undefined && normalizedGlobalWeight === null) {
       return reply.code(400).send({ error: 'Invalid globalWeight value. Expected a positive number.' });
     }
+    const normalizedCustomHeaders = parseSiteCustomHeadersInput(body.customHeaders);
+    if (!normalizedCustomHeaders.valid) {
+      return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
+    }
 
     if (body.name !== undefined) updates.name = body.name;
     if (body.url !== undefined) updates.url = body.url.replace(/\/+$/, '');
     if (body.platform !== undefined) updates.platform = body.platform;
     if (body.useSystemProxy !== undefined) updates.useSystemProxy = normalizedUseSystemProxy;
+    if (normalizedCustomHeaders.present) updates.customHeaders = normalizedCustomHeaders.customHeaders;
     if (normalizedExternalCheckinUrl.present) updates.externalCheckinUrl = normalizedExternalCheckinUrl.url;
     if (body.status !== undefined) updates.status = normalizedStatus;
     if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;

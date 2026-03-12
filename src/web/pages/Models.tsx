@@ -49,7 +49,7 @@ interface ModelRow {
   name: string;
   accountCount: number;
   tokenCount: number;
-  avgLatency: number;
+  avgLatency: number | null;
   successRate: number | null;
   description: string | null;
   tags: string[];
@@ -68,7 +68,13 @@ interface ModelsMarketplaceResponse {
     refreshJobId?: string | null;
   };
 }
-function getMetricColor(latency: number) {
+
+function isKnownLatency(latency: number | null | undefined): latency is number {
+  return typeof latency === 'number' && Number.isFinite(latency);
+}
+
+function getMetricColor(latency: number | null) {
+  if (!isKnownLatency(latency)) return 'var(--color-text-muted)';
   if (latency >= 3000) return 'var(--color-danger)';
   if (latency >= 2000) return 'color-mix(in srgb, var(--color-warning) 30%, var(--color-danger))';
   if (latency >= 1500) return 'color-mix(in srgb, var(--color-warning) 60%, var(--color-danger))';
@@ -77,10 +83,15 @@ function getMetricColor(latency: number) {
   return 'var(--color-success)';
 }
 
-function getLatencyBadgeClass(latency: number) {
+function getLatencyBadgeClass(latency: number | null) {
+  if (!isKnownLatency(latency)) return 'badge-muted';
   if (latency >= 3000) return 'badge-error';
   if (latency >= 1000) return 'badge-warning';
   return 'badge-success';
+}
+
+function formatLatency(latency: number | null): string {
+  return isKnownLatency(latency) ? `${latency}ms` : '—';
 }
 
 function getSuccessBadgeClass(rate: number | null) {
@@ -112,6 +123,29 @@ function renderGroupPricingValue(pricing: ModelGroupPricing): string {
 }
 
 const PAGE_SIZES = [10, 20, 50];
+
+function compareModels(a: ModelRow, b: ModelRow, sortBy: SortColumn, sortDir: 'asc' | 'desc'): number {
+  if (sortBy === 'name') {
+    const cmp = a.name.localeCompare(b.name);
+    return sortDir === 'asc' ? cmp : -cmp;
+  }
+
+  const resolveNumericSortValue = (model: ModelRow) => {
+    if (sortBy === 'successRate') return model.successRate ?? -1;
+    if (sortBy === 'avgLatency') {
+      if (!isKnownLatency(model.avgLatency)) {
+        return sortDir === 'asc' ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+      }
+      return model.avgLatency;
+    }
+    return model[sortBy] ?? 0;
+  };
+
+  const va = resolveNumericSortValue(a);
+  const vb = resolveNumericSortValue(b);
+  if (va === vb) return a.name.localeCompare(b.name);
+  return sortDir === 'desc' ? vb - va : va - vb;
+}
 
 /* ---- component ---- */
 export default function Models() {
@@ -259,7 +293,7 @@ export default function Models() {
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [data.models]);
 
-  /* ---- filtered + sorted ---- */
+  /* ---- filtered ---- */
   const filteredModels = useMemo(() => {
     let list = data.models;
 
@@ -280,29 +314,19 @@ export default function Models() {
       list = list.filter(m => m.name.toLowerCase().includes(q));
     }
 
-    return [...list].sort((a, b) => {
-      if (sortBy === 'name') {
-        const cmp = a.name.localeCompare(b.name);
-        return sortDir === 'asc' ? cmp : -cmp;
-      }
-      const va = sortBy === 'successRate' ? (a.successRate ?? -1) : (a[sortBy] ?? 0);
-      const vb = sortBy === 'successRate' ? (b.successRate ?? -1) : (b[sortBy] ?? 0);
-      if (va === vb) return a.name.localeCompare(b.name);
-      return sortDir === 'desc' ? vb - va : va - vb;
-    });
-  }, [data.models, search, activeSite, activeBrand, sortBy, sortDir]);
+    return list;
+  }, [data.models, search, activeSite, activeBrand]);
 
   // Keep expanded detail consistent with filters (especially site filter).
   // The list-level filter uses "model has at least one account on this site" semantics;
   // once a model is shown, its detail should honor the active site as well.
   const detailModels = useMemo(() => {
-    if (!activeSite) return filteredModels;
-    return filteredModels.map((model) => {
+    const scopedModels = activeSite ? filteredModels.map((model) => {
       const accounts = model.accounts.filter((account) => account.site === activeSite);
       const pricingSources = model.pricingSources.filter((source) => source.siteName === activeSite);
       const latencyValues = accounts
         .map((account) => account.latency)
-        .filter((latency): latency is number => typeof latency === 'number' && Number.isFinite(latency));
+        .filter(isKnownLatency);
       return {
         ...model,
         accounts,
@@ -311,13 +335,15 @@ export default function Models() {
         tokenCount: accounts.reduce((sum, account) => sum + account.tokens.length, 0),
         avgLatency: latencyValues.length > 0
           ? Math.round(latencyValues.reduce((sum, latency) => sum + latency, 0) / latencyValues.length)
-          : model.avgLatency,
+          : null,
       };
-    });
-  }, [filteredModels, activeSite]);
+    }) : filteredModels;
+
+    return [...scopedModels].sort((a, b) => compareModels(a, b, sortBy, sortDir));
+  }, [filteredModels, activeSite, sortBy, sortDir]);
 
   /* ---- pagination ---- */
-  const totalPages = Math.max(1, Math.ceil(filteredModels.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(detailModels.length / pageSize));
   const safePageVal = Math.min(page, totalPages);
   const paged = detailModels.slice((safePageVal - 1) * pageSize, safePageVal * pageSize);
 
@@ -334,9 +360,12 @@ export default function Models() {
     }
     return ids.size;
   })();
-  const avgLatency = detailModels.length
-    ? Math.round(detailModels.reduce((s, m) => s + m.avgLatency, 0) / detailModels.length)
-    : 0;
+  const latencyMetrics = detailModels
+    .map((model) => model.avgLatency)
+    .filter(isKnownLatency);
+  const avgLatency = latencyMetrics.length > 0
+    ? Math.round(latencyMetrics.reduce((sum, latency) => sum + latency, 0) / latencyMetrics.length)
+    : null;
 
   /* ---- copy ---- */
   const copyName = (name: string) => {
@@ -532,12 +561,12 @@ export default function Models() {
             <span data-tooltip={tr('当前筛选范围内去重后的唯一账号数')}>
               {tr('去重账号')} <b style={{ color: 'var(--color-text-primary)' }}>{uniqueAccountCount}</b>
             </span>
-            <span>{tr('平均延迟')} <b style={{ color: getMetricColor(avgLatency) }}>{avgLatency}ms</b></span>
+            <span>{tr('平均延迟')} <b style={{ color: getMetricColor(avgLatency) }}>{formatLatency(avgLatency)}</b></span>
           </div>
         </div>
 
         {/* Empty */}
-        {filteredModels.length === 0 ? (
+        {detailModels.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">
               <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -572,7 +601,7 @@ export default function Models() {
                         style={{ fontVariantNumeric: 'tabular-nums' }}
                         data-tooltip={tr('平均延迟')}
                       >
-                        {tr('延迟')} {m.avgLatency}ms
+                        {tr('延迟')} {formatLatency(m.avgLatency)}
                       </span>
                       <span
                         className={`badge ${getSuccessBadgeClass(m.successRate)}`}
@@ -617,7 +646,7 @@ export default function Models() {
                   {m.successRate != null && m.successRate < 60 && (
                     <span className="model-tag model-tag-orange">{tr('风险')}</span>
                   )}
-                  {m.avgLatency <= 500 && (
+                  {isKnownLatency(m.avgLatency) && m.avgLatency <= 500 && (
                     <span className="model-tag model-tag-purple">{tr('低延迟')}</span>
                   )}
                 </div>
@@ -761,7 +790,7 @@ export default function Models() {
                           className={`badge ${getLatencyBadgeClass(m.avgLatency)}`}
                           style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}
                         >
-                          {m.avgLatency}ms
+                          {formatLatency(m.avgLatency)}
                         </span>
                       </td>
                       <td>

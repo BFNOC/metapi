@@ -9,6 +9,7 @@ export const sites = sqliteTable('sites', {
   platform: text('platform').notNull(), // 'new-api' | 'one-api' | 'veloera' | 'one-hub' | 'done-hub' | 'sub2api' | 'openai' | 'claude' | 'gemini'
   proxyUrl: text('proxy_url'),
   useSystemProxy: integer('use_system_proxy', { mode: 'boolean' }).default(false),
+  customHeaders: text('custom_headers'),
   status: text('status').notNull().default('active'), // 'active' | 'disabled'
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
   sortOrder: integer('sort_order').default(0),
@@ -137,8 +138,8 @@ export const routeChannels = sqliteTable('route_channels', {
   lastUsedAt: text('last_used_at'),
   lastSelectedAt: text('last_selected_at'),
   lastFailAt: text('last_fail_at'),
-  consecutiveFailCount: integer('consecutive_fail_count').default(0),
-  cooldownLevel: integer('cooldown_level').default(0),
+  consecutiveFailCount: integer('consecutive_fail_count').notNull().default(0),
+  cooldownLevel: integer('cooldown_level').notNull().default(0),
   cooldownUntil: text('cooldown_until'),
 }, (table) => ({
   routeIdIdx: index('route_channels_route_id_idx').on(table.routeId),

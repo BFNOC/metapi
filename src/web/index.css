@@ -877,6 +877,12 @@ body {
   background: color-mix(in srgb, var(--color-primary) 22%, var(--color-bg-card));
 }
 
+.btn-ghost-active {
+  background: color-mix(in srgb, var(--color-primary) 22%, var(--color-bg-card));
+  border-color: var(--color-primary) !important;
+  color: var(--color-primary);
+}
+
 .btn-link {
   background: transparent;
   border: none;

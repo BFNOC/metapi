@@ -219,6 +219,7 @@ export default function ProxyLogs() {
   const [detailById, setDetailById] = useState<Record<number, ProxyLogDetailState>>({});
   const [showFilters, setShowFilters] = useState(false);
   const [sites, setSites] = useState<Array<{ id: number; name: string; status?: string | null }>>([]);
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const isMobile = useIsMobile(768);
   const toast = useToast();
   const loadSeq = useRef(0);
@@ -320,7 +321,7 @@ export default function ProxyLogs() {
     return siteOptions.find((option) => option.value === String(siteFilter))?.label || `站点 #${siteFilter}`;
   }, [siteFilter, siteOptions]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     const seq = ++loadSeq.current;
     if (hasInvalidTimeRange) {
       setLogs([]);
@@ -329,7 +330,7 @@ export default function ProxyLogs() {
       if (seq === loadSeq.current) setLoading(false);
       return;
     }
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const params = {
         limit: pageSize,
@@ -347,7 +348,7 @@ export default function ProxyLogs() {
       setSummary(data.summary || EMPTY_SUMMARY);
     } catch (e: any) {
       if (seq !== loadSeq.current) return;
-      toast.error(e.message || '加载日志失败');
+      if (!silent) toast.error(e.message || '加载日志失败');
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
@@ -356,6 +357,12 @@ export default function ProxyLogs() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const timer = setInterval(() => { void load(true); }, 2000);
+    return () => clearInterval(timer);
+  }, [autoRefresh, load]);
 
   useEffect(() => {
     if (page <= totalPages) return;
@@ -504,12 +511,25 @@ export default function ProxyLogs() {
             {summary.totalTokensAll.toLocaleString()} tokens
           </span>
         </div>
-        <button onClick={load} disabled={loading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)', padding: '6px 14px' }}>
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }}>
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          {loading ? '加载中...' : '刷新'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            onClick={() => setAutoRefresh((v) => !v)}
+            className={`btn btn-ghost${autoRefresh ? ' btn-ghost-active' : ''}`}
+            style={{ border: '1px solid var(--color-border)', padding: '6px 14px' }}
+            title={autoRefresh ? '关闭自动刷新' : '开启自动刷新（每2秒）'}
+          >
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ animation: autoRefresh ? 'spin 1s linear infinite' : 'none' }}>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {autoRefresh ? '自动刷新中' : '自动刷新'}
+          </button>
+          <button onClick={() => load()} disabled={loading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)', padding: '6px 14px' }}>
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }}>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {loading ? '加载中...' : '刷新'}
+          </button>
+        </div>
       </div>
 
       {isMobile ? (

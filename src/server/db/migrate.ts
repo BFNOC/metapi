@@ -30,6 +30,10 @@ type RecoveryMigrationRecord = MigrationRecord & {
   tag: string;
 };
 
+type RecoveryMigration = RecoveryMigrationRecord & {
+  statements: string[];
+};
+
 const VERIFIED_BOOTSTRAP_TAG = '0007_account_token_group';
 const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites' },
@@ -170,6 +174,21 @@ function findMatchingSingleStatementMigration(
   return null;
 }
 
+function readRecoveryMigrations(migrationsFolder: string): RecoveryMigration[] {
+  const journalPath = resolve(migrationsFolder, 'meta', '_journal.json');
+  const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as MigrationJournalFile;
+
+  return (journal.entries ?? []).map((entry) => {
+    const migrationSql = readFileSync(resolve(migrationsFolder, `${entry.tag}.sql`), 'utf8');
+    return {
+      tag: entry.tag,
+      createdAt: Number(entry.when),
+      hash: createHash('sha256').update(migrationSql).digest('hex'),
+      statements: splitMigrationStatements(migrationSql),
+    };
+  });
+}
+
 function ensureDrizzleMigrationsTable(sqlite: Database.Database): void {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
@@ -232,6 +251,61 @@ function isDuplicateColumnError(error: unknown): boolean {
     || lowered.includes('duplicate column name');
 }
 
+function isRecoverableSchemaConflictError(error: unknown): boolean {
+  const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
+  return lowered.includes('duplicate column')
+    || lowered.includes('duplicate column name')
+    || lowered.includes('already exists');
+}
+
+function getLatestRecordedMigrationCreatedAt(sqlite: Database.Database): number | null {
+  if (!tableExists(sqlite, '__drizzle_migrations')) return null;
+  const row = sqlite
+    .prepare('SELECT created_at FROM "__drizzle_migrations" ORDER BY created_at DESC LIMIT 1')
+    .get() as { created_at?: number } | undefined;
+  if (!row || row.created_at === undefined || row.created_at === null) {
+    return null;
+  }
+  return Number(row.created_at);
+}
+
+function replayMigrationStatements(sqlite: Database.Database, statements: string[]): void {
+  for (const statement of statements) {
+    try {
+      sqlite.exec(statement);
+    } catch (error) {
+      if (!isRecoverableSchemaConflictError(error)) {
+        throw error;
+      }
+    }
+  }
+}
+
+function recoverMigrationSequence(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+  failedMigrationTag: string,
+): boolean {
+  const migrations = readRecoveryMigrations(migrationsFolder);
+  const failedMigrationIndex = migrations.findIndex((migration) => migration.tag === failedMigrationTag);
+  if (failedMigrationIndex < 0) {
+    return false;
+  }
+
+  let latestRecordedCreatedAt = getLatestRecordedMigrationCreatedAt(sqlite);
+  for (const migration of migrations.slice(0, failedMigrationIndex + 1)) {
+    if (latestRecordedCreatedAt !== null && latestRecordedCreatedAt >= migration.createdAt) {
+      continue;
+    }
+
+    replayMigrationStatements(sqlite, migration.statements);
+    markMigrationRecordIfMissing(sqlite, migration);
+    latestRecordedCreatedAt = migration.createdAt;
+  }
+
+  return true;
+}
+
 function tryRecoverDuplicateColumnMigrationError(
   sqlite: Database.Database,
   migrationsFolder: string,
@@ -251,11 +325,11 @@ function tryRecoverDuplicateColumnMigrationError(
     return false;
   }
 
-  const inserted = markMigrationRecordIfMissing(sqlite, matchedMigration);
-  if (inserted) {
-    console.warn(`[db] Recovered duplicate-column migration by marking ${matchedMigration.tag} as applied.`);
+  const recovered = recoverMigrationSequence(sqlite, migrationsFolder, matchedMigration.tag);
+  if (recovered) {
+    console.warn(`[db] Recovered duplicate-column migration sequence through ${matchedMigration.tag}.`);
   }
-  return true;
+  return recovered;
 }
 
 export const __migrateTestUtils = {
@@ -263,7 +337,9 @@ export const __migrateTestUtils = {
   normalizeSqlForMatch,
   extractFailedSqlFromError,
   findMatchingSingleStatementMigration,
+  readRecoveryMigrations,
   markMigrationRecordIfMissing,
+  recoverMigrationSequence,
   tryRecoverDuplicateColumnMigrationError,
 };
 

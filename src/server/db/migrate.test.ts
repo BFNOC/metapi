@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -26,6 +27,26 @@ function applyMigrationSql(sqlite: Database.Database, sqlText: string) {
 
   for (const statement of statements) {
     sqlite.exec(statement);
+  }
+}
+
+function recordAppliedMigrations(
+  sqlite: Database.Database,
+  journalEntries: MigrationJournalEntry[],
+) {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
+      id SERIAL PRIMARY KEY,
+      hash text NOT NULL,
+      created_at numeric
+    )
+  `);
+
+  const insert = sqlite.prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)');
+  for (const entry of journalEntries) {
+    const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
+    const hash = createHash('sha256').update(sqlText).digest('hex');
+    insert.run(hash, entry.when);
   }
 }
 
@@ -185,5 +206,45 @@ describe('sqlite migrate bootstrap', () => {
     expect(Number(applied[0].created_at)).toBe(1772500000001);
 
     sqlite.close();
+  });
+
+  it('replays missing migrations before marking a duplicate-column migration as applied', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-partial-journal-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+    const appliedEntries = journalEntries.filter((entry) => entry.tag !== '0006_site_disabled_models' && entry.tag !== '0007_account_token_group');
+
+    for (const entry of appliedEntries) {
+      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
+      applyMigrationSql(sqlite, sqlText);
+    }
+    recordAppliedMigrations(sqlite, appliedEntries);
+
+    // Simulate legacy compatibility code adding token_group before the formal 0007 migration ran.
+    sqlite.exec('ALTER TABLE account_tokens ADD COLUMN token_group text;');
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).resolves.toMatchObject({
+      runSqliteMigrations: expect.any(Function),
+    });
+
+    const verified = new Database(dbPath, { readonly: true });
+    const appliedRows = verified
+      .prepare('SELECT created_at FROM __drizzle_migrations ORDER BY created_at ASC')
+      .all() as Array<{ created_at: number }>;
+    const disabledModelsTable = verified
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'site_disabled_models'")
+      .get() as { name?: string } | undefined;
+
+    expect(disabledModelsTable?.name).toBe('site_disabled_models');
+    expect(appliedRows.map((row) => Number(row.created_at))).toEqual(
+      journalEntries.map((entry) => entry.when),
+    );
+
+    verified.close();
   });
 });

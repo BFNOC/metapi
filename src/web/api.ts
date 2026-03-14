@@ -10,7 +10,7 @@ async function request(url: string, options: RequestOptions = {}) {
   let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
-  let cleanupExternalSignal = () => {};
+  let cleanupExternalSignal = () => { };
 
   if (externalSignal) {
     if (externalSignal.aborted) {
@@ -69,7 +69,7 @@ async function request(url: string, options: RequestOptions = {}) {
             message = `${message}: ${text.slice(0, 120)}`;
           }
         }
-      } catch {}
+      } catch { }
       throw new Error(message);
     }
     return res.json();
@@ -250,6 +250,8 @@ export const api = {
   deleteSite: (id: number) => request(`/api/sites/${id}`, { method: 'DELETE' }),
   batchUpdateSites: (data: any) => request('/api/sites/batch', { method: 'POST', body: JSON.stringify(data) }),
   detectSite: (url: string) => request('/api/sites/detect', { method: 'POST', body: JSON.stringify({ url }) }),
+  getSiteDisabledModels: (siteId: number) => request(`/api/sites/${siteId}/disabled-models`),
+  updateSiteDisabledModels: (siteId: number, models: string[]) => request(`/api/sites/${siteId}/disabled-models`, { method: 'PUT', body: JSON.stringify({ models }) }),
 
   // Accounts
   getAccounts: () => request('/api/accounts'),
@@ -262,6 +264,7 @@ export const api = {
   deleteAccount: (id: number) => request(`/api/accounts/${id}`, { method: 'DELETE' }),
   batchUpdateAccounts: (data: any) => request('/api/accounts/batch', { method: 'POST', body: JSON.stringify(data) }),
   refreshBalance: (id: number) => request(`/api/accounts/${id}/balance`, { method: 'POST' }),
+  getAccountModels: (id: number) => request(`/api/accounts/${id}/models`),
   refreshAccountHealth: (data?: { accountId?: number; wait?: boolean }) => request('/api/accounts/health/refresh', {
     method: 'POST',
     body: JSON.stringify(data || {}),

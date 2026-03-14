@@ -1343,4 +1343,59 @@ export async function accountsRoutes(app: FastifyInstance) {
       return { message: err?.message || 'failed to fetch balance' };
     }
   });
+
+  // Get model list for an account (available models + disabled status at site level)
+  app.get<{ Params: { id: string } }>('/api/accounts/:id/models', async (request, reply) => {
+    const accountId = parseInt(request.params.id, 10);
+    if (!Number.isFinite(accountId) || accountId <= 0) {
+      return reply.code(400).send({ message: '账号 ID 无效' });
+    }
+
+    const account = await db.select().from(schema.accounts)
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(eq(schema.accounts.id, accountId))
+      .get();
+
+    if (!account) {
+      return reply.code(404).send({ message: '账号不存在' });
+    }
+
+    const siteId = account.accounts.siteId;
+
+    // Get available models for this account
+    const modelRows = await db.select({
+      modelName: schema.modelAvailability.modelName,
+      available: schema.modelAvailability.available,
+      latencyMs: schema.modelAvailability.latencyMs,
+    }).from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, accountId))
+      .all();
+
+    // Get disabled models for this site
+    const disabledRows = await db.select({
+      modelName: schema.siteDisabledModels.modelName,
+    }).from(schema.siteDisabledModels)
+      .where(eq(schema.siteDisabledModels.siteId, siteId))
+      .all();
+
+    const disabledSet = new Set(disabledRows.map((r) => r.modelName));
+
+    const models = modelRows
+      .filter((r) => r.available)
+      .map((r) => ({
+        name: r.modelName,
+        latencyMs: r.latencyMs,
+        disabled: disabledSet.has(r.modelName),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    return {
+      siteId,
+      siteName: account.sites.name,
+      models,
+      totalCount: models.length,
+      disabledCount: models.filter((m) => m.disabled).length,
+    };
+  });
 }
+

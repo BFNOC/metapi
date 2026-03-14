@@ -104,7 +104,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           relatedType: 'site',
           createdAt,
         }).run();
-      } catch {}
+      } catch { }
       return;
     }
 
@@ -124,7 +124,7 @@ export async function sitesRoutes(app: FastifyInstance) {
         relatedType: 'site',
         createdAt,
       }).run();
-    } catch {}
+    } catch { }
   }
 
   function normalizeBatchIds(input: unknown): number[] {
@@ -370,6 +370,57 @@ export async function sitesRoutes(app: FastifyInstance) {
       successIds,
       failedItems,
     };
+  });
+
+  // Get disabled models for a site
+  app.get<{ Params: { id: string } }>('/api/sites/:id/disabled-models', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const existingSite = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!existingSite) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+    const rows = await db.select({ modelName: schema.siteDisabledModels.modelName })
+      .from(schema.siteDisabledModels)
+      .where(eq(schema.siteDisabledModels.siteId, id))
+      .all();
+    return { siteId: id, models: rows.map((r) => r.modelName) };
+  });
+
+  // Update disabled models for a site (full replace)
+  app.put<{ Params: { id: string }; Body: { models?: string[] } }>('/api/sites/:id/disabled-models', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const existingSite = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!existingSite) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+    const rawModels = request.body?.models;
+    if (!Array.isArray(rawModels)) {
+      return reply.code(400).send({ error: 'models must be an array of strings' });
+    }
+    const models = rawModels
+      .filter((m): m is string => typeof m === 'string')
+      .map((m) => m.trim())
+      .filter((m) => m.length > 0);
+    const uniqueModels = Array.from(new Set(models));
+
+    await db.delete(schema.siteDisabledModels)
+      .where(eq(schema.siteDisabledModels.siteId, id))
+      .run();
+
+    if (uniqueModels.length > 0) {
+      await db.insert(schema.siteDisabledModels).values(
+        uniqueModels.map((modelName) => ({ siteId: id, modelName })),
+      ).run();
+    }
+
+    invalidateSiteCaches();
+    return { siteId: id, models: uniqueModels };
   });
 
   // Detect platform for a URL

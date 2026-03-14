@@ -26,7 +26,7 @@ type MigrationRecord = {
   hash: string;
 };
 
-const VERIFIED_BOOTSTRAP_TAG = '0004_sorting_preferences';
+const VERIFIED_BOOTSTRAP_TAG = '0007_account_token_group';
 const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites' },
   { table: 'settings' },
@@ -43,7 +43,12 @@ const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites', column: 'sort_order' },
   { table: 'accounts', column: 'is_pinned' },
   { table: 'accounts', column: 'sort_order' },
+  // 0006: site_disabled_models table
+  { table: 'site_disabled_models' },
+  // 0007: token_group column on account_tokens
+  { table: 'account_tokens', column: 'token_group' },
 ];
+
 
 function resolveSqliteDbPath(): string {
   const raw = (config.dbUrl || '').trim();

@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import pg from 'pg';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { resolveGeneratedArtifactPath } from './schemaArtifactGenerator.js';
+import {
+  generateBootstrapSql,
+  generateUpgradeSql,
+  resolveGeneratedArtifactPath,
+} from './schemaArtifactGenerator.js';
 import type {
   LogicalColumnType,
   SchemaContract,
@@ -29,6 +33,8 @@ export interface MaterializeFreshSchemaOptions {
   connectionString?: string;
   ssl?: boolean;
 }
+
+export interface ApplyContractFixtureThenUpgradeOptions extends MaterializeFreshSchemaOptions {}
 
 type SqliteTableInfoRow = {
   name: string;
@@ -124,7 +130,12 @@ function splitMigrationStatements(sqlText: string): string[] {
 }
 
 function splitSqlStatements(sqlText: string): string[] {
-  return sqlText
+  const withoutCommentLines = sqlText
+    .split(/\r?\n/g)
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n');
+
+  return withoutCommentLines
     .split(/;\s*(?:\r?\n|$)/g)
     .map((statement) => statement.trim())
     .filter((statement) => statement.length > 0);
@@ -762,13 +773,76 @@ function applySqliteMigrations(sqlite: Database.Database): void {
   }
 }
 
+function createTemporarySqlitePath(): string {
+  const tempDir = mkdtempSync(join(tmpdir(), 'metapi-schema-parity-'));
+  return resolve(tempDir, `${randomUUID()}.db`);
+}
+
+function applySqliteStatements(sqlitePath: string, statements: string[]): void {
+  const sqlite = new Database(sqlitePath);
+  sqlite.pragma('foreign_keys = ON');
+  try {
+    for (const statement of statements) {
+      sqlite.exec(statement);
+    }
+  } finally {
+    sqlite.close();
+  }
+}
+
+async function applyMySqlStatements(
+  connectionString: string,
+  ssl: boolean | undefined,
+  statements: string[],
+  resetSchema = false,
+): Promise<void> {
+  const connectionOptions: mysql.ConnectionOptions = { uri: connectionString };
+  if (ssl) {
+    connectionOptions.ssl = { rejectUnauthorized: false };
+  }
+  const connection = await mysql.createConnection(connectionOptions);
+  try {
+    if (resetSchema) {
+      await resetMySqlSchema(connection);
+    }
+    for (const statement of statements) {
+      await connection.query(statement);
+    }
+  } finally {
+    await connection.end();
+  }
+}
+
+async function applyPostgresStatements(
+  connectionString: string,
+  ssl: boolean | undefined,
+  statements: string[],
+  resetSchema = false,
+): Promise<void> {
+  const clientOptions: pg.ClientConfig = { connectionString };
+  if (ssl) {
+    clientOptions.ssl = { rejectUnauthorized: false };
+  }
+  const client = new pg.Client(clientOptions);
+  await client.connect();
+  try {
+    if (resetSchema) {
+      await resetPostgresSchema(client);
+    }
+    for (const statement of statements) {
+      await client.query(statement);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
 export async function materializeFreshSchema(
   dialect: SchemaIntrospectionDialect,
   options: MaterializeFreshSchemaOptions = {},
 ): Promise<string> {
   if (dialect === 'sqlite') {
-    const tempDir = mkdtempSync(join(tmpdir(), 'metapi-schema-parity-'));
-    const sqlitePath = resolve(tempDir, `${randomUUID()}.db`);
+    const sqlitePath = createTemporarySqlitePath();
     const sqlite = new Database(sqlitePath);
     sqlite.pragma('foreign_keys = ON');
     try {
@@ -785,35 +859,47 @@ export async function materializeFreshSchema(
 
   const bootstrapStatements = splitSqlStatements(readBootstrapSql(dialect));
   if (dialect === 'mysql') {
-    const connectionOptions: mysql.ConnectionOptions = { uri: options.connectionString };
-    if (options.ssl) {
-      connectionOptions.ssl = { rejectUnauthorized: false };
+    await applyMySqlStatements(options.connectionString, options.ssl, bootstrapStatements, true);
+    return options.connectionString;
+  }
+
+  await applyPostgresStatements(options.connectionString, options.ssl, bootstrapStatements, true);
+  return options.connectionString;
+}
+
+export async function applyContractFixtureThenUpgrade(
+  dialect: SchemaIntrospectionDialect,
+  baselineContract: SchemaContract,
+  currentContract: SchemaContract,
+  options: ApplyContractFixtureThenUpgradeOptions = {},
+): Promise<string> {
+  const bootstrapStatements = splitSqlStatements(generateBootstrapSql(dialect, baselineContract));
+  const upgradeStatements = splitSqlStatements(generateUpgradeSql(dialect, currentContract, baselineContract));
+
+  if (dialect === 'sqlite') {
+    const sqlitePath = createTemporarySqlitePath();
+    applySqliteStatements(sqlitePath, bootstrapStatements);
+    if (upgradeStatements.length > 0) {
+      applySqliteStatements(sqlitePath, upgradeStatements);
     }
-    const connection = await mysql.createConnection(connectionOptions);
-    try {
-      await resetMySqlSchema(connection);
-      for (const statement of bootstrapStatements) {
-        await connection.query(statement);
-      }
-    } finally {
-      await connection.end();
+    return sqlitePath;
+  }
+
+  if (!options.connectionString) {
+    throw new Error(`connectionString is required to upgrade ${dialect} parity schema`);
+  }
+
+  if (dialect === 'mysql') {
+    await applyMySqlStatements(options.connectionString, options.ssl, bootstrapStatements, true);
+    if (upgradeStatements.length > 0) {
+      await applyMySqlStatements(options.connectionString, options.ssl, upgradeStatements, false);
     }
     return options.connectionString;
   }
 
-  const clientOptions: pg.ClientConfig = { connectionString: options.connectionString };
-  if (options.ssl) {
-    clientOptions.ssl = { rejectUnauthorized: false };
-  }
-  const client = new pg.Client(clientOptions);
-  await client.connect();
-  try {
-    await resetPostgresSchema(client);
-    for (const statement of bootstrapStatements) {
-      await client.query(statement);
-    }
-  } finally {
-    await client.end();
+  await applyPostgresStatements(options.connectionString, options.ssl, bootstrapStatements, true);
+  if (upgradeStatements.length > 0) {
+    await applyPostgresStatements(options.connectionString, options.ssl, upgradeStatements, false);
   }
   return options.connectionString;
 }

@@ -106,4 +106,13 @@ describe('schema artifact generator', () => {
     expect(artifacts.mysqlBootstrap).toContain('`created_at` DATETIME DEFAULT CURRENT_TIMESTAMP');
     expect(artifacts.postgresBootstrap).toContain('"created_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
   });
+
+  it('rejects destructive diffs when generating additive upgrades', () => {
+    const current = readSchemaContract();
+    const previous = structuredClone(current);
+
+    delete current.tables.sites.columns.status;
+
+    expect(() => generateDialectArtifacts(current, previous)).toThrow(/non-additive schema diff/i);
+  });
 });

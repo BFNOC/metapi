@@ -18,6 +18,7 @@ export interface GeneratedDialectArtifacts {
 }
 
 type Dialect = 'mysql' | 'postgres';
+type SqlDialect = 'sqlite' | Dialect;
 
 function resolveDbDir(): string {
   return dirname(fileURLToPath(import.meta.url));
@@ -27,7 +28,7 @@ export function resolveGeneratedArtifactPath(filename: string): string {
   return resolve(resolveDbDir(), 'generated', filename);
 }
 
-function quoteIdentifier(dialect: Dialect, identifier: string): string {
+function quoteIdentifier(dialect: SqlDialect, identifier: string): string {
   return dialect === 'mysql' ? `\`${identifier}\`` : `"${identifier}"`;
 }
 
@@ -35,7 +36,22 @@ function escapeMysqlTextPrefix(columnType: LogicalColumnType): string {
   return columnType === 'text' || columnType === 'datetime' || columnType === 'json' ? '(191)' : '';
 }
 
-function mapColumnType(dialect: Dialect, columnName: string, column: SchemaContractColumn): string {
+function mapColumnType(dialect: SqlDialect, columnName: string, column: SchemaContractColumn): string {
+  if (dialect === 'sqlite') {
+    switch (column.logicalType) {
+      case 'boolean':
+      case 'integer':
+        return 'INTEGER';
+      case 'real':
+        return 'REAL';
+      case 'datetime':
+      case 'json':
+      case 'text':
+      default:
+        return 'TEXT';
+    }
+  }
+
   if (dialect === 'mysql') {
     switch (column.logicalType) {
       case 'boolean':
@@ -72,12 +88,15 @@ function mapColumnType(dialect: Dialect, columnName: string, column: SchemaContr
   }
 }
 
-function formatDefaultValue(column: SchemaContractColumn): string {
+function formatDefaultValue(dialect: SqlDialect, column: SchemaContractColumn): string {
   if (column.defaultValue == null || column.primaryKey) {
     return '';
   }
 
   if (column.logicalType === 'datetime') {
+    if (dialect === 'sqlite') {
+      return " DEFAULT (datetime('now'))";
+    }
     return ' DEFAULT CURRENT_TIMESTAMP';
   }
 
@@ -89,18 +108,18 @@ function formatDefaultValue(column: SchemaContractColumn): string {
 }
 
 function buildColumnDefinition(
-  dialect: Dialect,
+  dialect: SqlDialect,
   columnName: string,
   column: SchemaContractColumn,
 ): string {
   const sqlType = mapColumnType(dialect, columnName, column);
   const notNull = column.notNull ? ' NOT NULL' : '';
-  const defaultValue = formatDefaultValue(column);
+  const defaultValue = formatDefaultValue(dialect, column);
   const primaryKey = column.primaryKey ? ' PRIMARY KEY' : '';
   return `${quoteIdentifier(dialect, columnName)} ${sqlType}${notNull}${defaultValue}${primaryKey}`;
 }
 
-function buildForeignKeyClause(dialect: Dialect, foreignKey: SchemaContractForeignKey): string {
+function buildForeignKeyClause(dialect: SqlDialect, foreignKey: SchemaContractForeignKey): string {
   const sourceColumns = foreignKey.columns.map((column) => quoteIdentifier(dialect, column)).join(', ');
   const targetColumns = foreignKey.referencedColumns.map((column) => quoteIdentifier(dialect, column)).join(', ');
   const onDelete = foreignKey.onDelete ? ` ON DELETE ${foreignKey.onDelete.toUpperCase()}` : '';
@@ -144,7 +163,7 @@ function sortTableNamesForCreation(contract: SchemaContract): string[] {
 }
 
 function buildCreateTableStatement(
-  dialect: Dialect,
+  dialect: SqlDialect,
   tableName: string,
   contract: SchemaContract,
 ): string {
@@ -158,7 +177,7 @@ function buildCreateTableStatement(
   return `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(dialect, tableName)} (${parts.join(', ')})`;
 }
 
-function buildUniqueIndexStatement(dialect: Dialect, uniqueIndex: SchemaContractUnique, contract: SchemaContract): string {
+function buildUniqueIndexStatement(dialect: SqlDialect, uniqueIndex: SchemaContractUnique, contract: SchemaContract): string {
   const columns = uniqueIndex.columns
     .map((columnName) => {
       const column = contract.tables[uniqueIndex.table]?.columns[columnName];
@@ -169,7 +188,7 @@ function buildUniqueIndexStatement(dialect: Dialect, uniqueIndex: SchemaContract
   return `CREATE UNIQUE INDEX ${quoteIdentifier(dialect, uniqueIndex.name)} ON ${quoteIdentifier(dialect, uniqueIndex.table)} (${columns})`;
 }
 
-function buildIndexStatement(dialect: Dialect, index: SchemaContractIndex, contract: SchemaContract): string {
+function buildIndexStatement(dialect: SqlDialect, index: SchemaContractIndex, contract: SchemaContract): string {
   const columns = index.columns
     .map((columnName) => {
       const column = contract.tables[index.table]?.columns[columnName];
@@ -180,7 +199,93 @@ function buildIndexStatement(dialect: Dialect, index: SchemaContractIndex, contr
   return `CREATE INDEX ${quoteIdentifier(dialect, index.name)} ON ${quoteIdentifier(dialect, index.table)} (${columns})`;
 }
 
-function buildBootstrapSql(dialect: Dialect, contract: SchemaContract): string {
+function serializeColumn(column: SchemaContractColumn): string {
+  return [
+    column.logicalType,
+    column.notNull ? 'not-null' : 'nullable',
+    column.defaultValue ?? 'default:null',
+    column.primaryKey ? 'pk' : 'non-pk',
+  ].join('|');
+}
+
+function serializeIndex(index: SchemaContractIndex): string {
+  return [index.table, index.columns.join(','), index.unique ? 'unique' : 'non-unique'].join('|');
+}
+
+function serializeUnique(unique: SchemaContractUnique): string {
+  return [unique.table, unique.columns.join(',')].join('|');
+}
+
+function serializeForeignKey(foreignKey: SchemaContractForeignKey): string {
+  return [
+    foreignKey.table,
+    foreignKey.columns.join(','),
+    foreignKey.referencedTable,
+    foreignKey.referencedColumns.join(','),
+    foreignKey.onDelete ?? 'null',
+  ].join('|');
+}
+
+function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContract: SchemaContract): void {
+  const violations: string[] = [];
+
+  for (const [tableName, previousTable] of Object.entries(previousContract.tables)) {
+    const currentTable = currentContract.tables[tableName];
+    if (!currentTable) {
+      violations.push(`removed table ${tableName}`);
+      continue;
+    }
+
+    for (const [columnName, previousColumn] of Object.entries(previousTable.columns)) {
+      const currentColumn = currentTable.columns[columnName];
+      if (!currentColumn) {
+        violations.push(`removed column ${tableName}.${columnName}`);
+        continue;
+      }
+
+      if (serializeColumn(currentColumn) !== serializeColumn(previousColumn)) {
+        violations.push(`changed column ${tableName}.${columnName}`);
+      }
+    }
+  }
+
+  const currentIndexes = new Map(currentContract.indexes.map((index) => [index.name, index]));
+  for (const previousIndex of previousContract.indexes) {
+    const currentIndex = currentIndexes.get(previousIndex.name);
+    if (!currentIndex) {
+      violations.push(`removed index ${previousIndex.name}`);
+      continue;
+    }
+    if (serializeIndex(currentIndex) !== serializeIndex(previousIndex)) {
+      violations.push(`changed index ${previousIndex.name}`);
+    }
+  }
+
+  const currentUniques = new Map(currentContract.uniques.map((unique) => [unique.name, unique]));
+  for (const previousUnique of previousContract.uniques) {
+    const currentUnique = currentUniques.get(previousUnique.name);
+    if (!currentUnique) {
+      violations.push(`removed unique ${previousUnique.name}`);
+      continue;
+    }
+    if (serializeUnique(currentUnique) !== serializeUnique(previousUnique)) {
+      violations.push(`changed unique ${previousUnique.name}`);
+    }
+  }
+
+  const currentForeignKeys = new Set(currentContract.foreignKeys.map(serializeForeignKey));
+  for (const previousForeignKey of previousContract.foreignKeys) {
+    if (!currentForeignKeys.has(serializeForeignKey(previousForeignKey))) {
+      violations.push(`removed foreign key ${previousForeignKey.table}(${previousForeignKey.columns.join(',')})`);
+    }
+  }
+
+  if (violations.length > 0) {
+    throw new Error(`Non-additive schema diff detected:\n- ${violations.join('\n- ')}`);
+  }
+}
+
+export function generateBootstrapSql(dialect: SqlDialect, contract: SchemaContract): string {
   const tableStatements = sortTableNamesForCreation(contract)
     .map((tableName) => buildCreateTableStatement(dialect, tableName, contract));
 
@@ -200,7 +305,7 @@ function buildBootstrapSql(dialect: Dialect, contract: SchemaContract): string {
 }
 
 function buildAddColumnStatement(
-  dialect: Dialect,
+  dialect: SqlDialect,
   tableName: string,
   columnName: string,
   column: SchemaContractColumn,
@@ -208,14 +313,16 @@ function buildAddColumnStatement(
   return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} ADD COLUMN ${buildColumnDefinition(dialect, columnName, column)}`;
 }
 
-function buildUpgradeSql(
-  dialect: Dialect,
+export function generateUpgradeSql(
+  dialect: SqlDialect,
   currentContract: SchemaContract,
   previousContract?: SchemaContract | null,
 ): string {
   if (!previousContract) {
     return `-- no previous schema contract available for ${dialect} additive upgrade generation\n`;
   }
+
+  assertAdditiveSchemaDiff(currentContract, previousContract);
 
   const previousTableNames = new Set(Object.keys(previousContract.tables));
   const currentTableNames = Object.keys(currentContract.tables).sort((left, right) => left.localeCompare(right, 'en'));
@@ -274,10 +381,10 @@ export function generateDialectArtifacts(
   previousContract?: SchemaContract | null,
 ): GeneratedDialectArtifacts {
   return {
-    mysqlBootstrap: buildBootstrapSql('mysql', contract),
-    postgresBootstrap: buildBootstrapSql('postgres', contract),
-    mysqlUpgrade: buildUpgradeSql('mysql', contract, previousContract),
-    postgresUpgrade: buildUpgradeSql('postgres', contract, previousContract),
+    mysqlBootstrap: generateBootstrapSql('mysql', contract),
+    postgresBootstrap: generateBootstrapSql('postgres', contract),
+    mysqlUpgrade: generateUpgradeSql('mysql', contract, previousContract),
+    postgresUpgrade: generateUpgradeSql('postgres', contract, previousContract),
   };
 }
 

@@ -129,6 +129,7 @@ export default function Accounts() {
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRebindTargetRef = useRef<any | null>(null);
+  const modelModalRequestSeqRef = useRef(0);
   const toast = useToast();
   if (rebindTarget) lastRebindTargetRef.current = rebindTarget;
   const activeRebindTarget = rebindTarget || lastRebindTargetRef.current;
@@ -405,26 +406,67 @@ export default function Accounts() {
     }
   };
 
-  const openModelModal = async (account: any) => {
-    setModelModal(s => ({ ...s, open: true, account, loading: true, models: [], pendingDisabled: new Set(), siteName: '' }));
+  const applyLoadedModelModal = (account: any, result: any) => {
+    const models = Array.isArray(result?.models) ? result.models : [];
+    const disabledSet = new Set<string>(models.filter((m: any) => m.disabled).map((m: any) => m.name as string));
+    setModelModal(s => ({
+      ...s,
+      loading: false,
+      models,
+      pendingDisabled: disabledSet,
+      siteName: result?.siteName || account.site?.name || s.siteName,
+    }));
+  };
+
+  const loadModelModalModels = async (
+    account: any,
+    options: {
+      refreshUpstream?: boolean;
+      resetBeforeLoad?: boolean;
+      closeOnError?: boolean;
+      successMessage?: string | null;
+      errorMessage?: string;
+    } = {},
+  ) => {
+    const requestId = ++modelModalRequestSeqRef.current;
+    setModelModal(s => ({
+      ...s,
+      open: true,
+      account,
+      loading: true,
+      ...(options.resetBeforeLoad ? { models: [], pendingDisabled: new Set<string>(), siteName: '' } : {}),
+    }));
     try {
+      if (options.refreshUpstream) {
+        await api.checkModels(account.id);
+      }
       const result = await api.getAccountModels(account.id);
-      const models = Array.isArray(result?.models) ? result.models : [];
-      const disabledSet = new Set<string>(models.filter((m: any) => m.disabled).map((m: any) => m.name as string));
-      setModelModal(s => ({
-        ...s,
-        loading: false,
-        models,
-        pendingDisabled: disabledSet,
-        siteName: result?.siteName || account.site?.name || '',
-      }));
+      if (modelModalRequestSeqRef.current !== requestId) return;
+      applyLoadedModelModal(account, result);
+      if (options.successMessage) {
+        toast.success(options.successMessage);
+      }
     } catch (e: any) {
-      toast.error(e.message || '加载模型列表失败');
-      setModelModal(s => ({ ...s, open: false, loading: false }));
+      if (modelModalRequestSeqRef.current !== requestId) return;
+      toast.error(e.message || options.errorMessage || '加载模型列表失败');
+      setModelModal(s => (
+        options.closeOnError
+          ? { ...s, open: false, account: null, loading: false }
+          : { ...s, loading: false }
+      ));
     }
   };
 
+  const openModelModal = async (account: any) => {
+    await loadModelModalModels(account, {
+      resetBeforeLoad: true,
+      closeOnError: true,
+      errorMessage: '加载模型列表失败',
+    });
+  };
+
   const closeModelModal = () => {
+    modelModalRequestSeqRef.current += 1;
     setModelModal(s => ({ ...s, open: false, account: null }));
   };
 
@@ -443,11 +485,12 @@ export default function Accounts() {
     setModelModal(s => ({ ...s, saving: true }));
     try {
       await api.updateSiteDisabledModels(siteId, Array.from(modelModal.pendingDisabled));
-      // 禁用配置变更后自动重建路由，使变更立即生效（不刷新模型，在后台异步执行）
       try {
         await api.rebuildRoutes(false, false);
-      } catch { /* 路由重建失败不阻塞保存流程 */ }
-      toast.success('模型禁用设置已保存，路由已重建');
+        toast.success('模型禁用设置已保存，路由已重建');
+      } catch {
+        toast.error('模型禁用设置已保存，但路由重建失败，请手动刷新路由');
+      }
       closeModelModal();
     } catch (e: any) {
       toast.error(e.message || '保存失败');
@@ -1875,18 +1918,11 @@ export default function Accounts() {
             <button
               onClick={async () => {
                 if (!modelModal.account) return;
-                setModelModal(s => ({ ...s, loading: true }));
-                try {
-                  await api.checkModels(modelModal.account.id);
-                  const result = await api.getAccountModels(modelModal.account.id);
-                  const models = Array.isArray(result?.models) ? result.models : [];
-                  const disabledSet = new Set<string>(models.filter((m: any) => m.disabled).map((m: any) => m.name as string));
-                  setModelModal(s => ({ ...s, loading: false, models, pendingDisabled: disabledSet, siteName: result?.siteName || s.siteName }));
-                  toast.success('模型列表已刷新');
-                } catch (e: any) {
-                  toast.error(e.message || '刷新失败');
-                  setModelModal(s => ({ ...s, loading: false }));
-                }
+                await loadModelModalModels(modelModal.account, {
+                  refreshUpstream: true,
+                  successMessage: '模型列表已刷新',
+                  errorMessage: '刷新失败',
+                });
               }}
               style={{ marginTop: 16 }}
               className="btn btn-soft-primary"
@@ -1930,18 +1966,11 @@ export default function Accounts() {
                 <button
                   onClick={async () => {
                     if (!modelModal.account) return;
-                    setModelModal(s => ({ ...s, loading: true }));
-                    try {
-                      await api.checkModels(modelModal.account.id);
-                      const result = await api.getAccountModels(modelModal.account.id);
-                      const models = Array.isArray(result?.models) ? result.models : [];
-                      const disabledSet = new Set<string>(models.filter((m: any) => m.disabled).map((m: any) => m.name as string));
-                      setModelModal(s => ({ ...s, loading: false, models, pendingDisabled: disabledSet, siteName: result?.siteName || s.siteName }));
-                      toast.success('模型列表已刷新');
-                    } catch (e: any) {
-                      toast.error(e.message || '刷新失败');
-                      setModelModal(s => ({ ...s, loading: false }));
-                    }
+                    await loadModelModalModels(modelModal.account, {
+                      refreshUpstream: true,
+                      successMessage: '模型列表已刷新',
+                      errorMessage: '刷新失败',
+                    });
                   }}
                   disabled={modelModal.saving}
                   className="btn btn-ghost"

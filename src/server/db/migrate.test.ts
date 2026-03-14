@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,5 +66,63 @@ describe('sqlite migrate bootstrap', () => {
     );
 
     verified.close();
+  });
+
+  it('recovers from duplicate-column errors for single-statement migrations', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-recover-'));
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    const migrateModule = await import('./migrate.js');
+    const { __migrateTestUtils } = migrateModule;
+
+    const sqlite = new Database(':memory:');
+    sqlite.exec(`
+      CREATE TABLE account_tokens (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        token_group text
+      );
+    `);
+
+    const tempMigrationsDir = mkdtempSync(join(tmpdir(), 'metapi-migration-files-'));
+    mkdirSync(join(tempMigrationsDir, 'meta'), { recursive: true });
+
+    writeFileSync(
+      join(tempMigrationsDir, 'meta', '_journal.json'),
+      JSON.stringify({
+        entries: [
+          {
+            tag: '0007_account_token_group',
+            when: 1772500000000,
+          },
+        ],
+      }),
+    );
+
+    writeFileSync(
+      join(tempMigrationsDir, '0007_account_token_group.sql'),
+      'ALTER TABLE `account_tokens` ADD `token_group` text;\n',
+    );
+
+    const duplicateColumnError = new Error(
+      "DrizzleError: Failed to run the query 'ALTER TABLE `account_tokens` ADD `token_group` text;\n' duplicate column name: token_group",
+    );
+
+    const recovered = __migrateTestUtils.tryRecoverDuplicateColumnMigrationError(
+      sqlite,
+      tempMigrationsDir,
+      duplicateColumnError,
+    );
+
+    expect(recovered).toBe(true);
+
+    const applied = sqlite
+      .prepare('SELECT hash, created_at FROM __drizzle_migrations')
+      .all() as Array<{ hash: string; created_at: number }>;
+
+    expect(applied).toHaveLength(1);
+    expect(Number(applied[0].created_at)).toBe(1772500000000);
+
+    sqlite.close();
   });
 });

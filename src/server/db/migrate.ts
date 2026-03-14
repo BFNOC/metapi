@@ -26,6 +26,10 @@ type MigrationRecord = {
   hash: string;
 };
 
+type RecoveryMigrationRecord = MigrationRecord & {
+  tag: string;
+};
+
 const VERIFIED_BOOTSTRAP_TAG = '0004_sorting_preferences';
 const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites' },
@@ -108,6 +112,134 @@ function readVerifiedMigrationRecords(migrationsFolder: string): MigrationRecord
   return [];
 }
 
+function splitMigrationStatements(sqlText: string): string[] {
+  return sqlText
+    .split('--> statement-breakpoint')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+}
+
+function normalizeSqlForMatch(sqlText: string): string {
+  return sqlText
+    .replace(/[\n\r\t]+/g, ' ')
+    .replace(/["`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/;+$/g, '')
+    .toLowerCase();
+}
+
+function extractFailedSqlFromError(error: unknown): string | null {
+  const message = normalizeSchemaErrorMessage(error);
+  const matched = message.match(/Failed to run the query '([\s\S]*?)'/i);
+  const sqlText = matched?.[1]?.trim();
+  return sqlText && sqlText.length > 0 ? sqlText : null;
+}
+
+function findMatchingSingleStatementMigration(
+  migrationsFolder: string,
+  failedSqlText: string,
+): RecoveryMigrationRecord | null {
+  const journalPath = resolve(migrationsFolder, 'meta', '_journal.json');
+  const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as MigrationJournalFile;
+  const normalizedFailedSql = normalizeSqlForMatch(failedSqlText);
+
+  for (const entry of journal.entries ?? []) {
+    const migrationSql = readFileSync(resolve(migrationsFolder, `${entry.tag}.sql`), 'utf8');
+    const statements = splitMigrationStatements(migrationSql);
+    if (statements.length !== 1) {
+      continue;
+    }
+
+    if (normalizeSqlForMatch(statements[0]) !== normalizedFailedSql) {
+      continue;
+    }
+
+    return {
+      tag: entry.tag,
+      createdAt: Number(entry.when),
+      hash: createHash('sha256').update(migrationSql).digest('hex'),
+    };
+  }
+
+  return null;
+}
+
+function ensureDrizzleMigrationsTable(sqlite: Database.Database): void {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
+      id SERIAL PRIMARY KEY,
+      hash text NOT NULL,
+      created_at numeric
+    )
+  `);
+}
+
+function markMigrationRecordIfMissing(sqlite: Database.Database, record: MigrationRecord): boolean {
+  ensureDrizzleMigrationsTable(sqlite);
+  const existing = sqlite
+    .prepare('SELECT 1 FROM "__drizzle_migrations" WHERE "hash" = ? LIMIT 1')
+    .get(record.hash);
+  if (existing) {
+    return false;
+  }
+
+  sqlite
+    .prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)')
+    .run(record.hash, record.createdAt);
+
+  return true;
+}
+
+function normalizeSchemaErrorMessage(error: unknown): string {
+  if (typeof error === 'object' && error && 'message' in error) {
+    return String((error as { message?: unknown }).message || '');
+  }
+  return String(error || '');
+}
+
+function isDuplicateColumnError(error: unknown): boolean {
+  const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
+  return lowered.includes('duplicate column')
+    || lowered.includes('already exists')
+    || lowered.includes('duplicate column name');
+}
+
+function tryRecoverDuplicateColumnMigrationError(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+  error: unknown,
+): boolean {
+  if (!isDuplicateColumnError(error)) {
+    return false;
+  }
+
+  const failedSqlText = extractFailedSqlFromError(error);
+  if (!failedSqlText) {
+    return false;
+  }
+
+  const matchedMigration = findMatchingSingleStatementMigration(migrationsFolder, failedSqlText);
+  if (!matchedMigration) {
+    return false;
+  }
+
+  const inserted = markMigrationRecordIfMissing(sqlite, matchedMigration);
+  if (inserted) {
+    console.warn(`[db] Recovered duplicate-column migration by marking ${matchedMigration.tag} as applied.`);
+  }
+  return true;
+}
+
+export const __migrateTestUtils = {
+  splitMigrationStatements,
+  normalizeSqlForMatch,
+  extractFailedSqlFromError,
+  findMatchingSingleStatementMigration,
+  markMigrationRecordIfMissing,
+  tryRecoverDuplicateColumnMigrationError,
+};
+
 function bootstrapLegacyDrizzleMigrations(sqlite: Database.Database, migrationsFolder: string): boolean {
   if (hasRecordedDrizzleMigrations(sqlite)) return false;
   if (!hasVerifiedLegacySchema(sqlite)) return false;
@@ -144,8 +276,17 @@ export function runSqliteMigrations(): void {
 
   const sqlite = new Database(dbPath);
   bootstrapLegacyDrizzleMigrations(sqlite, migrationsFolder);
-  const db = drizzle(sqlite);
-  migrate(db, { migrationsFolder });
+
+  try {
+    migrate(drizzle(sqlite), { migrationsFolder });
+  } catch (error) {
+    if (!tryRecoverDuplicateColumnMigrationError(sqlite, migrationsFolder, error)) {
+      sqlite.close();
+      throw error;
+    }
+    migrate(drizzle(sqlite), { migrationsFolder });
+  }
+
   sqlite.close();
   console.log('Migration complete.');
 }

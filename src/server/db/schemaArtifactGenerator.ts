@@ -45,8 +45,11 @@ function mapColumnType(dialect: Dialect, columnName: string, column: SchemaContr
       case 'real':
         return 'DOUBLE';
       case 'datetime':
+        return 'DATETIME';
       case 'json':
+        return 'JSON';
       case 'text':
+        return column.defaultValue != null ? 'VARCHAR(191)' : 'TEXT';
       default:
         return 'TEXT';
     }
@@ -60,18 +63,29 @@ function mapColumnType(dialect: Dialect, columnName: string, column: SchemaContr
     case 'real':
       return 'DOUBLE PRECISION';
     case 'datetime':
+      return 'TIMESTAMP';
     case 'json':
+      return 'JSONB';
     case 'text':
     default:
       return 'TEXT';
   }
 }
 
-function formatDefaultValue(defaultValue: string | null): string {
-  if (defaultValue == null) {
+function formatDefaultValue(column: SchemaContractColumn): string {
+  if (column.defaultValue == null || column.primaryKey) {
     return '';
   }
-  return ` DEFAULT ${defaultValue}`;
+
+  if (column.logicalType === 'datetime') {
+    return ' DEFAULT CURRENT_TIMESTAMP';
+  }
+
+  if (column.logicalType === 'boolean') {
+    return ` DEFAULT ${column.defaultValue.toLowerCase()}`;
+  }
+
+  return ` DEFAULT ${column.defaultValue}`;
 }
 
 function buildColumnDefinition(
@@ -81,7 +95,7 @@ function buildColumnDefinition(
 ): string {
   const sqlType = mapColumnType(dialect, columnName, column);
   const notNull = column.notNull ? ' NOT NULL' : '';
-  const defaultValue = formatDefaultValue(column.defaultValue);
+  const defaultValue = formatDefaultValue(column);
   const primaryKey = column.primaryKey ? ' PRIMARY KEY' : '';
   return `${quoteIdentifier(dialect, columnName)} ${sqlType}${notNull}${defaultValue}${primaryKey}`;
 }
@@ -91,6 +105,42 @@ function buildForeignKeyClause(dialect: Dialect, foreignKey: SchemaContractForei
   const targetColumns = foreignKey.referencedColumns.map((column) => quoteIdentifier(dialect, column)).join(', ');
   const onDelete = foreignKey.onDelete ? ` ON DELETE ${foreignKey.onDelete.toUpperCase()}` : '';
   return `FOREIGN KEY (${sourceColumns}) REFERENCES ${quoteIdentifier(dialect, foreignKey.referencedTable)}(${targetColumns})${onDelete}`;
+}
+
+function sortTableNamesForCreation(contract: SchemaContract): string[] {
+  const ordered: string[] = [];
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  const tableNames = Object.keys(contract.tables).sort((left, right) => left.localeCompare(right, 'en'));
+
+  const dependencies = new Map<string, string[]>();
+  for (const tableName of tableNames) {
+    const referencedTables = contract.foreignKeys
+      .filter((foreignKey) => foreignKey.table === tableName)
+      .map((foreignKey) => foreignKey.referencedTable)
+      .filter((referencedTable) => referencedTable !== tableName && tableNames.includes(referencedTable))
+      .sort((left, right) => left.localeCompare(right, 'en'));
+    dependencies.set(tableName, [...new Set(referencedTables)]);
+  }
+
+  function visit(tableName: string): void {
+    if (visited.has(tableName) || visiting.has(tableName)) {
+      return;
+    }
+    visiting.add(tableName);
+    for (const dependency of dependencies.get(tableName) ?? []) {
+      visit(dependency);
+    }
+    visiting.delete(tableName);
+    visited.add(tableName);
+    ordered.push(tableName);
+  }
+
+  for (const tableName of tableNames) {
+    visit(tableName);
+  }
+
+  return ordered;
 }
 
 function buildCreateTableStatement(
@@ -131,8 +181,7 @@ function buildIndexStatement(dialect: Dialect, index: SchemaContractIndex, contr
 }
 
 function buildBootstrapSql(dialect: Dialect, contract: SchemaContract): string {
-  const tableStatements = Object.keys(contract.tables)
-    .sort((left, right) => left.localeCompare(right, 'en'))
+  const tableStatements = sortTableNamesForCreation(contract)
     .map((tableName) => buildCreateTableStatement(dialect, tableName, contract));
 
   const uniqueStatements = contract.uniques
@@ -170,8 +219,14 @@ function buildUpgradeSql(
 
   const previousTableNames = new Set(Object.keys(previousContract.tables));
   const currentTableNames = Object.keys(currentContract.tables).sort((left, right) => left.localeCompare(right, 'en'));
-  const addedTableStatements = currentTableNames
-    .filter((tableName) => !previousTableNames.has(tableName))
+  const addedTableNames = currentTableNames.filter((tableName) => !previousTableNames.has(tableName));
+  const addedTablesContract: SchemaContract = {
+    tables: Object.fromEntries(addedTableNames.map((tableName) => [tableName, currentContract.tables[tableName]])),
+    indexes: currentContract.indexes.filter((index) => addedTableNames.includes(index.table)),
+    uniques: currentContract.uniques.filter((unique) => addedTableNames.includes(unique.table)),
+    foreignKeys: currentContract.foreignKeys.filter((foreignKey) => addedTableNames.includes(foreignKey.table)),
+  };
+  const addedTableStatements = sortTableNamesForCreation(addedTablesContract)
     .map((tableName) => buildCreateTableStatement(dialect, tableName, currentContract));
 
   const addColumnStatements: string[] = [];

@@ -89,4 +89,21 @@ describe('schema artifact generator', () => {
     expect(artifacts.postgresUpgrade).toContain('CREATE INDEX "sites_status_idx" ON "sites"');
     expect(artifacts.postgresUpgrade).toContain('CREATE UNIQUE INDEX "accounts_site_email_unique" ON "accounts"');
   });
+
+  it('orders dependent tables safely and emits executable datetime defaults for external dialects', () => {
+    const artifacts = generateDialectArtifacts(readSchemaContract());
+
+    expect(
+      artifacts.mysqlBootstrap.indexOf('CREATE TABLE IF NOT EXISTS `accounts`'),
+    ).toBeLessThan(
+      artifacts.mysqlBootstrap.indexOf('CREATE TABLE IF NOT EXISTS `account_tokens`'),
+    );
+    expect(
+      artifacts.postgresBootstrap.indexOf('CREATE TABLE IF NOT EXISTS "accounts"'),
+    ).toBeLessThan(
+      artifacts.postgresBootstrap.indexOf('CREATE TABLE IF NOT EXISTS "account_tokens"'),
+    );
+    expect(artifacts.mysqlBootstrap).toContain('`created_at` DATETIME DEFAULT CURRENT_TIMESTAMP');
+    expect(artifacts.postgresBootstrap).toContain('"created_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+  });
 });

@@ -21,6 +21,16 @@ export const sites = sqliteTable('sites', {
   statusIdx: index('sites_status_idx').on(table.status),
 }));
 
+export const siteDisabledModels = sqliteTable('site_disabled_models', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  modelName: text('model_name').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteModelUnique: uniqueIndex('site_disabled_models_site_model_unique').on(table.siteId, table.modelName),
+  siteIdIdx: index('site_disabled_models_site_id_idx').on(table.siteId),
+}));
+
 export const accounts = sqliteTable('accounts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),

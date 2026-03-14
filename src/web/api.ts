@@ -24,7 +24,11 @@ async function request(url: string, options: RequestOptions = {}) {
 
   const token = getAuthToken(localStorage);
   if (!token) {
+    const hadToken = !!localStorage.getItem('auth_token');
     clearAuthSession(localStorage);
+    if (hadToken && typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
+      window.location.reload();
+    }
     throw new Error('Session expired');
   }
   const headers: Record<string, string> = {

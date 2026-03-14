@@ -6,6 +6,7 @@ import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import { useIsMobile } from '../components/useIsMobile.js';
+import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import { clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js';
 import { tr } from '../i18n.js';
@@ -90,6 +91,12 @@ export default function Sites() {
   const [expandedSiteIds, setExpandedSiteIds] = useState<number[]>([]);
   const isMobile = useIsMobile(768);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<null | {
+    mode: 'single' | 'batch';
+    siteId?: number;
+    siteName?: string;
+    count?: number;
+  }>(null);
   const lastEditorRef = useRef<SiteEditorState | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<number | null>(null);
@@ -98,7 +105,7 @@ export default function Sites() {
   if (editor) lastEditorRef.current = editor;
   const activeEditor = editor || lastEditorRef.current;
   const isEditing = activeEditor?.mode === 'edit';
-  const isAdding = activeEditor?.mode === 'add';
+  const isAdding = editor?.mode === 'add';
   const formInputStyle = {
     width: '100%',
     padding: '10px 14px',
@@ -310,16 +317,7 @@ export default function Sites() {
   };
 
   const handleDelete = async (site: SiteRow) => {
-    setDeleting(site.id);
-    try {
-      await api.deleteSite(site.id);
-      toast.success(`站点 "${site.name}" 已删除`);
-      await load();
-    } catch (e: any) {
-      toast.error(e.message || '删除失败');
-    } finally {
-      setDeleting(null);
-    }
+    setDeleteConfirm({ mode: 'single', siteId: site.id, siteName: site.name });
   };
 
   const handleToggleStatus = async (site: SiteRow) => {
@@ -389,9 +387,12 @@ export default function Sites() {
     ));
   };
 
-  const runBatchAction = async (action: 'enable' | 'disable' | 'delete' | 'enableSystemProxy' | 'disableSystemProxy') => {
+  const runBatchAction = async (action: 'enable' | 'disable' | 'delete' | 'enableSystemProxy' | 'disableSystemProxy', skipDeleteConfirm = false) => {
     if (selectedSiteIds.length === 0) return;
-    if (action === 'delete' && typeof globalThis.confirm === 'function' && !globalThis.confirm(`确认删除选中的 ${selectedSiteIds.length} 个站点？`)) return;
+    if (action === 'delete' && !skipDeleteConfirm) {
+      setDeleteConfirm({ mode: 'batch', count: selectedSiteIds.length });
+      return;
+    }
 
     setBatchActionLoading(true);
     try {
@@ -413,6 +414,28 @@ export default function Sites() {
     } finally {
       setBatchActionLoading(false);
     }
+  };
+
+  const confirmDelete = async () => {
+    const target = deleteConfirm;
+    if (!target) return;
+
+    setDeleteConfirm(null);
+    if (target.mode === 'single' && target.siteId) {
+      setDeleting(target.siteId);
+      try {
+        await api.deleteSite(target.siteId);
+        toast.success(`站点 "${target.siteName || target.siteId}" 已删除`);
+        await load();
+      } catch (e: any) {
+        toast.error(e.message || '删除失败');
+      } finally {
+        setDeleting(null);
+      }
+      return;
+    }
+
+    await runBatchAction('delete', true);
   };
 
   const handleSiteRowClick = (siteId: number, event: React.MouseEvent<HTMLTableRowElement>) => {
@@ -514,6 +537,18 @@ export default function Sites() {
       <div className="info-tip" style={{ marginBottom: 12 }}>
         站点权重说明：最终站点倍率 = 站点全局权重 × 设置页中下游 API Key 的站点倍率。它会与路由策略因子（基础权重、价值分、成本、余额、使用频次）共同作用。数值越大，该站点在同优先级下越容易被选中。建议范围 0.5-3，默认 1；长期不建议超过 5。
       </div>
+
+      <DeleteConfirmModal
+        open={Boolean(deleteConfirm)}
+        onClose={() => setDeleteConfirm(null)}
+        onConfirm={confirmDelete}
+        title="确认删除站点"
+        confirmText="确认删除"
+        loading={batchActionLoading || (deleteConfirm?.mode === 'single' && deleting === deleteConfirm?.siteId)}
+        description={deleteConfirm?.mode === 'single'
+          ? <>确定要删除站点 <strong>{deleteConfirm.siteName || `#${deleteConfirm.siteId}`}</strong> 吗？</>
+          : <>确定要删除选中的 <strong>{deleteConfirm?.count || 0}</strong> 个站点吗？</>}
+      />
 
       {activeEditor && (
         <CenteredModal

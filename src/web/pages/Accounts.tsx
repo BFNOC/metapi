@@ -6,6 +6,7 @@ import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import { useIsMobile } from '../components/useIsMobile.js';
+import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import {
   buildAddAccountPrereqHint,
   buildVerifyFailureHint,
@@ -91,6 +92,12 @@ export default function Accounts() {
   const [embeddedTokenActions, setEmbeddedTokenActions] = useState<React.ReactNode>(null);
   const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([]);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<null | {
+    mode: 'single' | 'batch';
+    accountId?: number;
+    accountName?: string;
+    count?: number;
+  }>(null);
   const [editingAccount, setEditingAccount] = useState<any | null>(null);
   const [editForm, setEditForm] = useState({
     username: '',
@@ -127,7 +134,8 @@ export default function Accounts() {
       setAccounts(nextAccounts);
       setSelectedAccountIds((current) => current.filter((id) => nextAccounts.some((account: any) => account.id === id)));
     } else {
-      toast.error('加载账号列表失败');
+      const reason = (accountsResult as PromiseRejectedResult).reason as any;
+      toast.error(reason?.message || '加载账号列表失败');
     }
     if (sitesResult.status === 'fulfilled') {
       setSites(sitesResult.value || []);
@@ -586,9 +594,12 @@ export default function Accounts() {
     ));
   };
 
-  const runBatchAccountAction = async (action: 'enable' | 'disable' | 'delete' | 'refreshBalance') => {
+  const runBatchAccountAction = async (action: 'enable' | 'disable' | 'delete' | 'refreshBalance', skipDeleteConfirm = false) => {
     if (selectedAccountIds.length === 0) return;
-    if (action === 'delete' && typeof globalThis.confirm === 'function' && !globalThis.confirm(`确认删除选中的 ${selectedAccountIds.length} 个账号？`)) return;
+    if (action === 'delete' && !skipDeleteConfirm) {
+      setDeleteConfirm({ mode: 'batch', count: selectedAccountIds.length });
+      return;
+    }
 
     setBatchActionLoading(true);
     try {
@@ -610,6 +621,19 @@ export default function Accounts() {
     } finally {
       setBatchActionLoading(false);
     }
+  };
+
+  const confirmDelete = async () => {
+    const target = deleteConfirm;
+    if (!target) return;
+
+    setDeleteConfirm(null);
+    if (target.mode === 'single' && target.accountId) {
+      await withLoading(`delete-${target.accountId}`, () => api.deleteAccount(target.accountId!), '已删除');
+      return;
+    }
+
+    await runBatchAccountAction('delete', true);
   };
 
   const handleAccountRowClick = (accountId: number, event: React.MouseEvent<HTMLTableRowElement>) => {
@@ -830,6 +854,18 @@ export default function Accounts() {
           </button>
         ))}
       </div>
+
+      <DeleteConfirmModal
+        open={Boolean(deleteConfirm)}
+        onClose={() => setDeleteConfirm(null)}
+        onConfirm={confirmDelete}
+        title="确认删除连接"
+        confirmText="确认删除"
+        loading={batchActionLoading || (deleteConfirm?.mode === 'single' && !!actionLoading[`delete-${deleteConfirm?.accountId}`])}
+        description={deleteConfirm?.mode === 'single'
+          ? <>确定要删除连接 <strong>{deleteConfirm.accountName || `#${deleteConfirm.accountId}`}</strong> 吗？</>
+          : <>确定要删除选中的 <strong>{deleteConfirm?.count || 0}</strong> 个连接吗？</>}
+      />
 
       {!isMobile && activeSegment !== 'tokens' && selectedAccountIds.length > 0 && (
         <div className="card" style={{ padding: 12, marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1554,7 +1590,7 @@ export default function Accounts() {
                           <button onClick={() => openEditPanel(a)} className="btn btn-link btn-link-info">
                             编辑
                           </button>
-                          <button onClick={() => withLoading(`delete-${a.id}`, () => api.deleteAccount(a.id), '已删除')} disabled={actionLoading[`delete-${a.id}`]} className="btn btn-link btn-link-danger">
+                          <button onClick={() => setDeleteConfirm({ mode: 'single', accountId: a.id, accountName: resolveAccountDisplayName(a) })} disabled={actionLoading[`delete-${a.id}`]} className="btn btn-link btn-link-danger">
                             {actionLoading[`delete-${a.id}`] ? <span className="spinner spinner-sm" /> : '删除'}
                           </button>
                         </div>
@@ -1740,7 +1776,7 @@ export default function Accounts() {
                             <button onClick={() => openEditPanel(a)} className="btn btn-link btn-link-info">
                               编辑
                             </button>
-                            <button onClick={() => withLoading(`delete-${a.id}`, () => api.deleteAccount(a.id), '已删除')} disabled={actionLoading[`delete-${a.id}`]} className="btn btn-link btn-link-danger">
+                            <button onClick={() => setDeleteConfirm({ mode: 'single', accountId: a.id, accountName: resolveAccountDisplayName(a) })} disabled={actionLoading[`delete-${a.id}`]} className="btn btn-link btn-link-danger">
                               {actionLoading[`delete-${a.id}`] ? <span className="spinner spinner-sm" /> : '删除'}
                             </button>
                           </div>

@@ -11,7 +11,7 @@ describe('buildConfig', () => {
     expect(config.dataDir).toBe('./data');
   });
 
-  it('keeps desktop deployments bound to loopback', () => {
+  it('aligns desktop deployments with server deployments for listen host', () => {
     const config = buildConfig({
       HOST: '0.0.0.0',
       METAPI_DESKTOP: '1',
@@ -19,7 +19,7 @@ describe('buildConfig', () => {
       DATA_DIR: '/tmp/metapi-data',
     });
 
-    expect(config.listenHost).toBe('127.0.0.1');
+    expect(config.listenHost).toBe('0.0.0.0');
     expect(config.port).toBe(4312);
     expect(config.dataDir).toBe('/tmp/metapi-data');
   });

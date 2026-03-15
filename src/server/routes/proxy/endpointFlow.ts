@@ -1,5 +1,5 @@
 import { fetch } from 'undici';
-import { withSiteProxyRequestInit } from '../../services/siteProxy.js';
+import { withExplicitProxyRequestInit, withSiteProxyRequestInit } from '../../services/siteProxy.js';
 import { summarizeUpstreamError } from './upstreamError.js';
 import type { UpstreamEndpoint } from './upstreamEndpoint.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
@@ -69,11 +69,17 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     const request = input.buildRequest(endpoint, endpointIndex);
     const targetUrl = buildUpstreamUrl(input.siteUrl, request.path);
 
-    let response = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
-      method: 'POST',
-      headers: request.headers,
-      body: JSON.stringify(request.body),
-    }));
+    let response = await fetch(targetUrl, input.proxyUrl
+      ? withExplicitProxyRequestInit(input.proxyUrl, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+      })
+      : await withSiteProxyRequestInit(targetUrl, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+      }));
 
     if (response.ok) {
       return {

@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { db, schema } from '../../db/index.js';
+import { db, schema, runtimeDbDialect } from '../../db/index.js';
 import { and, eq, gte, lt, sql } from 'drizzle-orm';
 import { refreshBalance } from '../../services/balanceService.js';
 import { getAdapter } from '../../services/platforms/index.js';
@@ -979,7 +979,7 @@ export async function accountsRoutes(app: FastifyInstance) {
     let verifiedModels: string[] = [];
 
     if (credentialMode === 'apikey') {
-      if (body.skipModelFetch) {
+      if (body.skipModelFetch === true) {
         tokenType = 'apikey';
         accessToken = '';
         if (!apiToken) apiToken = rawAccessToken;
@@ -1104,10 +1104,14 @@ export async function accountsRoutes(app: FastifyInstance) {
     if (tokenType === 'session') {
       try { await refreshBalance(result.id); } catch { }
     }
-    try {
-      await refreshModelsForAccount(result.id);
-      await rebuildTokenRoutesFromAvailability();
-    } catch { }
+
+    // Try to refresh models only if not skipping.
+    if (body.skipModelFetch !== true) {
+      try {
+        await refreshModelsForAccount(result.id);
+        await rebuildTokenRoutesFromAvailability();
+      } catch { }
+    }
 
     const account = await db.select().from(schema.accounts).where(eq(schema.accounts.id, result.id)).get();
     const finalCredentialMode = account ? resolveStoredCredentialMode(account) : resolvedCredentialMode;
@@ -1418,7 +1422,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       return reply.code(400).send({ message: '模型列表不能为空' });
     }
 
-    const normalizedModels = models.map(m => String(m).trim()).filter(m => m.length > 0);
+    const normalizedModels = Array.from(new Set(models.map(m => String(m).trim()).filter(m => m.length > 0)));
     if (normalizedModels.length === 0) {
       return reply.code(400).send({ message: '模型列表不能为空' });
     }
@@ -1433,28 +1437,50 @@ export async function accountsRoutes(app: FastifyInstance) {
 
     try {
       await db.transaction(async (tx) => {
+        const checkedAt = new Date().toISOString();
         for (const modelName of normalizedModels) {
-          const existing = await tx.select()
-            .from(schema.modelAvailability)
-            .where(and(eq(schema.modelAvailability.accountId, accountId), eq(schema.modelAvailability.modelName, modelName)))
-            .get();
+          if (runtimeDbDialect === 'mysql') {
+            const existing = await tx.select()
+              .from(schema.modelAvailability)
+              .where(and(eq(schema.modelAvailability.accountId, accountId), eq(schema.modelAvailability.modelName, modelName)))
+              .get();
 
-          if (existing) {
-            if (!existing.available || !existing.isManual) {
+            if (existing) {
               await tx.update(schema.modelAvailability)
-                .set({ available: true, latencyMs: null, isManual: true, checkedAt: new Date().toISOString() })
+                .set({ available: true, latencyMs: null, isManual: true, checkedAt })
                 .where(eq(schema.modelAvailability.id, existing.id))
                 .run();
+            } else {
+              await tx.insert(schema.modelAvailability).values({
+                accountId,
+                modelName,
+                available: true,
+                isManual: true,
+                latencyMs: null,
+                checkedAt,
+              }).run();
             }
           } else {
-            await tx.insert(schema.modelAvailability).values({
-              accountId,
-              modelName,
-              available: true,
-              isManual: true,
-              latencyMs: null,
-              checkedAt: new Date().toISOString(),
-            }).run();
+            // SQLite / PostgreSQL path
+            await (tx.insert(schema.modelAvailability)
+              .values({
+                accountId,
+                modelName,
+                available: true,
+                isManual: true,
+                latencyMs: null,
+                checkedAt,
+              }) as any)
+              .onConflictDoUpdate({
+                target: [schema.modelAvailability.accountId, schema.modelAvailability.modelName],
+                set: {
+                  available: true,
+                  isManual: true,
+                  latencyMs: null,
+                  checkedAt,
+                },
+              })
+              .run();
           }
         }
       });

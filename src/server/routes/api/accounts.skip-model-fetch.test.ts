@@ -79,8 +79,8 @@ describe('accounts skipModelFetch behavior', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    // getModels is called ONCE asynchronously by refreshModelsForAccount later in the flow
-    expect(getModelsMock).toHaveBeenCalledTimes(1);
+    // getModels should NOT be called when skipModelFetch is true
+    expect(getModelsMock).toHaveBeenCalledTimes(0);
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toHaveLength(1);

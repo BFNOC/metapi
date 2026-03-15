@@ -88,6 +88,21 @@ describe('executeEndpointFlow', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://openrouter.ai/api/v1/chat/completions');
   });
 
+  it('keeps url well-formed when base url includes query/hash', async () => {
+    fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+
+    await executeEndpointFlow({
+      siteUrl: 'https://api.example.com/v1?foo=1#keep',
+      endpointCandidates: ['chat'],
+      buildRequest: () => ({ ...requestFor('/v1/chat/completions'), endpoint: 'chat' }),
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.com/v1/chat/completions?foo=1#keep');
+  });
+
   it('downgrades to next endpoint when policy allows', async () => {
     fetchMock
       .mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({

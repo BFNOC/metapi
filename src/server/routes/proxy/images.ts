@@ -12,6 +12,7 @@ import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { composeProxyLogMessage } from './logPathMeta.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { cloneFormDataWithOverrides, ensureMultipartBufferParser, parseMultipartFormData } from './multipart.js';
+import { buildUpstreamUrl } from './upstreamUrl.js';
 
 const MAX_RETRIES = 2;
 
@@ -48,7 +49,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
 
       excludeChannelIds.push(selected.channel.id);
 
-      const targetUrl = `${selected.site.url}/v1/images/generations`;
+      const targetUrl = buildUpstreamUrl(selected.site.url, '/v1/images/generations');
       const forwardBody = { ...body, model: selected.actualModel };
       const startTime = Date.now();
 
@@ -154,7 +155,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       }
 
       excludeChannelIds.push(selected.channel.id);
-      const targetUrl = `${selected.site.url}/v1/images/edits`;
+      const targetUrl = buildUpstreamUrl(selected.site.url, '/v1/images/edits');
       const startTime = Date.now();
 
       try {

@@ -10,6 +10,7 @@ import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordD
 import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { composeProxyLogMessage } from './logPathMeta.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
+import { buildUpstreamUrl } from './upstreamUrl.js';
 
 const MAX_RETRIES = 2;
 const DEFAULT_SEARCH_MODEL = '__search';
@@ -75,7 +76,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
       }
 
       excludeChannelIds.push(selected.channel.id);
-      const targetUrl = `${selected.site.url}/v1/search`;
+      const targetUrl = buildUpstreamUrl(selected.site.url, '/v1/search');
       const forwardBody = {
         ...body,
         max_results: maxResults,

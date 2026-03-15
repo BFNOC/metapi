@@ -6,6 +6,7 @@ import { reportTokenExpired } from './alertService.js';
 import {
   getAutoReloginConfig,
   getCredentialModeFromExtraConfig,
+  getProxyUrlFromExtraConfig,
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
   resolvePlatformUserId,
@@ -14,7 +15,7 @@ import { decryptAccountPassword } from './accountCredentialService.js';
 import { extractRuntimeHealth, setAccountRuntimeHealth } from './accountHealthService.js';
 import { updateTodayIncomeSnapshot } from './todayIncomeRewardService.js';
 import type { BalanceInfo } from './platforms/base.js';
-import { withSiteProxyRequestInit, withSiteRecordProxyRequestInit } from './siteProxy.js';
+import { withAccountProxyOverride, withSiteProxyRequestInit, withSiteRecordProxyRequestInit } from './siteProxy.js';
 
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
@@ -316,7 +317,10 @@ async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
   const password = decryptAccountPassword(relogin.passwordCipher);
   if (!password) return null;
 
-  const loginResult = await adapter.login(site.url, relogin.username, password);
+  const loginResult = await withAccountProxyOverride(
+    getProxyUrlFromExtraConfig(account.extraConfig),
+    () => adapter.login(site.url, relogin.username, password),
+  );
   if (!loginResult.success || !loginResult.accessToken) return null;
 
   await db.update(schema.accounts)
@@ -393,7 +397,9 @@ export async function refreshBalance(accountId: number) {
     }
   }
 
-  const readBalance = async (token: string) => adapter.getBalance(site.url, token, platformUserId);
+  const accountProxyUrl = getProxyUrlFromExtraConfig(account.extraConfig);
+  const readBalance = async (token: string) => withAccountProxyOverride(accountProxyUrl,
+    () => adapter.getBalance(site.url, token, platformUserId));
   const handleBalanceError = async (err: any) => {
     const message = appendSessionTokenRebindHint(err?.message || 'unknown error');
     setAccountRuntimeHealth(account.id, {

@@ -2,10 +2,11 @@ import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
 import { ensureDefaultTokenForAccount, getPreferredAccountToken } from './accountTokenService.js';
-import { getCredentialModeFromExtraConfig, resolvePlatformUserId } from './accountExtraConfig.js';
+import { getCredentialModeFromExtraConfig, getProxyUrlFromExtraConfig, resolvePlatformUserId } from './accountExtraConfig.js';
 import { invalidateTokenRouterCache } from './tokenRouter.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
+import { withAccountProxyOverride } from './siteProxy.js';
 
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
@@ -129,12 +130,14 @@ export async function refreshModelsForAccount(accountId: number) {
   }
 
   const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+  const accountProxyUrl = getProxyUrlFromExtraConfig(account.extraConfig);
   let discoveredApiToken: string | null = null;
 
   if (!account.apiToken && account.accessToken) {
     try {
       discoveredApiToken = await withTimeout(
-        () => adapter.getApiToken(site.url, account.accessToken, platformUserId),
+        () => withAccountProxyOverride(accountProxyUrl,
+          () => adapter.getApiToken(site.url, account.accessToken, platformUserId)),
         API_TOKEN_DISCOVERY_TIMEOUT_MS,
         `api token discovery timeout (${Math.round(API_TOKEN_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
       );
@@ -200,7 +203,8 @@ export async function refreshModelsForAccount(accountId: number) {
     try {
       models = normalizeModels(
         await withTimeout(
-          () => adapter.getModels(site.url, credential, platformUserId),
+          () => withAccountProxyOverride(accountProxyUrl,
+            () => adapter.getModels(site.url, credential, platformUserId)),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         ),
@@ -227,7 +231,8 @@ export async function refreshModelsForAccount(accountId: number) {
     try {
       models = normalizeModels(
         await withTimeout(
-          () => adapter.getModels(site.url, token.token, platformUserId),
+          () => withAccountProxyOverride(accountProxyUrl,
+            () => adapter.getModels(site.url, token.token, platformUserId)),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         ),

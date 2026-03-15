@@ -204,6 +204,9 @@ jobs:
       - name: Run mysql schema upgrade
         run: npm run test:schema:upgrade
 
+      - name: Run mysql runtime schema bootstrap
+        run: npm run test:schema:runtime
+
   schema-postgres:
     name: Schema Check (Postgres)
     if: github.event_name == 'pull_request'
@@ -245,6 +248,9 @@ jobs:
 
       - name: Run postgres schema upgrade
         run: npm run test:schema:upgrade
+
+      - name: Run postgres runtime schema bootstrap
+        run: npm run test:schema:runtime
 
   docs-build:
     name: Build Docs

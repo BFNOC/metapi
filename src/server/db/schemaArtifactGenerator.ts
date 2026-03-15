@@ -17,8 +17,13 @@ export interface GeneratedDialectArtifacts {
   postgresUpgrade: string;
 }
 
+export type MysqlIndexPrefixRequirementMap = Record<string, Record<string, boolean>>;
+
 type Dialect = 'mysql' | 'postgres';
 type SqlDialect = 'sqlite' | Dialect;
+type SqlGenerationOptions = {
+  mysqlIndexPrefixRequirements?: MysqlIndexPrefixRequirementMap;
+};
 
 function resolveDbDir(): string {
   return dirname(fileURLToPath(import.meta.url));
@@ -34,6 +39,21 @@ function quoteIdentifier(dialect: SqlDialect, identifier: string): string {
 
 function escapeMysqlTextPrefix(columnType: LogicalColumnType): string {
   return columnType === 'text' ? '(191)' : '';
+}
+
+function resolveMysqlIndexPrefix(
+  tableName: string,
+  columnName: string,
+  contract: SchemaContract,
+  options?: SqlGenerationOptions,
+): string {
+  const override = options?.mysqlIndexPrefixRequirements?.[tableName]?.[columnName];
+  if (override !== undefined) {
+    return override ? '(191)' : '';
+  }
+
+  const column = contract.tables[tableName]?.columns[columnName];
+  return column ? escapeMysqlTextPrefix(column.logicalType) : '';
 }
 
 function mapColumnType(dialect: SqlDialect, columnName: string, column: SchemaContractColumn): string {
@@ -177,22 +197,34 @@ function buildCreateTableStatement(
   return `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(dialect, tableName)} (${parts.join(', ')})`;
 }
 
-function buildUniqueIndexStatement(dialect: SqlDialect, uniqueIndex: SchemaContractUnique, contract: SchemaContract): string {
+function buildUniqueIndexStatement(
+  dialect: SqlDialect,
+  uniqueIndex: SchemaContractUnique,
+  contract: SchemaContract,
+  options?: SqlGenerationOptions,
+): string {
   const columns = uniqueIndex.columns
     .map((columnName) => {
-      const column = contract.tables[uniqueIndex.table]?.columns[columnName];
-      const suffix = dialect === 'mysql' && column ? escapeMysqlTextPrefix(column.logicalType) : '';
+      const suffix = dialect === 'mysql'
+        ? resolveMysqlIndexPrefix(uniqueIndex.table, columnName, contract, options)
+        : '';
       return `${quoteIdentifier(dialect, columnName)}${suffix}`;
     })
     .join(', ');
   return `CREATE UNIQUE INDEX ${quoteIdentifier(dialect, uniqueIndex.name)} ON ${quoteIdentifier(dialect, uniqueIndex.table)} (${columns})`;
 }
 
-function buildIndexStatement(dialect: SqlDialect, index: SchemaContractIndex, contract: SchemaContract): string {
+function buildIndexStatement(
+  dialect: SqlDialect,
+  index: SchemaContractIndex,
+  contract: SchemaContract,
+  options?: SqlGenerationOptions,
+): string {
   const columns = index.columns
     .map((columnName) => {
-      const column = contract.tables[index.table]?.columns[columnName];
-      const suffix = dialect === 'mysql' && column ? escapeMysqlTextPrefix(column.logicalType) : '';
+      const suffix = dialect === 'mysql'
+        ? resolveMysqlIndexPrefix(index.table, columnName, contract, options)
+        : '';
       return `${quoteIdentifier(dialect, columnName)}${suffix}`;
     })
     .join(', ');
@@ -317,6 +349,7 @@ export function generateUpgradeSql(
   dialect: SqlDialect,
   currentContract: SchemaContract,
   previousContract?: SchemaContract | null,
+  options?: SqlGenerationOptions,
 ): string {
   if (!previousContract) {
     return `-- no previous schema contract available for ${dialect} additive upgrade generation\n`;
@@ -357,7 +390,7 @@ export function generateUpgradeSql(
     .filter((unique) => !previousUniqueNames.has(unique.name))
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name, 'en'))
-    .map((unique) => buildUniqueIndexStatement(dialect, unique, currentContract));
+    .map((unique) => buildUniqueIndexStatement(dialect, unique, currentContract, options));
 
   const currentUniqueNames = new Set(currentContract.uniques.map((unique) => unique.name));
   const previousIndexNames = new Set(previousContract.indexes.map((index) => index.name));
@@ -366,7 +399,7 @@ export function generateUpgradeSql(
     .filter((index) => !previousIndexNames.has(index.name))
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name, 'en'))
-    .map((index) => buildIndexStatement(dialect, index, currentContract));
+    .map((index) => buildIndexStatement(dialect, index, currentContract, options));
 
   const statements = [...addedTableStatements, ...addColumnStatements, ...uniqueStatements, ...indexStatements];
   if (statements.length === 0) {

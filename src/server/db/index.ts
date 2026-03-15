@@ -8,7 +8,6 @@ import * as schema from './schema.js';
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from './siteSchemaCompatibility.js';
 import { ensureRouteGroupingSchemaCompatibility } from './routeGroupingSchemaCompatibility.js';
 import { ensureProxyFileSchemaCompatibility } from './proxyFileSchemaCompatibility.js';
-import { ensureSharedIndexSchemaCompatibility } from './sharedIndexSchemaCompatibility.js';
 import { executeLegacyCompat, executeLegacyCompatSync } from './legacySchemaCompat.js';
 import { config } from '../config.js';
 import { ensureRuntimeDatabaseReady } from '../runtimeDatabaseBootstrap.js';
@@ -445,12 +444,6 @@ export async function ensureProxyFileCompatibilityColumns(): Promise<void> {
   const inspector = createRuntimeSchemaInspector();
   if (!inspector) return;
   await ensureProxyFileSchemaCompatibility(inspector);
-}
-
-export async function ensureSharedIndexCompatibility(): Promise<void> {
-  const inspector = createRuntimeSchemaInspector();
-  if (!inspector) return;
-  await ensureSharedIndexSchemaCompatibility(inspector);
 }
 
 function ensureRouteGroupingSchema() {

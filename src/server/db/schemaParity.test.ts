@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { SchemaContract } from './schemaContract.js';
+import { SHARED_INDEX_COMPATIBILITY_SPECS } from './sharedIndexSchemaCompatibility.js';
 
 const dbDir = dirname(fileURLToPath(import.meta.url));
 const generatedDir = resolve(dbDir, 'generated');
@@ -62,5 +63,19 @@ describe('database schema parity', () => {
 
     expect(unknownTables).toEqual([]);
     expect(unknownIndexes).toEqual([]);
+  });
+
+  it('does not duplicate contract-defined indexes inside shared index compatibility specs', () => {
+    const contract = JSON.parse(readFileSync(schemaContractPath, 'utf8')) as SchemaContract;
+    const contractIndexNames = new Set([
+      ...contract.indexes.map((index) => index.name),
+      ...contract.uniques.map((unique) => unique.name),
+    ]);
+
+    const duplicatedSpecs = SHARED_INDEX_COMPATIBILITY_SPECS
+      .map((spec) => spec.indexName)
+      .filter((indexName) => contractIndexNames.has(indexName));
+
+    expect(duplicatedSpecs).toEqual([]);
   });
 });

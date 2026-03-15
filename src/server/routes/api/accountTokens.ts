@@ -14,7 +14,11 @@ import {
 import { getAdapter } from '../../services/platforms/index.js';
 import { getCredentialModeFromExtraConfig, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
-import { rebuildTokenRoutesFromAvailability, refreshModelsForAccount } from '../../services/modelService.js';
+import {
+  rebuildTokenRoutesFromAvailability,
+  refreshModelsForAccount,
+  type ModelRefreshResult,
+} from '../../services/modelService.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -38,6 +42,25 @@ type SyncExecutionResult = {
   total: number;
   defaultTokenId?: number | null;
 };
+
+type CoverageRefreshFailureItem = {
+  accountId: number;
+  refreshed: false;
+  status: 'failed';
+  errorCode: 'coverage_refresh_failed';
+  errorMessage: string;
+  modelCount: 0;
+  modelsPreview: string[];
+  reason: 'coverage_refresh_failed';
+  tokenScanned: 0;
+  discoveredByCredential: false;
+  discoveredApiToken: false;
+};
+
+type CoverageRefreshItem = ModelRefreshResult | CoverageRefreshFailureItem;
+type CoverageRefreshRebuildResult =
+  | { success: true; result: Awaited<ReturnType<typeof rebuildTokenRoutesFromAvailability>> }
+  | { success: false; error: string };
 
 const TOKEN_SYNC_TIMEOUT_MS = 15_000;
 const SYNC_ALL_BATCH_SIZE = 3;
@@ -365,11 +388,60 @@ async function refreshCoverageForAccounts(accountIds: number[]) {
     return { refresh: [], rebuild: null };
   }
 
-  const refresh = await Promise.all(
-    uniqueAccountIds.map(async (accountId) => refreshModelsForAccount(accountId)),
-  );
-  const rebuild = await rebuildTokenRoutesFromAvailability();
+  const refresh: CoverageRefreshItem[] = [];
+  for (let offset = 0; offset < uniqueAccountIds.length; offset += SYNC_ALL_BATCH_SIZE) {
+    const batch = uniqueAccountIds.slice(offset, offset + SYNC_ALL_BATCH_SIZE);
+    const settled = await Promise.allSettled(
+      batch.map(async (accountId) => refreshModelsForAccount(accountId)),
+    );
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        refresh.push(result.value);
+        return;
+      }
+
+      const accountId = batch[index] || 0;
+      const errorMessage = result.reason instanceof Error ? result.reason.message : String(result.reason || 'coverage refresh failed');
+      refresh.push(buildCoverageRefreshFailureItem(accountId, errorMessage));
+      console.warn(`[account-tokens] coverage refresh failed for account ${accountId}: ${errorMessage}`);
+    });
+  }
+
+  let rebuild: CoverageRefreshRebuildResult | null = null;
+  try {
+    rebuild = {
+      success: true,
+      result: await rebuildTokenRoutesFromAvailability(),
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error || 'route rebuild failed');
+    rebuild = {
+      success: false,
+      error: errorMessage,
+    };
+    console.warn(`[account-tokens] token route rebuild failed after coverage refresh: ${errorMessage}`);
+  }
+
   return { refresh, rebuild };
+}
+
+function buildCoverageRefreshFailureItem(
+  accountId: number,
+  errorMessage: string,
+): CoverageRefreshFailureItem {
+  return {
+    accountId,
+    refreshed: false,
+    status: 'failed',
+    errorCode: 'coverage_refresh_failed',
+    errorMessage,
+    modelCount: 0,
+    modelsPreview: [],
+    reason: 'coverage_refresh_failed',
+    tokenScanned: 0,
+    discoveredByCredential: false,
+    discoveredApiToken: false,
+  };
 }
 
 export async function accountTokensRoutes(app: FastifyInstance) {

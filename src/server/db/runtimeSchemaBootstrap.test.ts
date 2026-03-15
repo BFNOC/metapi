@@ -2,6 +2,7 @@ import baselineContract from './generated/fixtures/2026-03-14-baseline.schemaCon
 import currentContract from './generated/schemaContract.json' with { type: 'json' };
 import { classifyLegacyCompatMutation } from './legacySchemaCompat.js';
 import { generateUpgradeSql } from './schemaArtifactGenerator.js';
+import type { SchemaContract, SchemaContractColumn } from './schemaContract.js';
 import { describe, expect, it } from 'vitest';
 import {
   __runtimeSchemaBootstrapTestUtils,
@@ -17,6 +18,9 @@ function createStubClient(dialect: RuntimeSchemaDialect, executedSql: string[]):
     commit: async () => {},
     rollback: async () => {},
     execute: async (sqlText: string) => {
+      if (sqlText.trim().toLowerCase().startsWith('select')) {
+        return [];
+      }
       executedSql.push(sqlText);
       return [];
     },
@@ -30,6 +34,16 @@ function createStubClient(dialect: RuntimeSchemaDialect, executedSql: string[]):
       return 0;
     },
     close: async () => {},
+  };
+}
+
+function makeColumn(overrides: Partial<SchemaContractColumn> = {}): SchemaContractColumn {
+  return {
+    logicalType: 'text',
+    notNull: false,
+    defaultValue: null,
+    primaryKey: false,
+    ...overrides,
   };
 }
 
@@ -148,5 +162,73 @@ describe('runtime schema bootstrap', () => {
     });
 
     expect(executedSql).toContain(targetSql);
+  });
+
+  it('adds mysql text prefixes for new indexes when live datetime-like columns are still stored as text', async () => {
+    const executedSql: string[] = [];
+    const minimalContract: SchemaContract = {
+      tables: {
+        proxy_logs: {
+          columns: {
+            downstream_api_key_id: makeColumn({ logicalType: 'integer' }),
+            created_at: makeColumn({ logicalType: 'datetime', defaultValue: "datetime('now')" }),
+          },
+        },
+      },
+      indexes: [
+        {
+          name: 'proxy_logs_downstream_api_key_created_at_idx',
+          table: 'proxy_logs',
+          columns: ['downstream_api_key_id', 'created_at'],
+          unique: false,
+        },
+      ],
+      uniques: [],
+      foreignKeys: [],
+    };
+
+    await ensureRuntimeDatabaseSchema({
+      ...createStubClient('mysql', executedSql),
+      execute: async (sqlText: string) => {
+        if (sqlText.includes('FROM information_schema.columns')) {
+          return [[
+            {
+              table_name: 'proxy_logs',
+              column_name: 'downstream_api_key_id',
+              data_type: 'int',
+              column_type: 'int',
+            },
+            {
+              table_name: 'proxy_logs',
+              column_name: 'created_at',
+              data_type: 'text',
+              column_type: 'text',
+            },
+          ]];
+        }
+
+        executedSql.push(sqlText);
+        return [];
+      },
+      queryScalar: async (sqlText: string, params: unknown[] = []) => {
+        if (sqlText.includes('information_schema.tables')) {
+          return params[0] === 'proxy_logs' ? 1 : 0;
+        }
+        if (sqlText.includes('information_schema.columns')) {
+          return 1;
+        }
+        return 0;
+      },
+    }, {
+      currentContract: minimalContract,
+      liveContract: {
+        ...minimalContract,
+        indexes: [],
+      },
+    });
+
+    expect(executedSql).toContain(
+      'CREATE INDEX `proxy_logs_downstream_api_key_created_at_idx` ON `proxy_logs` (`downstream_api_key_id`, `created_at`(191))',
+    );
   });
 });

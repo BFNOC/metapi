@@ -12,6 +12,61 @@ const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
 const MODEL_REFRESH_BATCH_SIZE = 3;
 
 type ModelRefreshErrorCode = 'timeout' | 'unauthorized' | 'empty_models' | 'unknown';
+type ModelRefreshSkipCode = 'site_disabled' | 'adapter_or_status';
+
+export type ModelRefreshAccountNotFoundResult = {
+  accountId: number;
+  refreshed: false;
+  status: 'failed';
+  errorCode: 'account_not_found';
+  errorMessage: '账号不存在';
+  modelCount: 0;
+  modelsPreview: string[];
+  reason: 'account_not_found';
+};
+
+export type ModelRefreshSkippedResult = {
+  accountId: number;
+  refreshed: false;
+  status: 'skipped';
+  errorCode: ModelRefreshSkipCode;
+  errorMessage: string;
+  modelCount: 0;
+  modelsPreview: string[];
+  reason: ModelRefreshSkipCode;
+};
+
+export type ModelRefreshFailureResult = {
+  accountId: number;
+  refreshed: true;
+  status: 'failed';
+  errorCode: ModelRefreshErrorCode;
+  errorMessage: string;
+  modelCount: 0;
+  modelsPreview: string[];
+  tokenScanned: number;
+  discoveredByCredential: boolean;
+  discoveredApiToken: boolean;
+};
+
+export type ModelRefreshSuccessResult = {
+  accountId: number;
+  refreshed: true;
+  status: 'success';
+  errorCode: null;
+  errorMessage: '';
+  modelCount: number;
+  modelsPreview: string[];
+  tokenScanned: number;
+  discoveredByCredential: boolean;
+  discoveredApiToken: boolean;
+};
+
+export type ModelRefreshResult =
+  | ModelRefreshAccountNotFoundResult
+  | ModelRefreshSkippedResult
+  | ModelRefreshFailureResult
+  | ModelRefreshSuccessResult;
 
 function classifyModelDiscoveryError(message: string): ModelRefreshErrorCode {
   const lowered = message.toLowerCase();
@@ -64,23 +119,88 @@ async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number, timeoutMe
   }
 }
 
-export async function refreshModelsForAccount(accountId: number) {
+function buildAccountNotFoundRefreshResult(accountId: number): ModelRefreshAccountNotFoundResult {
+  return {
+    accountId,
+    refreshed: false,
+    status: 'failed',
+    errorCode: 'account_not_found',
+    errorMessage: '账号不存在',
+    modelCount: 0,
+    modelsPreview: [],
+    reason: 'account_not_found',
+  };
+}
+
+function buildSkippedRefreshResult(
+  accountId: number,
+  code: ModelRefreshSkipCode,
+  errorMessage: string,
+): ModelRefreshSkippedResult {
+  return {
+    accountId,
+    refreshed: false,
+    status: 'skipped',
+    errorCode: code,
+    errorMessage,
+    modelCount: 0,
+    modelsPreview: [],
+    reason: code,
+  };
+}
+
+function buildFailedRefreshResult(input: {
+  accountId: number;
+  errorCode: ModelRefreshErrorCode;
+  errorMessage: string;
+  tokenScanned: number;
+  discoveredByCredential: boolean;
+  discoveredApiToken: boolean;
+}): ModelRefreshFailureResult {
+  return {
+    accountId: input.accountId,
+    refreshed: true,
+    status: 'failed',
+    errorCode: input.errorCode,
+    errorMessage: input.errorMessage,
+    modelCount: 0,
+    modelsPreview: [],
+    tokenScanned: input.tokenScanned,
+    discoveredByCredential: input.discoveredByCredential,
+    discoveredApiToken: input.discoveredApiToken,
+  };
+}
+
+function buildSuccessfulRefreshResult(input: {
+  accountId: number;
+  modelCount: number;
+  modelsPreview: string[];
+  tokenScanned: number;
+  discoveredByCredential: boolean;
+  discoveredApiToken: boolean;
+}): ModelRefreshSuccessResult {
+  return {
+    accountId: input.accountId,
+    refreshed: true,
+    status: 'success',
+    errorCode: null,
+    errorMessage: '',
+    modelCount: input.modelCount,
+    modelsPreview: input.modelsPreview,
+    tokenScanned: input.tokenScanned,
+    discoveredByCredential: input.discoveredByCredential,
+    discoveredApiToken: input.discoveredApiToken,
+  };
+}
+
+export async function refreshModelsForAccount(accountId: number): Promise<ModelRefreshResult> {
   const row = await db.select().from(schema.accounts)
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
     .where(eq(schema.accounts.id, accountId))
     .get();
 
   if (!row) {
-    return {
-      accountId,
-      refreshed: false,
-      status: 'failed',
-      errorCode: 'account_not_found',
-      errorMessage: '账号不存在',
-      modelCount: 0,
-      modelsPreview: [],
-      reason: 'account_not_found',
-    };
+    return buildAccountNotFoundRefreshResult(accountId);
   }
 
   const account = row.accounts;
@@ -103,29 +223,11 @@ export async function refreshModelsForAccount(accountId: number) {
   }
 
   if (isSiteDisabled(site.status)) {
-    return {
-      accountId,
-      refreshed: false,
-      status: 'skipped',
-      errorCode: 'site_disabled',
-      errorMessage: '站点已禁用',
-      modelCount: 0,
-      modelsPreview: [],
-      reason: 'site_disabled',
-    };
+    return buildSkippedRefreshResult(accountId, 'site_disabled', '站点已禁用');
   }
 
   if (!adapter || account.status !== 'active') {
-    return {
-      accountId,
-      refreshed: false,
-      status: 'skipped',
-      errorCode: 'adapter_or_status',
-      errorMessage: '平台不可用或账号未激活',
-      modelCount: 0,
-      modelsPreview: [],
-      reason: 'adapter_or_status',
-    };
+    return buildSkippedRefreshResult(accountId, 'adapter_or_status', '平台不可用或账号未激活');
   }
 
   const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
@@ -266,18 +368,14 @@ export async function refreshModelsForAccount(accountId: number) {
       source: 'model-discovery',
       checkedAt: new Date().toISOString(),
     });
-    return {
+    return buildFailedRefreshResult({
       accountId,
-      refreshed: true,
-      status: 'failed',
       errorCode,
       errorMessage,
-      modelCount: 0,
-      modelsPreview: [],
       tokenScanned: scannedTokenCount,
       discoveredByCredential,
       discoveredApiToken: !!discoveredApiToken,
-    };
+    });
   }
 
   const checkedAt = new Date().toISOString();
@@ -299,26 +397,22 @@ export async function refreshModelsForAccount(accountId: number) {
   });
 
   const modelsPreview = Array.from(accountModels).slice(0, 10);
-  return {
+  return buildSuccessfulRefreshResult({
     accountId,
-    refreshed: true,
-    status: 'success',
-    errorCode: null,
-    errorMessage: '',
     modelCount: accountModels.size,
     modelsPreview,
     tokenScanned: scannedTokenCount,
     discoveredByCredential,
     discoveredApiToken: !!discoveredApiToken,
-  };
+  });
 }
 
-async function refreshModelsForAllActiveAccounts() {
+async function refreshModelsForAllActiveAccounts(): Promise<ModelRefreshResult[]> {
   const accounts = await db.select({ id: schema.accounts.id }).from(schema.accounts)
     .where(eq(schema.accounts.status, 'active'))
     .all();
 
-  const results: any[] = [];
+  const results: ModelRefreshResult[] = [];
   for (let offset = 0; offset < accounts.length; offset += MODEL_REFRESH_BATCH_SIZE) {
     const batch = accounts.slice(offset, offset + MODEL_REFRESH_BATCH_SIZE);
     const batchResults = await Promise.all(batch.map(async (account) => refreshModelsForAccount(account.id)));

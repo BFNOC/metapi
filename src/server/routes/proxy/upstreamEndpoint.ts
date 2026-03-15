@@ -481,20 +481,24 @@ export function buildUpstreamEndpointRequest(input: {
     commonHeaders.Authorization = `Bearer ${input.tokenValue}`;
   }
 
-  const openaiBody = { ...input.openaiBody };
-  if (isGeminiUpstream) {
-    const blacklist = [
-      'frequency_penalty',
-      'presence_penalty',
-      'logit_bias',
-      'logprobs',
-      'top_logprobs',
-      'store',
-    ];
-    for (const key of blacklist) {
-      delete openaiBody[key];
+  const stripGeminiUnsupportedFields = (body: Record<string, unknown>) => {
+    const next = { ...body };
+    if (isGeminiUpstream) {
+      for (const key of [
+        'frequency_penalty',
+        'presence_penalty',
+        'logit_bias',
+        'logprobs',
+        'top_logprobs',
+        'store',
+      ]) {
+        delete next[key];
+      }
     }
-  }
+    return next;
+  };
+
+  const openaiBody = stripGeminiUnsupportedFields(input.openaiBody);
 
   if (input.endpoint === 'messages') {
     const claudeHeaders = input.downstreamFormat === 'claude'
@@ -554,7 +558,7 @@ export function buildUpstreamEndpointRequest(input: {
     const rawBody = (
       input.downstreamFormat === 'responses' && input.responsesOriginalBody
         ? {
-          ...input.responsesOriginalBody,
+          ...stripGeminiUnsupportedFields(input.responsesOriginalBody),
           model: input.modelName,
           stream: input.stream,
         }

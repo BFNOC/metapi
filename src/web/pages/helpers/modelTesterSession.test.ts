@@ -9,6 +9,7 @@ import {
   buildApiPayload,
   buildEmbeddingsRequestEnvelope,
   buildFileUploadRequestEnvelope,
+  buildGeminiNativeConversationProxyEnvelope,
   buildRawProxyRequestEnvelope,
   buildSearchRequestEnvelope,
   collectModelTesterModelNames,
@@ -318,6 +319,39 @@ describe('modelTesterSession', () => {
       systemInstruction: { parts: [{ text: 'system text' }] },
       contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
       generationConfig: { temperature: 0.2, maxOutputTokens: 300 },
+    });
+  });
+
+  it('builds gemini native proxy envelope without loading assistant placeholders', () => {
+    const payload = buildGeminiNativeConversationProxyEnvelope(
+      [
+        { id: 'u1', role: 'user', content: 'hello', createAt: 1 },
+        { id: 'a1', role: 'assistant', content: '', createAt: 2, status: MESSAGE_STATUS.LOADING },
+        { id: 'a2', role: 'assistant', content: 'partial', createAt: 3, status: MESSAGE_STATUS.INCOMPLETE },
+        { id: 'a3', role: 'assistant', content: 'done', createAt: 4, status: MESSAGE_STATUS.COMPLETE },
+      ],
+      {
+        ...DEFAULT_INPUTS,
+        model: 'gemini-2.5-pro',
+        protocol: 'gemini',
+        systemPrompt: 'system text',
+        stream: true,
+      },
+      {
+        ...DEFAULT_PARAMETER_ENABLED,
+        max_tokens: true,
+      },
+    );
+
+    expect(payload.path).toBe('/gemini/v1beta/models/gemini-2.5-pro:generateContent?alt=sse');
+    expect(payload.jobMode).toBe(false);
+    expect(payload.jsonBody).toEqual({
+      systemInstruction: { parts: [{ text: 'system text' }] },
+      contents: [
+        { role: 'user', parts: [{ text: 'hello' }] },
+        { role: 'model', parts: [{ text: 'done' }] },
+      ],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 4096 },
     });
   });
 

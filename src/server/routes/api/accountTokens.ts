@@ -14,6 +14,7 @@ import {
 import { getAdapter } from '../../services/platforms/index.js';
 import { getCredentialModeFromExtraConfig, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
+import { rebuildTokenRoutesFromAvailability, refreshModelsForAccount } from '../../services/modelService.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -337,6 +338,12 @@ async function executeSyncAllAccountTokens() {
     results.push(...batchResults);
   }
 
+  const coverageRefresh = await refreshCoverageForAccounts(
+    results
+      .filter((item) => item.status === 'synced')
+      .map((item) => item.accountId),
+  );
+
   const summary = {
     total: results.length,
     synced: results.filter((item) => item.status === 'synced').length,
@@ -346,7 +353,23 @@ async function executeSyncAllAccountTokens() {
     updated: results.reduce((acc, item) => acc + item.updated, 0),
   };
 
-  return { summary, results };
+  return { summary, results, coverageRefresh };
+}
+
+async function refreshCoverageForAccounts(accountIds: number[]) {
+  const uniqueAccountIds = Array.from(new Set(
+    accountIds.filter((id) => Number.isFinite(id) && id > 0),
+  ));
+
+  if (uniqueAccountIds.length === 0) {
+    return { refresh: [], rebuild: null };
+  }
+
+  const refresh = await Promise.all(
+    uniqueAccountIds.map(async (accountId) => refreshModelsForAccount(accountId)),
+  );
+  const rebuild = await rebuildTokenRoutesFromAvailability();
+  return { refresh, rebuild };
 }
 
 export async function accountTokensRoutes(app: FastifyInstance) {
@@ -416,8 +439,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       } else if (existing.every((token) => !token.isDefault) && (body.enabled ?? true)) {
         await setDefaultToken(created.id);
       }
-
-      return { success: true, token: created };
+      const coverageRefresh = await refreshCoverageForAccounts([body.accountId]);
+      return { success: true, token: created, coverageRefresh };
     }
 
     const account = row.accounts;
@@ -496,6 +519,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (syncResult.status === 'skipped') {
       return reply.code(502).send({ success: false, message: syncResult.message || '站点未返回可用令牌' });
     }
+    const coverageRefresh = await refreshCoverageForAccounts([account.id]);
 
     const preferred = await db.select().from(schema.accountTokens)
       .where(and(eq(schema.accountTokens.accountId, account.id), eq(schema.accountTokens.isDefault, true)))
@@ -509,6 +533,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       success: true,
       createdViaUpstream: true,
       ...syncResult,
+      coverageRefresh,
       token,
     };
   });
@@ -823,7 +848,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (result.status === 'failed') {
       return reply.code(502).send({ success: false, message: result.message || '同步失败' });
     }
-    return { success: true, ...result };
+    const coverageRefresh = await refreshCoverageForAccounts([accountId]);
+    return { success: true, ...result, coverageRefresh };
   });
 
   app.post<{ Body?: { wait?: boolean } }>('/api/account-tokens/sync-all', async (request, reply) => {

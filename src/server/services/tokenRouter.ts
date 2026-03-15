@@ -271,6 +271,13 @@ export function matchesModelPattern(model: string, pattern: string): boolean {
   return minimatch(model, normalizedPattern);
 }
 
+function isExactRouteModelPattern(pattern: string): boolean {
+  const normalizedPattern = (pattern || '').trim();
+  if (!normalizedPattern) return false;
+  if (isRegexModelPattern(normalizedPattern)) return false;
+  return !/[\*\?\[]/.test(normalizedPattern);
+}
+
 function normalizeRouteDisplayName(displayName: string | null | undefined): string {
   return (displayName || '').trim();
 }
@@ -993,10 +1000,12 @@ export class TokenRouter {
       routes = routes.filter((route) => allowSet.has(route.id));
     }
 
-    // Find matching route by model pattern or display alias.
-    const matchedRoute = routes.find((r) => {
-      return matchesRouteRequestModel(model, r);
-    });
+    const matchedRoute = routes.find((route) => (
+      isExactRouteModelPattern(route.modelPattern)
+      && (route.modelPattern || '').trim() === model
+    ))
+      || routes.find((route) => isRouteDisplayNameMatch(model, route.displayName))
+      || routes.find((route) => matchesModelPattern(model, route.modelPattern));
 
     if (!matchedRoute) return null;
 

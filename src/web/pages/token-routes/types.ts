@@ -124,6 +124,17 @@ export type MissingTokenRouteSiteActionItem = {
   accountLabel: string;
 };
 
+export type MissingTokenGroupRouteSiteActionItem = {
+  key: string;
+  siteName: string;
+  accountId: number;
+  accountLabel: string;
+  missingGroups: string[];
+  requiredGroups: string[];
+  availableGroups: string[];
+  groupCoverageUncertain?: boolean;
+};
+
 export type SortableChannelRowProps = {
   channel: RouteChannel;
   decisionCandidate?: RouteDecisionCandidate;

@@ -23,6 +23,7 @@ import type {
   RouteDecision,
   RouteDecisionCandidate,
   MissingTokenRouteSiteActionItem,
+  MissingTokenGroupRouteSiteActionItem,
   RouteRoutingStrategy,
 } from './types.js';
 import type { RouteCandidateView, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
@@ -61,6 +62,7 @@ type RouteCardProps = {
   onChannelDragEnd: (routeId: number, event: DragEndEvent) => void;
   // Missing token hints
   missingTokenSiteItems: MissingTokenRouteSiteActionItem[];
+  missingTokenGroupItems: MissingTokenGroupRouteSiteActionItem[];
   onCreateTokenForMissing: (accountId: number, modelName: string) => void;
   // Add channel
   onAddChannel: (routeId: number) => void;
@@ -104,6 +106,7 @@ function RouteCardInner({
   onDeleteChannel,
   onChannelDragEnd,
   missingTokenSiteItems,
+  missingTokenGroupItems,
   onCreateTokenForMissing,
   onAddChannel,
   expandedSourceGroupMap,
@@ -298,22 +301,43 @@ function RouteCardInner({
       </div>
 
       {/* Missing token hints + Add channel button */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-        {missingTokenSiteItems.length > 0 ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1 }}>
-            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('待注册站点')}:</span>
-            {missingTokenSiteItems.map((item) => (
-              <button
-                key={`missing-${route.id}-${item.key}`}
-                type="button"
-                onClick={() => onCreateTokenForMissing(item.accountId, route.modelPattern)}
-                className="badge badge-info missing-token-site-tag"
-                data-tooltip={`点击跳转到令牌创建（预选 ${item.siteName}/${item.accountLabel}）`}
-                style={{ fontSize: 11, cursor: 'pointer' }}
-              >
-                {item.siteName}
-              </button>
-            ))}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        {(missingTokenSiteItems.length > 0 || missingTokenGroupItems.length > 0) ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+            {missingTokenSiteItems.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('待注册站点')}:</span>
+                {missingTokenSiteItems.map((item) => (
+                  <button
+                    key={`missing-${route.id}-${item.key}`}
+                    type="button"
+                    onClick={() => onCreateTokenForMissing(item.accountId, route.modelPattern)}
+                    className="badge badge-info missing-token-site-tag"
+                    data-tooltip={`点击跳转到令牌创建（预选 ${item.siteName}/${item.accountLabel}）`}
+                    style={{ fontSize: 11, cursor: 'pointer' }}
+                  >
+                    {item.siteName}
+                  </button>
+                ))}
+              </div>
+            )}
+            {missingTokenGroupItems.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('缺少分组')}:</span>
+                {missingTokenGroupItems.map((item) => (
+                  <button
+                    key={`missing-group-${route.id}-${item.key}`}
+                    type="button"
+                    onClick={() => onCreateTokenForMissing(item.accountId, route.modelPattern)}
+                    className="badge badge-warning missing-token-group-tag"
+                    data-tooltip={`缺少分组：${item.missingGroups.join('、') || '未知'}${item.availableGroups.length > 0 ? `；已覆盖：${item.availableGroups.join('、')}` : ''}${item.groupCoverageUncertain ? '；当前分组覆盖存在不确定性' : ''}`}
+                    style={{ fontSize: 11, cursor: 'pointer' }}
+                  >
+                    {item.siteName}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : <div />}
         <button

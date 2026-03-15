@@ -289,6 +289,63 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
+  it('renders missing-token-group hints separately from missing-token site tags', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 1, modelPattern: 'claude-opus-4-6', displayName: 'claude-opus-4-6',
+        displayIcon: null, modelMapping: null, enabled: true,
+        channelCount: 0, enabledChannelCount: 0, siteNames: [],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+    apiMock.getModelTokenCandidates.mockResolvedValue({
+      models: {},
+      modelsMissingTokenGroups: {
+        'claude-opus-4-6': [
+          {
+            accountId: 101,
+            username: 'linuxdo_4677',
+            siteId: 11,
+            siteName: '香草api',
+            missingGroups: ['opus'],
+            requiredGroups: ['default', 'opus'],
+            availableGroups: ['default'],
+          },
+        ],
+      },
+    });
+    apiMock.getRouteChannels.mockResolvedValue([]);
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const expandBtn = root.root.find((node) =>
+        node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
+      );
+      await act(async () => {
+        expandBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root.root);
+      expect(text).toContain('缺少分组');
+      expect(text).toContain('香草api');
+      expect(text).not.toContain('待注册站点');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('maps endpoint types to expected brand icons in filter panel', async () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
@@ -513,6 +570,86 @@ describe('TokenRoutes grouped source models', () => {
       const normalizedText = collectText(root.root).replace(/\s+/g, '');
       expect(normalizedText).toContain('共1条路由');
       expect(normalizedText).not.toContain('共3条路由');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps exact routes visible when a group display name collides with a real exact model', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 1, modelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini',
+        displayIcon: null, modelMapping: null, enabled: true,
+        channelCount: 0, enabledChannelCount: 0, siteNames: [],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 2, modelPattern: 'official/gpt-4o-mini', displayName: 'official/gpt-4o-mini',
+        displayIcon: null, modelMapping: null, enabled: true,
+        channelCount: 0, enabledChannelCount: 0, siteNames: [],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 3, modelPattern: 're:^(gpt-4o-mini|official/gpt-4o-mini)$', displayName: 'gpt-4o-mini',
+        displayIcon: null, modelMapping: null, enabled: true,
+        channelCount: 0, enabledChannelCount: 0, siteNames: [],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('共3条路由');
+      expect(normalizedText).not.toContain('共1条路由');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('searches routes by display name as well as model pattern', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 31, modelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-4-6-group',
+        displayIcon: null, modelMapping: null, enabled: true,
+        channelCount: 0, enabledChannelCount: 0, siteNames: [],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const searchInput = findInputByPlaceholder(root.root, '搜索模型路由');
+      await act(async () => {
+        searchInput.props.onChange({ target: { value: 'claude-4-6-group' } });
+      });
+      await flushMicrotasks();
+
+      const normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('共1条路由');
+      expect(normalizedText).not.toContain('没有匹配的路由');
     } finally {
       root?.unmount();
     }

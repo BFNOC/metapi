@@ -283,6 +283,8 @@ describe('sqlite migrate bootstrap', () => {
       '0007_account_token_group',
       '0008_sqlite_schema_backfill',
       '0009_model_availability_is_manual',
+      '0010_proxy_logs_downstream_api_key',
+      '0011_downstream_api_key_metadata',
     ]);
     const appliedEntries = journalEntries.filter((entry) => !missingTags.has(entry.tag));
 

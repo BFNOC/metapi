@@ -62,6 +62,9 @@ function buildListResponse(overrides?: Partial<{
         username: 'tester',
         siteName: 'main-site',
         siteUrl: 'https://main-site.example.com',
+        downstreamKeyName: '移动端灰度',
+        downstreamKeyGroupName: '项目A',
+        downstreamKeyTags: ['VIP', '灰度'],
       },
     ],
     total: 1,
@@ -102,6 +105,9 @@ describe('ProxyLogs server-driven page', () => {
       username: 'tester',
       siteName: 'main-site',
       siteUrl: 'https://main-site.example.com',
+      downstreamKeyName: '移动端灰度',
+      downstreamKeyGroupName: '项目A',
+      downstreamKeyTags: ['VIP', '灰度'],
       billingDetails: {
         breakdown: {
           inputPerMillion: 1,
@@ -165,6 +171,7 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('全部 12');
       expect(text).toContain('成功 8');
       expect(text).toContain('失败 4');
+      expect(text).toContain('下游 Key: 移动端灰度');
     } finally {
       root?.unmount();
     }
@@ -194,7 +201,7 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       const searchInput = root!.root.find((node) => (
-        node.type === 'input' && node.props.placeholder === '搜索模型名称...'
+        node.type === 'input' && node.props.placeholder === '搜索模型、下游 Key、主分组、标签...'
       ));
       await act(async () => {
         searchInput.props.onChange({ target: { value: 'mini' } });

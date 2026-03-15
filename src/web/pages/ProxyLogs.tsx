@@ -80,6 +80,15 @@ function formatBillingDetailSummary(log: ProxyLogRenderItem) {
   return `模型倍率 ${formatCompactNumber(detail.pricing.modelRatio)}，输出倍率 ${formatCompactNumber(detail.pricing.completionRatio)}，缓存倍率 ${formatCompactNumber(detail.pricing.cacheRatio)}，缓存创建倍率 ${formatCompactNumber(detail.pricing.cacheCreationRatio)}，分组倍率 ${formatCompactNumber(detail.pricing.groupRatio)}`;
 }
 
+function renderDownstreamKeySummary(log: ProxyLogRenderItem) {
+  const parts = [
+    log.downstreamKeyName ? `下游 Key: ${log.downstreamKeyName}` : null,
+    log.downstreamKeyGroupName ? `主分组: ${log.downstreamKeyGroupName}` : null,
+    Array.isArray(log.downstreamKeyTags) && log.downstreamKeyTags.length > 0 ? `标签: ${log.downstreamKeyTags.join(' / ')}` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join('，') : null;
+}
+
 function buildBillingProcessLines(log: ProxyLogRenderItem) {
   const detail = log.billingDetails;
   if (!detail) return [];
@@ -476,7 +485,7 @@ export default function ProxyLogs() {
             setSearchInput(e.target.value);
             setPage(1);
           }}
-          placeholder="搜索模型名称..."
+          placeholder="搜索模型、下游 Key、主分组、标签..."
         />
       </div>
       <button
@@ -585,6 +594,7 @@ export default function ProxyLogs() {
               const pathMeta = parseProxyLogPathMeta(detailLog.errorMessage);
               const billingDetailSummary = detail ? formatBillingDetailSummary(detailLog) : null;
               const billingProcessLines = detail ? buildBillingProcessLines(detailLog) : [];
+              const downstreamKeySummary = renderDownstreamKeySummary(detailLog);
               const isExpanded = expanded === log.id;
 
               return (
@@ -599,6 +609,7 @@ export default function ProxyLogs() {
                 >
                   <MobileField label="时间" value={formatDateTimeLocal(log.createdAt)} />
                   <MobileField label="站点" value={log.siteName || '-'} />
+                  {downstreamKeySummary ? <MobileField label="下游 Key" value={downstreamKeySummary} /> : null}
                   <MobileField label="用时" value={formatLatency(log.latencyMs)} />
                   <MobileField label="输入" value={log.promptTokens?.toLocaleString() || '-'} />
                   <MobileField label="输出" value={log.completionTokens?.toLocaleString() || '-'} />
@@ -612,6 +623,7 @@ export default function ProxyLogs() {
                       {detailState?.loading && <div style={{ color: 'var(--color-text-muted)' }}>加载详情中...</div>}
                       {detailState?.error && <div style={{ color: 'var(--color-danger)' }}>{detailState.error}</div>}
                       {billingDetailSummary && <div style={{ color: 'var(--color-text-muted)' }}>{billingDetailSummary}</div>}
+                      {downstreamKeySummary && <div style={{ color: 'var(--color-text-muted)' }}>{downstreamKeySummary}</div>}
                       {billingProcessLines.length > 0 && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                           {billingProcessLines.map((line, index) => (
@@ -661,6 +673,7 @@ export default function ProxyLogs() {
                 const pathMeta = parseProxyLogPathMeta(detailLog.errorMessage);
                 const billingDetailSummary = detail ? formatBillingDetailSummary(detailLog) : null;
                 const billingProcessLines = detail ? buildBillingProcessLines(detailLog) : [];
+                const downstreamKeySummary = renderDownstreamKeySummary(detailLog);
 
                 return (
                   <React.Fragment key={log.id}>
@@ -686,7 +699,14 @@ export default function ProxyLogs() {
                         {formatDateTimeLocal(log.createdAt)}
                       </td>
                       <td>
-                        <ModelBadge model={log.modelRequested} />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <ModelBadge model={log.modelRequested} />
+                          {downstreamKeySummary ? (
+                            <div style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--color-text-muted)' }}>
+                              {downstreamKeySummary}
+                            </div>
+                          ) : null}
+                        </div>
                       </td>
                       <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
                         {log.siteName || '-'}
@@ -764,6 +784,9 @@ export default function ProxyLogs() {
                                     {detailState?.error && <div style={{ color: 'var(--color-danger)' }}>{detailState.error}</div>}
                                     {billingDetailSummary && (
                                       <div style={{ color: 'var(--color-text-muted)' }}>{billingDetailSummary}</div>
+                                    )}
+                                    {downstreamKeySummary && (
+                                      <div style={{ color: 'var(--color-text-muted)' }}>{downstreamKeySummary}</div>
                                     )}
                                   </div>
                                 </div>

@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { tokenRouter } from '../../services/tokenRouter.js';
-import { db, schema } from '../../db/index.js';
+import { db, hasProxyLogDownstreamApiKeyIdColumn, schema } from '../../db/index.js';
 import { fetch } from 'undici';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
@@ -26,7 +26,7 @@ import { resolveProxyLogBilling } from './proxyBilling.js';
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
 import { anthropicMessagesTransformer } from '../../transformers/anthropic/messages/index.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from './downstreamClientContext.js';
-import { getProxyResourceOwner } from '../../middleware/auth.js';
+import { getProxyAuthContext, getProxyResourceOwner } from '../../middleware/auth.js';
 import {
   ProxyInputFileResolutionError,
   hasNonImageFileInputInOpenAiBody,
@@ -86,6 +86,9 @@ async function handleChatProxyRequest(
     }
   }
   const hasNonImageFileInput = hasNonImageFileInputInOpenAiBody(resolvedOpenAiBody);
+  const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
+  const logDownstreamApiKeyId = downstreamApiKeyId !== null
+    && await hasProxyLogDownstreamApiKeyIdColumn();
 
   const excludeChannelIds: number[] = [];
   let retryCount = 0;
@@ -191,15 +194,16 @@ async function handleChatProxyRequest(
             ctx.errText,
             retryCount,
             downstreamPath,
-            0,
-            0,
-            0,
-            0,
-            null,
-            null,
-            clientContext,
-          );
-        },
+          0,
+          0,
+          0,
+          0,
+          null,
+          null,
+          clientContext,
+          logDownstreamApiKeyId ? downstreamApiKeyId : null,
+        );
+      },
       });
 
       if (!endpointResult.ok) {
@@ -222,6 +226,7 @@ async function handleChatProxyRequest(
           null,
           null,
           clientContext,
+          logDownstreamApiKeyId ? downstreamApiKeyId : null,
         );
 
         if (isTokenExpiredError({ status, message: errText })) {
@@ -340,6 +345,8 @@ async function handleChatProxyRequest(
             estimatedCost,
             billingDetails,
             successfulUpstreamPath,
+            clientContext,
+            logDownstreamApiKeyId ? downstreamApiKeyId : null,
           );
           return;
         }
@@ -389,6 +396,8 @@ async function handleChatProxyRequest(
           estimatedCost,
           billingDetails,
           successfulUpstreamPath,
+          clientContext,
+          logDownstreamApiKeyId ? downstreamApiKeyId : null,
         );
         return;
       }
@@ -447,6 +456,8 @@ async function handleChatProxyRequest(
         estimatedCost,
         billingDetails,
         successfulUpstreamPath,
+        clientContext,
+        logDownstreamApiKeyId ? downstreamApiKeyId : null,
       );
 
       return reply.send(downstreamResponse);
@@ -468,6 +479,7 @@ async function handleChatProxyRequest(
         null,
         null,
         clientContext,
+        logDownstreamApiKeyId ? downstreamApiKeyId : null,
       );
 
       if (retryCount < MAX_RETRIES) {
@@ -506,6 +518,7 @@ async function logProxy(
   billingDetails: unknown = null,
   upstreamPath: string | null = null,
   clientContext: DownstreamClientContext | null = null,
+  downstreamApiKeyId: number | null = null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -523,6 +536,7 @@ async function logProxy(
       routeId: selected.channel.routeId,
       channelId: selected.channel.id,
       accountId: selected.account.id,
+      ...(downstreamApiKeyId !== null ? { downstreamApiKeyId } : {}),
       modelRequested,
       modelActual: selected.actualModel,
       status,

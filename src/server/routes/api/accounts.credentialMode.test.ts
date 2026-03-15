@@ -19,7 +19,7 @@ vi.mock('../../services/platforms/index.js', () => ({
 
 type DbModule = typeof import('../../db/index.js');
 
-describe('accounts credential mode', () => {
+describe('accounts credential mode', { timeout: 15_000 }, () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];

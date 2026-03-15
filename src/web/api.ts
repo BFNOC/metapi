@@ -204,6 +204,10 @@ export type ProxyLogListItem = {
   siteName?: string | null;
   siteUrl?: string | null;
   errorMessage?: string | null;
+  downstreamKeyId?: number | null;
+  downstreamKeyName?: string | null;
+  downstreamKeyGroupName?: string | null;
+  downstreamKeyTags?: string[];
   promptTokens?: number | null;
   completionTokens?: number | null;
   estimatedCost?: number | null;
@@ -401,9 +405,26 @@ export const api = {
   deleteDownstreamApiKey: (id: number) => request(`/api/downstream-keys/${id}`, {
     method: 'DELETE',
   }),
+  batchDownstreamApiKeys: (data: {
+    ids: number[];
+    action: 'enable' | 'disable' | 'delete' | 'resetUsage' | 'updateMetadata';
+    groupOperation?: 'keep' | 'set' | 'clear';
+    groupName?: string;
+    tagOperation?: 'keep' | 'append';
+    tags?: string[];
+  }) =>
+    request('/api/downstream-keys/batch', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   resetDownstreamApiKeyUsage: (id: number) => request(`/api/downstream-keys/${id}/reset-usage`, {
     method: 'POST',
   }),
+  getDownstreamApiKeysSummary: (params?: { range?: '24h' | '7d' | 'all'; status?: 'all' | 'enabled' | 'disabled'; search?: string }) =>
+    request(`/api/downstream-keys/summary${buildQueryString(params)}`),
+  getDownstreamApiKeyOverview: (id: number) => request(`/api/downstream-keys/${id}/overview`),
+  getDownstreamApiKeyTrend: (id: number, params?: { range?: '24h' | '7d' | 'all' }) =>
+    request(`/api/downstream-keys/${id}/trend${buildQueryString(params)}`),
   exportBackup: (type: 'all' | 'accounts' | 'preferences' = 'all') =>
     request(`/api/settings/backup/export?type=${encodeURIComponent(type)}`),
   importBackup: (data: any) =>

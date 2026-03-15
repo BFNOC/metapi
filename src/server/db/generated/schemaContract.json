@@ -319,6 +319,18 @@
           "notNull": false,
           "defaultValue": "datetime('now')",
           "primaryKey": false
+        },
+        "group_name": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "tags": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -608,6 +620,12 @@
         },
         "billing_details": {
           "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "downstream_api_key_id": {
+          "logicalType": "integer",
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
@@ -1266,6 +1284,15 @@
       "name": "proxy_logs_created_at_idx",
       "table": "proxy_logs",
       "columns": [
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "proxy_logs_downstream_api_key_created_at_idx",
+      "table": "proxy_logs",
+      "columns": [
+        "downstream_api_key_id",
         "created_at"
       ],
       "unique": false

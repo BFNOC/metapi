@@ -42,6 +42,7 @@ let sqliteConnection: Database.Database | null = null;
 let mysqlPool: mysql.Pool | null = null;
 let pgPool: pg.Pool | null = null;
 let proxyLogBillingDetailsColumnAvailable: boolean | null = null;
+let proxyLogDownstreamApiKeyIdColumnAvailable: boolean | null = null;
 
 function resolveSqlitePath(): string {
   const raw = (config.dbUrl || '').trim();
@@ -501,6 +502,8 @@ function ensureDownstreamApiKeySchema() {
       name text NOT NULL,
       key text NOT NULL,
       description text,
+      group_name text,
+      tags text,
       enabled integer DEFAULT true,
       expires_at text,
       max_cost real,
@@ -532,6 +535,14 @@ function ensureDownstreamApiKeySchema() {
     CREATE INDEX IF NOT EXISTS downstream_api_keys_expires_at_idx
     ON downstream_api_keys(expires_at);
   `);
+
+  if (!tableColumnExists('downstream_api_keys', 'group_name')) {
+    execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN group_name text;');
+  }
+
+  if (!tableColumnExists('downstream_api_keys', 'tags')) {
+    execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN tags text;');
+  }
 }
 
 function ensureProxyLogBillingDetailsSchema() {
@@ -624,8 +635,87 @@ export async function ensureProxyLogBillingDetailsColumn(): Promise<boolean> {
   }
 }
 
+function ensureProxyLogDownstreamApiKeyIdSchema() {
+  if (!tableExists('proxy_logs')) {
+    return;
+  }
+
+  if (!tableColumnExists('proxy_logs', 'downstream_api_key_id')) {
+    execSqliteLegacyCompat('ALTER TABLE proxy_logs ADD COLUMN downstream_api_key_id integer;');
+  }
+
+  proxyLogDownstreamApiKeyIdColumnAvailable = true;
+}
+
+export async function hasProxyLogDownstreamApiKeyIdColumn(): Promise<boolean> {
+  if (proxyLogDownstreamApiKeyIdColumnAvailable !== null) {
+    return proxyLogDownstreamApiKeyIdColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'sqlite') {
+    proxyLogDownstreamApiKeyIdColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'downstream_api_key_id');
+    return proxyLogDownstreamApiKeyIdColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'mysql') {
+    if (!mysqlPool) return false;
+    const [rows] = await mysqlPool.query('SHOW COLUMNS FROM `proxy_logs` LIKE ?', ['downstream_api_key_id']);
+    proxyLogDownstreamApiKeyIdColumnAvailable = Array.isArray(rows) && rows.length > 0;
+    return proxyLogDownstreamApiKeyIdColumnAvailable;
+  }
+
+  if (!pgPool) return false;
+  const result = await pgPool.query(
+    'SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2 LIMIT 1',
+    ['proxy_logs', 'downstream_api_key_id'],
+  );
+  proxyLogDownstreamApiKeyIdColumnAvailable = Number(result.rowCount || 0) > 0;
+  return proxyLogDownstreamApiKeyIdColumnAvailable;
+}
+
+export async function ensureProxyLogDownstreamApiKeyIdColumn(): Promise<boolean> {
+  if (runtimeDbDialect === 'sqlite') {
+    ensureProxyLogDownstreamApiKeyIdSchema();
+    proxyLogDownstreamApiKeyIdColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'downstream_api_key_id');
+    return proxyLogDownstreamApiKeyIdColumnAvailable;
+  }
+
+  if (await hasProxyLogDownstreamApiKeyIdColumn()) {
+    return true;
+  }
+
+  try {
+    if (runtimeDbDialect === 'mysql') {
+      if (!mysqlPool) return false;
+      await executeLegacyCompat(
+        (statement) => mysqlPool!.query(statement).then(() => undefined),
+        'ALTER TABLE `proxy_logs` ADD COLUMN `downstream_api_key_id` INT NULL',
+      );
+    } else {
+      if (!pgPool) return false;
+      await executeLegacyCompat(
+        (statement) => pgPool!.query(statement).then(() => undefined),
+        'ALTER TABLE "proxy_logs" ADD COLUMN "downstream_api_key_id" INTEGER',
+      );
+    }
+    proxyLogDownstreamApiKeyIdColumnAvailable = true;
+    return true;
+  } catch (error) {
+    if (isDuplicateColumnError(error)) {
+      proxyLogDownstreamApiKeyIdColumnAvailable = true;
+      return true;
+    }
+    proxyLogDownstreamApiKeyIdColumnAvailable = false;
+    console.warn('[db] failed to ensure proxy_logs.downstream_api_key_id column', error);
+    return false;
+  }
+}
+
 function resetSchemaCapabilityCache() {
   proxyLogBillingDetailsColumnAvailable = null;
+  proxyLogDownstreamApiKeyIdColumnAvailable = null;
 }
 
 async function sqliteProxyQuery(sqlText: string, params: unknown[], method: SqlMethod) {

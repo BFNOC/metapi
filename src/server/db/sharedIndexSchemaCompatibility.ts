@@ -266,6 +266,15 @@ export const SHARED_INDEX_COMPATIBILITY_SPECS: SharedIndexCompatibilitySpec[] = 
     },
   },
   {
+    table: 'proxy_logs',
+    indexName: 'proxy_logs_downstream_api_key_created_at_idx',
+    createSql: {
+      sqlite: 'CREATE INDEX IF NOT EXISTS proxy_logs_downstream_api_key_created_at_idx ON proxy_logs (downstream_api_key_id, created_at);',
+      mysql: 'CREATE INDEX `proxy_logs_downstream_api_key_created_at_idx` ON `proxy_logs` (`downstream_api_key_id`, `created_at`(191))',
+      postgres: 'CREATE INDEX IF NOT EXISTS "proxy_logs_downstream_api_key_created_at_idx" ON "proxy_logs" ("downstream_api_key_id", "created_at")',
+    },
+  },
+  {
     table: 'proxy_video_tasks',
     indexName: 'proxy_video_tasks_upstream_video_id_idx',
     createSql: {

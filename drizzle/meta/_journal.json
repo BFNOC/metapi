@@ -64,6 +64,20 @@
       "when": 1773528832339,
       "tag": "0009_model_availability_is_manual",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1773553945763,
+      "tag": "0010_proxy_logs_downstream_api_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1773605400000,
+      "tag": "0011_downstream_api_key_metadata",
+      "breakpoints": true
     }
   ]
 }

@@ -448,12 +448,13 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
   for (const row of snapshot.accounts.proxyLogs) {
     statements.push({
       table: 'proxy_logs',
-      columns: ['id', 'route_id', 'channel_id', 'account_id', 'model_requested', 'model_actual', 'status', 'http_status', 'latency_ms', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost', 'billing_details', 'error_message', 'retry_count', 'created_at'],
+      columns: ['id', 'route_id', 'channel_id', 'account_id', 'downstream_api_key_id', 'model_requested', 'model_actual', 'status', 'http_status', 'latency_ms', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost', 'billing_details', 'error_message', 'retry_count', 'created_at'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.routeId, null),
         asNumber(row.channelId, null),
         asNumber(row.accountId, null),
+        asNumber((row as any).downstreamApiKeyId ?? (row as any).downstream_api_key_id, null),
         asNullableString(row.modelRequested),
         asNullableString(row.modelActual),
         asNullableString(row.status),

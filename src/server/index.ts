@@ -33,6 +33,7 @@ import { normalizeLogCleanupRetentionDays } from './services/logCleanupService.j
 import {
   db,
   ensureProxyFileCompatibilityColumns,
+  ensureProxyLogDownstreamApiKeyIdColumn,
   ensureProxyLogBillingDetailsColumn,
   ensureRouteGroupingCompatibilityColumns,
   ensureSharedIndexCompatibility,
@@ -265,6 +266,7 @@ try {
   await ensureSiteCompatibilityColumns();
   await ensureRouteGroupingCompatibilityColumns();
   await ensureProxyFileCompatibilityColumns();
+  await ensureProxyLogDownstreamApiKeyIdColumn();
   await ensureSharedIndexCompatibility();
   const finalRows = await db.select().from(schema.settings).all();
   const finalMap = toSettingsMap(finalRows);

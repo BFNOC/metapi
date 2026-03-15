@@ -29,6 +29,7 @@ describe('stats proxy logs routes', () => {
 
   beforeEach(async () => {
     await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
   });
@@ -52,6 +53,14 @@ describe('stats proxy logs routes', () => {
       status: 'active',
     }).returning().get();
 
+    const downstreamKey = await db.insert(schema.downstreamApiKeys).values({
+      name: '项目A-Key',
+      key: 'sk-project-a-001',
+      groupName: '项目A',
+      tags: JSON.stringify(['VIP', '灰度']),
+      enabled: true,
+    }).returning().get();
+
     const timestamps = [
       formatUtcSqlDateTime(new Date('2026-03-09T08:00:00.000Z')),
       formatUtcSqlDateTime(new Date('2026-03-09T08:01:00.000Z')),
@@ -62,6 +71,7 @@ describe('stats proxy logs routes', () => {
     await db.insert(schema.proxyLogs).values([
       {
         accountId: account.id,
+        downstreamApiKeyId: downstreamKey.id,
         modelRequested: 'gpt-4o',
         modelActual: 'gpt-4o',
         status: 'success',
@@ -74,6 +84,7 @@ describe('stats proxy logs routes', () => {
       },
       {
         accountId: account.id,
+        downstreamApiKeyId: downstreamKey.id,
         modelRequested: 'gpt-4o-mini',
         modelActual: 'gpt-4o-mini',
         status: 'failed',
@@ -136,6 +147,9 @@ describe('stats proxy logs routes', () => {
     expect(body.items).toHaveLength(1);
     expect(body.items[0]?.modelRequested).toBe('gpt-4o-mini');
     expect(body.items[0]?.status).toBe('failed');
+    expect(body.items[0]?.downstreamKeyName).toBe('项目A-Key');
+    expect(body.items[0]?.downstreamKeyGroupName).toBe('项目A');
+    expect(body.items[0]?.downstreamKeyTags).toEqual(['VIP', '灰度']);
     expect(body.items[0]).not.toHaveProperty('billingDetails');
     expect(body.summary).toEqual({
       totalCount: 3,
@@ -160,8 +174,17 @@ describe('stats proxy logs routes', () => {
       status: 'active',
     }).returning().get();
 
+    const downstreamKey = await db.insert(schema.downstreamApiKeys).values({
+      name: 'detail-key',
+      key: 'sk-detail-key-001',
+      groupName: '测试项目',
+      tags: JSON.stringify(['回归', '日志']),
+      enabled: true,
+    }).returning().get();
+
     const inserted = await db.insert(schema.proxyLogs).values({
       accountId: account.id,
+      downstreamApiKeyId: downstreamKey.id,
       modelRequested: 'gpt-5',
       modelActual: 'gpt-5',
       status: 'success',
@@ -188,16 +211,91 @@ describe('stats proxy logs routes', () => {
       id: number;
       siteName: string | null;
       username: string | null;
+      downstreamKeyName: string | null;
+      downstreamKeyGroupName: string | null;
+      downstreamKeyTags: string[];
       billingDetails: Record<string, unknown> | null;
     };
 
     expect(body.id).toBe(logId);
     expect(body.siteName).toBe('detail-site');
     expect(body.username).toBe('detail-user');
+    expect(body.downstreamKeyName).toBe('detail-key');
+    expect(body.downstreamKeyGroupName).toBe('测试项目');
+    expect(body.downstreamKeyTags).toEqual(['回归', '日志']);
     expect(body.billingDetails).toMatchObject({
       breakdown: { totalCost: 0.12 },
       usage: { promptTokens: 100, completionTokens: 20 },
     });
+  });
+
+  it('supports searching proxy logs by downstream key metadata', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'meta-site',
+      url: 'https://meta.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'meta-user',
+      accessToken: 'meta-token',
+      status: 'active',
+    }).returning().get();
+
+    const alphaKey = await db.insert(schema.downstreamApiKeys).values({
+      name: '渠道-A',
+      key: 'sk-channel-a',
+      groupName: '项目甲',
+      tags: JSON.stringify(['商务', 'VIP']),
+      enabled: true,
+    }).returning().get();
+
+    const betaKey = await db.insert(schema.downstreamApiKeys).values({
+      name: '渠道-B',
+      key: 'sk-channel-b',
+      groupName: '项目乙',
+      tags: JSON.stringify(['灰度']),
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.proxyLogs).values([
+      {
+        accountId: account.id,
+        downstreamApiKeyId: alphaKey.id,
+        modelRequested: 'gpt-4o',
+        modelActual: 'gpt-4o',
+        status: 'success',
+        totalTokens: 12,
+        estimatedCost: 0.12,
+        createdAt: formatUtcSqlDateTime(new Date('2026-03-09T10:00:00.000Z')),
+      },
+      {
+        accountId: account.id,
+        downstreamApiKeyId: betaKey.id,
+        modelRequested: 'gpt-4.1-mini',
+        modelActual: 'gpt-4.1-mini',
+        status: 'success',
+        totalTokens: 22,
+        estimatedCost: 0.22,
+        createdAt: formatUtcSqlDateTime(new Date('2026-03-09T10:05:00.000Z')),
+      },
+    ]).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/stats/proxy-logs?search=%E9%A1%B9%E7%9B%AE%E7%94%B2',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      total: number;
+      items: Array<Record<string, unknown>>;
+    };
+
+    expect(body.total).toBe(1);
+    expect(body.items[0]?.downstreamKeyName).toBe('渠道-A');
+    expect(body.items[0]?.downstreamKeyGroupName).toBe('项目甲');
   });
 
   it('filters proxy logs by site and time range', async () => {

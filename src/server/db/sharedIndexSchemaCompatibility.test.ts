@@ -38,6 +38,7 @@ describe('ensureSharedIndexSchemaCompatibility', () => {
       expectedSql: [
         'CREATE UNIQUE INDEX `model_availability_account_model_unique` ON `model_availability` (`account_id`, `model_name`(191))',
         'CREATE INDEX `proxy_logs_status_created_at_idx` ON `proxy_logs` (`status`, `created_at`(191))',
+        'CREATE INDEX `proxy_logs_downstream_api_key_created_at_idx` ON `proxy_logs` (`downstream_api_key_id`, `created_at`(191))',
         'CREATE INDEX `events_created_at_idx` ON `events` (`created_at`(191))',
       ],
     },
@@ -46,6 +47,7 @@ describe('ensureSharedIndexSchemaCompatibility', () => {
       expectedSql: [
         'CREATE UNIQUE INDEX IF NOT EXISTS "model_availability_account_model_unique" ON "model_availability" ("account_id", "model_name")',
         'CREATE INDEX IF NOT EXISTS "proxy_logs_status_created_at_idx" ON "proxy_logs" ("status", "created_at")',
+        'CREATE INDEX IF NOT EXISTS "proxy_logs_downstream_api_key_created_at_idx" ON "proxy_logs" ("downstream_api_key_id", "created_at")',
         'CREATE INDEX IF NOT EXISTS "events_created_at_idx" ON "events" ("created_at")',
       ],
     },

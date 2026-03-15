@@ -1,1 +1,2 @@
-ALTER TABLE `model_availability` ADD COLUMN `is_manual` BOOLEAN DEFAULT false;
+ALTER TABLE `downstream_api_keys` ADD COLUMN `group_name` TEXT;
+ALTER TABLE `downstream_api_keys` ADD COLUMN `tags` TEXT;

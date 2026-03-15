@@ -1,9 +1,10 @@
-import { db, schema, hasProxyLogBillingDetailsColumn } from '../db/index.js';
+import { db, schema, hasProxyLogBillingDetailsColumn, hasProxyLogDownstreamApiKeyIdColumn } from '../db/index.js';
 
 export type ProxyLogInsertInput = {
   routeId?: number | null;
   channelId?: number | null;
   accountId?: number | null;
+  downstreamApiKeyId?: number | null;
   modelRequested?: string | null;
   modelActual?: string | null;
   status?: string | null;
@@ -25,6 +26,7 @@ function buildProxyLogBaseSelectFields() {
     routeId: schema.proxyLogs.routeId,
     channelId: schema.proxyLogs.channelId,
     accountId: schema.proxyLogs.accountId,
+    downstreamApiKeyId: schema.proxyLogs.downstreamApiKeyId,
     modelRequested: schema.proxyLogs.modelRequested,
     modelActual: schema.proxyLogs.modelActual,
     status: schema.proxyLogs.status,
@@ -108,6 +110,20 @@ export function isMissingBillingDetailsColumnError(error: unknown): boolean {
     );
 }
 
+export function isMissingDownstreamApiKeyIdColumnError(error: unknown): boolean {
+  const message = typeof error === 'object' && error && 'message' in error
+    ? String((error as { message?: unknown }).message || '')
+    : String(error || '');
+  const lowered = message.toLowerCase();
+  return lowered.includes('downstream_api_key_id')
+    && (
+      lowered.includes('does not exist')
+      || lowered.includes('unknown column')
+      || lowered.includes('no such column')
+      || lowered.includes('has no column named')
+    );
+}
+
 export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> {
   const baseValues = {
     routeId: input.routeId ?? null,
@@ -131,16 +147,43 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
     : JSON.stringify(input.billingDetails);
   const includeBillingDetails = serializedBillingDetails !== null
     && await hasProxyLogBillingDetailsColumn();
+  const includeDownstreamApiKeyId = input.downstreamApiKeyId != null
+    && await hasProxyLogDownstreamApiKeyIdColumn();
 
   try {
     await db.insert(schema.proxyLogs).values(
-      includeBillingDetails
-        ? { ...baseValues, billingDetails: serializedBillingDetails }
+      includeBillingDetails || includeDownstreamApiKeyId
+        ? {
+          ...baseValues,
+          ...(includeBillingDetails ? { billingDetails: serializedBillingDetails } : {}),
+          ...(includeDownstreamApiKeyId ? { downstreamApiKeyId: input.downstreamApiKeyId } : {}),
+        }
         : baseValues,
     ).run();
   } catch (error) {
     if (includeBillingDetails && isMissingBillingDetailsColumnError(error)) {
-      await db.insert(schema.proxyLogs).values(baseValues).run();
+      try {
+        await db.insert(schema.proxyLogs).values(
+          includeDownstreamApiKeyId
+            ? { ...baseValues, downstreamApiKeyId: input.downstreamApiKeyId }
+            : baseValues,
+        ).run();
+      } catch (fallbackError) {
+        if (includeDownstreamApiKeyId && isMissingDownstreamApiKeyIdColumnError(fallbackError)) {
+          await db.insert(schema.proxyLogs).values(baseValues).run();
+          return;
+        }
+        throw fallbackError;
+      }
+      return;
+    }
+
+    if (includeDownstreamApiKeyId && isMissingDownstreamApiKeyIdColumnError(error)) {
+      await db.insert(schema.proxyLogs).values(
+        includeBillingDetails
+          ? { ...baseValues, billingDetails: serializedBillingDetails }
+          : baseValues,
+      ).run();
       return;
     }
     throw error;

@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { fetch } from 'undici';
-import { db, schema } from '../../db/index.js';
+import { db, hasProxyLogDownstreamApiKeyIdColumn, schema } from '../../db/index.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
@@ -19,7 +19,7 @@ import { composeProxyLogMessage } from './logPathMeta.js';
 import { executeEndpointFlow, withUpstreamPath } from './endpointFlow.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
-import { getProxyResourceOwner } from '../../middleware/auth.js';
+import { getProxyAuthContext, getProxyResourceOwner } from '../../middleware/auth.js';
 import { detectDownstreamClientContext, isCodexResponsesSurface, type DownstreamClientContext } from './downstreamClientContext.js';
 import { normalizeInputFileBlock } from '../../transformers/shared/inputFile.js';
 import {
@@ -147,6 +147,9 @@ export async function responsesProxyRoute(app: FastifyInstance) {
     }
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
+    const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
+    const logDownstreamApiKeyId = downstreamApiKeyId !== null
+      && await hasProxyLogDownstreamApiKeyIdColumn();
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
@@ -290,6 +293,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
               null,
               null,
               clientContext,
+              logDownstreamApiKeyId ? downstreamApiKeyId : null,
             );
           },
         });
@@ -314,6 +318,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
             null,
             null,
             clientContext,
+            logDownstreamApiKeyId ? downstreamApiKeyId : null,
           );
 
           if (isTokenExpiredError({ status, message: errText })) {
@@ -405,6 +410,8 @@ export async function responsesProxyRoute(app: FastifyInstance) {
             selected, requestedModel, 'success', 200, latency, null, retryCount, downstreamPath,
             resolvedUsage.promptTokens, resolvedUsage.completionTokens, resolvedUsage.totalTokens, estimatedCost, billingDetails,
             successfulUpstreamPath,
+            clientContext,
+            logDownstreamApiKeyId ? downstreamApiKeyId : null,
           );
           return;
         }
@@ -458,6 +465,8 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           selected, requestedModel, 'success', 200, latency, null, retryCount, downstreamPath,
           resolvedUsage.promptTokens, resolvedUsage.completionTokens, resolvedUsage.totalTokens, estimatedCost, billingDetails,
           successfulUpstreamPath,
+          clientContext,
+          logDownstreamApiKeyId ? downstreamApiKeyId : null,
         );
         return reply.send(downstreamData);
       } catch (err: any) {
@@ -478,6 +487,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           null,
           null,
           clientContext,
+          logDownstreamApiKeyId ? downstreamApiKeyId : null,
         );
         if (retryCount < MAX_RETRIES) {
           retryCount += 1;
@@ -516,6 +526,7 @@ async function logProxy(
   billingDetails: unknown = null,
   upstreamPath: string | null = null,
   clientContext: DownstreamClientContext | null = null,
+  downstreamApiKeyId: number | null = null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -533,6 +544,7 @@ async function logProxy(
       routeId: selected.channel.routeId,
       channelId: selected.channel.id,
       accountId: selected.account.id,
+      ...(downstreamApiKeyId !== null ? { downstreamApiKeyId } : {}),
       modelRequested,
       modelActual: selected.actualModel,
       status,

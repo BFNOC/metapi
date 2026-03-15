@@ -110,6 +110,7 @@ export default function Accounts() {
     isPinned: false,
     refreshToken: '',
     tokenExpiresAt: '',
+    proxyUrl: '',
   });
   const [savingEdit, setSavingEdit] = useState(false);
   const [rebindTarget, setRebindTarget] = useState<any | null>(null);
@@ -664,6 +665,10 @@ export default function Accounts() {
 
   const openEditPanel = (account: any) => {
     const managedAuth = extractManagedSub2ApiAuth(account);
+    const proxyUrl = (() => {
+      try { return JSON.parse(account?.extraConfig || '{}')?.proxyUrl || ''; }
+      catch { return ''; }
+    })();
     closeAddPanel();
     setRebindTarget(null);
     setEditingAccount(account);
@@ -677,6 +682,7 @@ export default function Accounts() {
       isPinned: !!account?.isPinned,
       refreshToken: managedAuth.refreshToken,
       tokenExpiresAt: managedAuth.tokenExpiresAt,
+      proxyUrl,
     });
   };
 
@@ -699,6 +705,7 @@ export default function Accounts() {
         isPinned: editForm.isPinned,
         refreshToken: editForm.refreshToken.trim() || null,
         tokenExpiresAt: editForm.tokenExpiresAt.trim() ? Number.parseInt(editForm.tokenExpiresAt.trim(), 10) : null,
+        proxyUrl: editForm.proxyUrl.trim() || null,
       });
       toast.success('账号已更新');
       closeEditPanel();
@@ -1534,6 +1541,15 @@ export default function Accounts() {
                   onChange={(e) => setEditForm((prev) => ({ ...prev, apiToken: e.target.value }))}
                   style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
                 />
+                <input
+                  placeholder="代理地址（可选，如 http://127.0.0.1:7890）"
+                  value={editForm.proxyUrl}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, proxyUrl: e.target.value }))}
+                  style={inputStyle}
+                />
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: -4 }}>
+                  覆盖站点和系统代理，留空则使用站点设置。支持 http/https/socks5 协议。
+                </div>
                 {((editingAccount?.site?.platform || '').toLowerCase() === 'sub2api') && (
                   <>
                     <input
@@ -1581,6 +1597,9 @@ export default function Accounts() {
                             <span className={`badge ${connectionMode === 'apikey' ? 'badge-warning' : 'badge-info'}`} style={{ fontSize: 10 }}>
                               {connectionMode === 'apikey' ? 'API Key' : 'Session'}
                             </span>
+                            {(() => { try { return JSON.parse(a.extraConfig || '{}')?.proxyUrl; } catch { return null; } })() && (
+                              <span className="badge badge-outline" style={{ fontSize: 10 }}>代理</span>
+                            )}
                           </div>
                         )}
                       >
@@ -1800,6 +1819,9 @@ export default function Accounts() {
                             <span className={`badge ${connectionMode === 'apikey' ? 'badge-warning' : 'badge-info'}`} style={{ fontSize: 10 }}>
                               {connectionMode === 'apikey' ? 'API Key' : 'Session'}
                             </span>
+                            {(() => { try { return JSON.parse(a.extraConfig || '{}')?.proxyUrl; } catch { return null; } })() && (
+                              <span className="badge badge-outline" style={{ fontSize: 10 }}>代理</span>
+                            )}
                           </div>
                         </td>
                         <td>

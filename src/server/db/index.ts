@@ -640,17 +640,6 @@ export async function ensureProxyLogBillingDetailsColumn(): Promise<boolean> {
   }
 }
 
-function ensureProxyLogDownstreamApiKeyIdSchema() {
-  if (!tableExists('proxy_logs')) {
-    return;
-  }
-
-  if (!tableColumnExists('proxy_logs', 'downstream_api_key_id')) {
-    execSqliteLegacyCompat('ALTER TABLE proxy_logs ADD COLUMN downstream_api_key_id integer;');
-  }
-
-  proxyLogDownstreamApiKeyIdColumnAvailable = true;
-}
 export async function hasProxyLogDownstreamApiKeyIdColumn(): Promise<boolean> {
   if (proxyLogDownstreamApiKeyIdColumnAvailable !== null) {
     return proxyLogDownstreamApiKeyIdColumnAvailable;

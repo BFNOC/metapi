@@ -7,13 +7,16 @@ import {
   ensureLegacySchemaCompatibility,
   type LegacySchemaCompatInspector,
 } from './legacySchemaCompat.js';
-import { generateBootstrapSql, resolveGeneratedArtifactPath } from './schemaArtifactGenerator.js';
-import type { SchemaContract } from './schemaContract.js';
+import { generateBootstrapSql, generateUpgradeSql } from './schemaArtifactGenerator.js';
+import { introspectLiveSchema } from './schemaIntrospection.js';
+import { resolveGeneratedSchemaContractPath, type SchemaContract } from './schemaContract.js';
 
 export type RuntimeSchemaDialect = 'sqlite' | 'mysql' | 'postgres';
 
 export interface RuntimeSchemaClient {
   dialect: RuntimeSchemaDialect;
+  connectionString: string;
+  ssl: boolean;
   begin(): Promise<void>;
   commit(): Promise<void>;
   rollback(): Promise<void>;
@@ -42,10 +45,13 @@ function isExistingSchemaObjectError(error: unknown): boolean {
     : '';
 
   return code === 'ER_DUP_KEYNAME'
+    || code === 'ER_DUP_FIELDNAME'
     || code === 'ER_TABLE_EXISTS_ERROR'
     || code === '42P07'
+    || code === '42701'
     || code === '42710'
     || lowered.includes('already exists')
+    || lowered.includes('duplicate column')
     || lowered.includes('duplicate key name')
     || lowered.includes('relation') && lowered.includes('already exists');
 }
@@ -144,12 +150,7 @@ function splitSqlStatements(sqlText: string): string[] {
 }
 
 function readSchemaContract(): SchemaContract {
-  return JSON.parse(readFileSync(resolveGeneratedArtifactPath('schemaContract.json'), 'utf8')) as SchemaContract;
-}
-
-function readGeneratedBootstrapStatements(dialect: Exclude<RuntimeSchemaDialect, 'sqlite'>): string[] {
-  const filename = dialect === 'mysql' ? 'mysql.bootstrap.sql' : 'postgres.bootstrap.sql';
-  return splitSqlStatements(readFileSync(resolveGeneratedArtifactPath(filename), 'utf8'));
+  return JSON.parse(readFileSync(resolveGeneratedSchemaContractPath(), 'utf8')) as SchemaContract;
 }
 
 async function createPostgresClient(connectionString: string, ssl: boolean): Promise<RuntimeSchemaClient> {
@@ -162,6 +163,8 @@ async function createPostgresClient(connectionString: string, ssl: boolean): Pro
 
   return {
     dialect: 'postgres',
+    connectionString,
+    ssl,
     begin: async () => { await client.query('BEGIN'); },
     commit: async () => { await client.query('COMMIT'); },
     rollback: async () => { await client.query('ROLLBACK'); },
@@ -185,6 +188,8 @@ async function createMySqlClient(connectionString: string, ssl: boolean): Promis
 
   return {
     dialect: 'mysql',
+    connectionString,
+    ssl,
     begin: async () => { await connection.beginTransaction(); },
     commit: async () => { await connection.commit(); },
     rollback: async () => { await connection.rollback(); },
@@ -210,6 +215,8 @@ async function createSqliteClient(connectionString: string): Promise<RuntimeSche
 
   return {
     dialect: 'sqlite',
+    connectionString,
+    ssl: false,
     begin: async () => { sqlite.exec('BEGIN'); },
     commit: async () => { sqlite.exec('COMMIT'); },
     rollback: async () => { sqlite.exec('ROLLBACK'); },
@@ -238,10 +245,43 @@ export async function createRuntimeSchemaClient(input: RuntimeSchemaConnectionIn
   return createSqliteClient(input.connectionString);
 }
 
-export async function ensureRuntimeDatabaseSchema(client: RuntimeSchemaClient): Promise<void> {
+type EnsureRuntimeDatabaseSchemaOptions = {
+  currentContract?: SchemaContract;
+  liveContract?: SchemaContract;
+};
+
+async function resolveLiveContract(client: RuntimeSchemaClient, liveContract?: SchemaContract): Promise<SchemaContract> {
+  if (liveContract) {
+    return liveContract;
+  }
+
+  return introspectLiveSchema({
+    dialect: client.dialect,
+    connectionString: client.connectionString,
+    ssl: client.ssl,
+  });
+}
+
+function buildExternalUpgradeStatements(
+  dialect: Exclude<RuntimeSchemaDialect, 'sqlite'>,
+  currentContract: SchemaContract,
+  liveContract: SchemaContract,
+): string[] {
+  return splitSqlStatements(generateUpgradeSql(dialect, currentContract, liveContract));
+}
+
+export async function ensureRuntimeDatabaseSchema(
+  client: RuntimeSchemaClient,
+  options: EnsureRuntimeDatabaseSchemaOptions = {},
+): Promise<void> {
+  const currentContract = options.currentContract ?? readSchemaContract();
   const statements = client.dialect === 'sqlite'
-    ? splitSqlStatements(generateBootstrapSql('sqlite', readSchemaContract()))
-    : readGeneratedBootstrapStatements(client.dialect);
+    ? splitSqlStatements(generateBootstrapSql('sqlite', currentContract))
+    : buildExternalUpgradeStatements(
+      client.dialect,
+      currentContract,
+      await resolveLiveContract(client, options.liveContract),
+    );
 
   for (const sqlText of statements) {
     await executeBootstrapStatement(client, sqlText);
@@ -260,5 +300,6 @@ export async function bootstrapRuntimeDatabaseSchema(input: RuntimeSchemaConnect
 }
 
 export const __runtimeSchemaBootstrapTestUtils = {
-  readGeneratedBootstrapStatements,
+  splitSqlStatements,
+  buildExternalUpgradeStatements,
 };

@@ -84,6 +84,10 @@ docker compose up -d
 | 数据目录 | 保存在 `app.getPath('userData')/data`，不是仓库里的 `./data` |
 | 日志目录 | 保存在 `app.getPath('userData')/logs`；托盘菜单提供 `Open Logs Folder` |
 
+> [!IMPORTANT]
+> 桌面版首次启动时，如果你没有额外注入 `AUTH_TOKEN`，默认管理员令牌就是 `change-me-admin-token`。
+> 首次登录后建议立即到「设置」里改成你自己的强密码令牌。
+
 > [!TIP]
 > - Windows 下常见路径是 `%APPDATA%\Metapi\data` 和 `%APPDATA%\Metapi\logs`。
 > - 如果没有额外覆盖端口，本机其他客户端可以直接连接 `http://127.0.0.1:4000`。

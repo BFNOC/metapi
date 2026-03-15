@@ -191,6 +191,10 @@ docker run -d --name metapi \
 - 托盘菜单支持重新打开窗口、重启后端、开机自启
 - 支持基于 GitHub Releases 的应用内更新检查
 
+> [!IMPORTANT]
+> 桌面版首次启动时，如果没有显式注入 `AUTH_TOKEN`，管理员登录令牌默认是 `change-me-admin-token`。
+> 这只适合本机初始调试使用，首次登录后应立即修改。
+
 > [!NOTE]
 > 服务器部署不再提供裸 Node.js Release 压缩包，统一推荐 Docker / Docker Compose。
 

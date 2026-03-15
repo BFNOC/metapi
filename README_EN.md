@@ -350,6 +350,7 @@ After starting, visit `http://localhost:4000` and log in with your `AUTH_TOKEN`!
 > [!TIP]
 > The initial admin token is the `AUTH_TOKEN` configured at startup.
 > If running outside Compose without explicitly setting `AUTH_TOKEN`, the default is `change-me-admin-token` (for local debugging only).
+> The desktop installer falls into this category on first launch too: if you do not inject `AUTH_TOKEN`, the default admin token is also `change-me-admin-token`.
 > If you change the admin token in the Settings panel, use the new token for subsequent logins.
 
 For Docker Compose, desktop installers, reverse proxy, upgrades, and database options, see [Deployment Guide](docs/deployment.md).

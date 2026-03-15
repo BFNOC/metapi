@@ -28,6 +28,38 @@ export interface RuntimeSchemaConnectionInput {
   ssl?: boolean;
 }
 
+function normalizeSchemaErrorMessage(error: unknown): string {
+  if (typeof error === 'object' && error && 'message' in error) {
+    return String((error as { message?: unknown }).message || '');
+  }
+  return String(error || '');
+}
+
+function isExistingSchemaObjectError(error: unknown): boolean {
+  const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
+  const code = typeof error === 'object' && error && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
+
+  return code === 'ER_DUP_KEYNAME'
+    || code === 'ER_TABLE_EXISTS_ERROR'
+    || code === '42P07'
+    || code === '42710'
+    || lowered.includes('already exists')
+    || lowered.includes('duplicate key name')
+    || lowered.includes('relation') && lowered.includes('already exists');
+}
+
+async function executeBootstrapStatement(client: RuntimeSchemaClient, sqlText: string): Promise<void> {
+  try {
+    await client.execute(sqlText);
+  } catch (error) {
+    if (!isExistingSchemaObjectError(error)) {
+      throw error;
+    }
+  }
+}
+
 function validateIdentifier(identifier: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(identifier)) {
     throw new Error(`Invalid SQL identifier: ${identifier}`);
@@ -212,7 +244,7 @@ export async function ensureRuntimeDatabaseSchema(client: RuntimeSchemaClient): 
     : readGeneratedBootstrapStatements(client.dialect);
 
   for (const sqlText of statements) {
-    await client.execute(sqlText);
+    await executeBootstrapStatement(client, sqlText);
   }
 
   await ensureLegacySchemaCompatibility(createLegacySchemaInspector(client));

@@ -32,6 +32,7 @@ import type {
   RouteDecision,
   RouteIconOption,
   MissingTokenRouteSiteActionItem,
+  MissingTokenGroupRouteSiteActionItem,
   GroupRouteItem,
 } from './token-routes/types.js';
 import {
@@ -59,6 +60,7 @@ const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
   tokenOptionsByAccountId: {},
 };
 const EMPTY_MISSING_ITEMS: MissingTokenRouteSiteActionItem[] = [];
+const EMPTY_MISSING_GROUP_ITEMS: MissingTokenGroupRouteSiteActionItem[] = [];
 const ROUTE_ICON_OPTIONS: RouteIconOption[] = [
   { value: '', label: '自动品牌图标', description: '按模型匹配规则自动识别品牌', iconText: '✦' },
 ];
@@ -68,6 +70,7 @@ export default function TokenRoutes() {
   const [routeSummaries, setRouteSummaries] = useState<RouteSummaryRow[]>([]);
   const [modelCandidates, setModelCandidates] = useState<RouteModelCandidatesByModelName>({});
   const [missingTokenModelsByName, setMissingTokenModelsByName] = useState<MissingTokenModelsByName>({});
+  const [missingTokenGroupModelsByName, setMissingTokenGroupModelsByName] = useState<MissingTokenModelsByName>({});
   const [endpointTypesByModel, setEndpointTypesByModel] = useState<Record<string, string[]>>({});
 
   const [search, setSearch] = useState('');
@@ -188,6 +191,9 @@ export default function TokenRoutes() {
     setModelCandidates((candidateRows?.models || {}) as RouteModelCandidatesByModelName);
     setMissingTokenModelsByName(
       normalizeMissingTokenModels((candidateRows?.modelsWithoutToken || {}) as MissingTokenModelsByName),
+    );
+    setMissingTokenGroupModelsByName(
+      normalizeMissingTokenModels((candidateRows?.modelsMissingTokenGroups || {}) as MissingTokenModelsByName),
     );
     setEndpointTypesByModel(candidateRows?.endpointTypesByModel || {});
     const decisionPlaceholder: Record<number, RouteDecision | null> = {};
@@ -586,7 +592,12 @@ export default function TokenRoutes() {
 
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      list = list.filter((route) => route.modelPattern.toLowerCase().includes(q));
+      list = list.filter((route) => {
+        const modelPattern = route.modelPattern.toLowerCase();
+        const displayName = (route.displayName || '').toLowerCase();
+        const title = resolveRouteTitle(route).toLowerCase();
+        return modelPattern.includes(q) || displayName.includes(q) || title.includes(q);
+      });
     }
 
     return list;
@@ -635,6 +646,10 @@ export default function TokenRoutes() {
   const routeMissingTokenIndex = useMemo(
     () => buildRouteMissingTokenIndex(routePatterns, missingTokenModelsByName, matchesModelPattern),
     [routePatterns, missingTokenModelsByName],
+  );
+  const routeMissingTokenGroupIndex = useMemo(
+    () => buildRouteMissingTokenIndex(routePatterns, missingTokenGroupModelsByName, matchesModelPattern),
+    [routePatterns, missingTokenGroupModelsByName],
   );
 
   const getRouteCandidateView = (routeId: number): RouteCandidateView => {
@@ -781,6 +796,56 @@ export default function TokenRoutes() {
     }
     return result;
   }, [routeMissingTokenIndex]);
+
+  const missingTokenGroupItemsByRouteId = useMemo(() => {
+    const result: Record<number, MissingTokenGroupRouteSiteActionItem[]> = {};
+    for (const routeId of Object.keys(routeMissingTokenGroupIndex).map(Number)) {
+      const missingGroupHints = routeMissingTokenGroupIndex[routeId] || [];
+      const siteMap = new Map<string, MissingTokenGroupRouteSiteActionItem>();
+      for (const hint of missingGroupHints) {
+        for (const account of hint.accounts) {
+          if (!Number.isFinite(account.accountId) || account.accountId <= 0) continue;
+          const siteName = (account.siteName || '').trim() || `site-${account.siteId || 'unknown'}`;
+          const key = `${account.siteId || 0}::${siteName.toLowerCase()}`;
+          const accountLabel = account.username || `account-${account.accountId}`;
+          const missingGroups = Array.isArray(account.missingGroups) ? account.missingGroups : [];
+          const requiredGroups = Array.isArray(account.requiredGroups) ? account.requiredGroups : [];
+          const availableGroups = Array.isArray(account.availableGroups) ? account.availableGroups : [];
+          const existing = siteMap.get(key);
+          if (!existing) {
+            siteMap.set(key, {
+              key,
+              siteName,
+              accountId: account.accountId,
+              accountLabel,
+              missingGroups: [...missingGroups],
+              requiredGroups: [...requiredGroups],
+              availableGroups: [...availableGroups],
+              ...(account.groupCoverageUncertain === true ? { groupCoverageUncertain: true } : {}),
+            });
+            continue;
+          }
+          if (account.accountId < existing.accountId) {
+            existing.accountId = account.accountId;
+            existing.accountLabel = accountLabel;
+          }
+          existing.missingGroups = Array.from(new Set([...existing.missingGroups, ...missingGroups]))
+            .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+          existing.requiredGroups = Array.from(new Set([...existing.requiredGroups, ...requiredGroups]))
+            .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+          existing.availableGroups = Array.from(new Set([...existing.availableGroups, ...availableGroups]))
+            .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+          if (account.groupCoverageUncertain === true) {
+            existing.groupCoverageUncertain = true;
+          }
+        }
+      }
+      result[routeId] = Array.from(siteMap.values()).sort((a, b) => (
+        a.siteName.localeCompare(b.siteName, undefined, { sensitivity: 'base' })
+      ));
+    }
+    return result;
+  }, [routeMissingTokenGroupIndex]);
 
   // Stable callbacks for RouteCard memo (use refs to avoid dependency on closure variables)
   const toggleExpandRef = useRef(toggleExpand);
@@ -1075,6 +1140,7 @@ export default function TokenRoutes() {
               onDeleteChannel={stableDeleteChannel}
               onChannelDragEnd={stableChannelDragEnd}
               missingTokenSiteItems={missingTokenSiteItemsByRouteId[route.id] || EMPTY_MISSING_ITEMS}
+              missingTokenGroupItems={missingTokenGroupItemsByRouteId[route.id] || EMPTY_MISSING_GROUP_ITEMS}
               onCreateTokenForMissing={stableCreateTokenForMissing}
               onAddChannel={stableAddChannel}
               expandedSourceGroupMap={expandedSourceGroupMap}

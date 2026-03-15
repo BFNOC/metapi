@@ -949,6 +949,19 @@ export const buildConversationRequestEnvelope = (
   jsonBody: buildConversationJsonBody(messages, inputs, parameterEnabled),
 });
 
+export const buildGeminiNativeConversationProxyEnvelope = (
+  messages: ChatMessage[],
+  inputs: ModelTesterInputs,
+  parameterEnabled: ParameterEnabled,
+): TesterProxyEnvelope => {
+  const envelope = buildConversationRequestEnvelope(messages, { ...inputs, protocol: 'gemini' }, parameterEnabled);
+  return {
+    ...envelope,
+    path: `/gemini${envelope.path}${inputs.stream ? '?alt=sse' : ''}`,
+    jobMode: false,
+  };
+};
+
 export const buildEmbeddingsRequestEnvelope = (
   inputText: string,
   inputs: ModelTesterInputs,

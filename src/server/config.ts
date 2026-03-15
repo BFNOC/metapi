@@ -32,11 +32,7 @@ function parseDbType(value: string | undefined): 'sqlite' | 'mysql' | 'postgres'
 }
 
 function parseListenHost(env: NodeJS.ProcessEnv): string {
-  const requestedHost = (env.HOST || '0.0.0.0').trim() || '0.0.0.0';
-  if (parseBoolean(env.METAPI_DESKTOP, false)) {
-    return '127.0.0.1';
-  }
-  return requestedHost;
+  return (env.HOST || '0.0.0.0').trim() || '0.0.0.0';
 }
 
 export function buildConfig(env: NodeJS.ProcessEnv) {

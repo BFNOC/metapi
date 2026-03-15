@@ -8,7 +8,6 @@ import * as schema from './schema.js';
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from './siteSchemaCompatibility.js';
 import { ensureRouteGroupingSchemaCompatibility } from './routeGroupingSchemaCompatibility.js';
 import { ensureProxyFileSchemaCompatibility } from './proxyFileSchemaCompatibility.js';
-import { ensureSharedIndexSchemaCompatibility } from './sharedIndexSchemaCompatibility.js';
 import { executeLegacyCompat, executeLegacyCompatSync } from './legacySchemaCompat.js';
 import { config } from '../config.js';
 import { ensureRuntimeDatabaseReady } from '../runtimeDatabaseBootstrap.js';
@@ -447,12 +446,6 @@ export async function ensureProxyFileCompatibilityColumns(): Promise<void> {
   await ensureProxyFileSchemaCompatibility(inspector);
 }
 
-export async function ensureSharedIndexCompatibility(): Promise<void> {
-  const inspector = createRuntimeSchemaInspector();
-  if (!inspector) return;
-  await ensureSharedIndexSchemaCompatibility(inspector);
-}
-
 function ensureRouteGroupingSchema() {
   if (!tableExists('token_routes') || !tableExists('route_channels')) {
     return;
@@ -557,6 +550,18 @@ function ensureProxyLogBillingDetailsSchema() {
   proxyLogBillingDetailsColumnAvailable = true;
 }
 
+function ensureProxyLogDownstreamApiKeyIdSchema() {
+  if (!tableExists('proxy_logs')) {
+    return;
+  }
+
+  if (!tableColumnExists('proxy_logs', 'downstream_api_key_id')) {
+    execSqliteLegacyCompat('ALTER TABLE proxy_logs ADD COLUMN downstream_api_key_id integer;');
+  }
+
+  proxyLogDownstreamApiKeyIdColumnAvailable = true;
+}
+
 function normalizeSchemaErrorMessage(error: unknown): string {
   if (typeof error === 'object' && error && 'message' in error) {
     return String((error as { message?: unknown }).message || '');
@@ -633,18 +638,6 @@ export async function ensureProxyLogBillingDetailsColumn(): Promise<boolean> {
     console.warn('[db] failed to ensure proxy_logs.billing_details column', error);
     return false;
   }
-}
-
-function ensureProxyLogDownstreamApiKeyIdSchema() {
-  if (!tableExists('proxy_logs')) {
-    return;
-  }
-
-  if (!tableColumnExists('proxy_logs', 'downstream_api_key_id')) {
-    execSqliteLegacyCompat('ALTER TABLE proxy_logs ADD COLUMN downstream_api_key_id integer;');
-  }
-
-  proxyLogDownstreamApiKeyIdColumnAvailable = true;
 }
 
 export async function hasProxyLogDownstreamApiKeyIdColumn(): Promise<boolean> {

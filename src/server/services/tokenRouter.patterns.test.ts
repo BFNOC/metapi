@@ -154,4 +154,31 @@ describe('TokenRouter patterns and model mapping', () => {
     expect(decision.actualModel).toBe('claude-opus-4-5');
     expect(exposedModels).toContain('claude-opus-4-6');
   });
+
+  it('prefers an exact route over a colliding group display-name alias', async () => {
+    await createRouteWithSingleChannel(
+      're:^claude-(opus|sonnet)-4-5$',
+      undefined,
+      {
+        displayName: 'claude-opus-4-6',
+        sourceModel: 'claude-opus-4-5',
+      },
+    );
+    const exact = await createRouteWithSingleChannel(
+      'claude-opus-4-6',
+      undefined,
+      {
+        sourceModel: 'claude-opus-4-6',
+      },
+    );
+    const router = new TokenRouter();
+
+    const selected = await router.selectChannel('claude-opus-4-6');
+    const decision = await router.explainSelection('claude-opus-4-6');
+
+    expect(selected).toBeTruthy();
+    expect(selected?.channel.id).toBe(exact.channel.id);
+    expect(selected?.actualModel).toBe('claude-opus-4-6');
+    expect(decision.actualModel).toBe('claude-opus-4-6');
+  });
 });

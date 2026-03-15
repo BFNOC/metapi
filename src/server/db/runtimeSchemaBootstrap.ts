@@ -7,7 +7,11 @@ import {
   ensureLegacySchemaCompatibility,
   type LegacySchemaCompatInspector,
 } from './legacySchemaCompat.js';
-import { generateBootstrapSql, generateUpgradeSql } from './schemaArtifactGenerator.js';
+import {
+  generateBootstrapSql,
+  generateUpgradeSql,
+  type MysqlIndexPrefixRequirementMap,
+} from './schemaArtifactGenerator.js';
 import { introspectLiveSchema } from './schemaIntrospection.js';
 import { resolveGeneratedSchemaContractPath, type SchemaContract } from './schemaContract.js';
 
@@ -233,6 +237,92 @@ function buildCompatibleRuntimeBaseline(
   return baseline;
 }
 
+function collectIndexedColumns(contract: SchemaContract): Map<string, Set<string>> {
+  const indexedColumns = new Map<string, Set<string>>();
+
+  for (const index of [...contract.indexes, ...contract.uniques]) {
+    let columns = indexedColumns.get(index.table);
+    if (!columns) {
+      columns = new Set<string>();
+      indexedColumns.set(index.table, columns);
+    }
+
+    for (const columnName of index.columns) {
+      columns.add(columnName);
+    }
+  }
+
+  return indexedColumns;
+}
+
+function requiresMysqlIndexPrefixForColumnType(columnType: string): boolean {
+  const normalizedType = columnType.trim().toLowerCase();
+  return normalizedType.includes('text') || normalizedType.includes('blob');
+}
+
+async function queryRuntimeRows(
+  client: RuntimeSchemaClient,
+  sqlText: string,
+  params: unknown[] = [],
+): Promise<Array<Record<string, unknown>>> {
+  const result = await client.execute(sqlText, params);
+
+  if (!Array.isArray(result)) {
+    return [];
+  }
+
+  const [first] = result;
+  if (Array.isArray(first)) {
+    return first as Array<Record<string, unknown>>;
+  }
+
+  if (result.every((item) => typeof item === 'object' && item !== null && !Array.isArray(item))) {
+    return result as Array<Record<string, unknown>>;
+  }
+
+  return [];
+}
+
+async function resolveMySqlIndexPrefixRequirements(
+  client: RuntimeSchemaClient,
+  currentContract: SchemaContract,
+): Promise<MysqlIndexPrefixRequirementMap> {
+  const indexedColumns = collectIndexedColumns(currentContract);
+  if (indexedColumns.size === 0) {
+    return {};
+  }
+
+  const rows = await queryRuntimeRows(client, `
+    SELECT
+      table_name AS table_name,
+      column_name AS column_name,
+      data_type AS data_type,
+      column_type AS column_type
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+  `);
+
+  const requirements: MysqlIndexPrefixRequirementMap = {};
+  for (const row of rows) {
+    const tableName = String(row.table_name || '');
+    const columnName = String(row.column_name || '');
+    const trackedColumns = indexedColumns.get(tableName);
+    if (!trackedColumns || !trackedColumns.has(columnName)) {
+      continue;
+    }
+
+    const declaredType = String(row.column_type || row.data_type || '');
+    if (!requiresMysqlIndexPrefixForColumnType(declaredType)) {
+      continue;
+    }
+
+    requirements[tableName] ??= {};
+    requirements[tableName][columnName] = true;
+  }
+
+  return requirements;
+}
+
 async function createPostgresClient(connectionString: string, ssl: boolean): Promise<RuntimeSchemaClient> {
   const clientOptions: pg.ClientConfig = { connectionString };
   if (ssl) {
@@ -346,9 +436,12 @@ function buildExternalUpgradeStatements(
   dialect: Exclude<RuntimeSchemaDialect, 'sqlite'>,
   currentContract: SchemaContract,
   liveContract: SchemaContract,
+  mysqlIndexPrefixRequirements?: MysqlIndexPrefixRequirementMap,
 ): string[] {
   const compatibleBaseline = buildCompatibleRuntimeBaseline(currentContract, liveContract);
-  return splitSqlStatements(generateUpgradeSql(dialect, currentContract, compatibleBaseline));
+  return splitSqlStatements(generateUpgradeSql(dialect, currentContract, compatibleBaseline, {
+    mysqlIndexPrefixRequirements,
+  }));
 }
 
 export async function ensureRuntimeDatabaseSchema(
@@ -356,13 +449,23 @@ export async function ensureRuntimeDatabaseSchema(
   options: EnsureRuntimeDatabaseSchemaOptions = {},
 ): Promise<void> {
   const currentContract = options.currentContract ?? readSchemaContract();
-  const statements = client.dialect === 'sqlite'
-    ? splitSqlStatements(generateBootstrapSql('sqlite', currentContract))
-    : buildExternalUpgradeStatements(
+  let statements: string[];
+
+  if (client.dialect === 'sqlite') {
+    statements = splitSqlStatements(generateBootstrapSql('sqlite', currentContract));
+  } else {
+    const liveContract = await resolveLiveContract(client, options.liveContract);
+    const mysqlIndexPrefixRequirements = client.dialect === 'mysql'
+      ? await resolveMySqlIndexPrefixRequirements(client, currentContract)
+      : undefined;
+
+    statements = buildExternalUpgradeStatements(
       client.dialect,
       currentContract,
-      await resolveLiveContract(client, options.liveContract),
+      liveContract,
+      mysqlIndexPrefixRequirements,
     );
+  }
 
   for (const sqlText of statements) {
     await executeBootstrapStatement(client, sqlText);

@@ -3,6 +3,28 @@ import { withSiteProxyRequestInit } from '../../services/siteProxy.js';
 import { summarizeUpstreamError } from './upstreamError.js';
 import type { UpstreamEndpoint } from './upstreamEndpoint.js';
 
+function normalizeUpstreamTargetUrl(siteUrl: string, requestPath: string): string {
+  const baseRaw = typeof siteUrl === 'string' ? siteUrl.trim() : '';
+  const pathRaw = typeof requestPath === 'string' ? requestPath.trim() : '';
+  const base = baseRaw.replace(/\/+$/, '');
+  let path = pathRaw.startsWith('/') ? pathRaw : `/${pathRaw}`;
+
+  try {
+    const parsed = new URL(base);
+    const basePath = parsed.pathname.replace(/\/+$/, '');
+    const baseHasVersionSuffix = /\/(?:api\/)?v1$/i.test(basePath);
+    if (baseHasVersionSuffix && path.startsWith('/v1/')) {
+      path = path.slice('/v1'.length) || '/';
+    }
+  } catch {
+    // Ignore URL parsing errors and fall back to naive join.
+  }
+
+  if (!base) return path || '/';
+  if (!path || path === '/') return base;
+  return `${base}${path}`;
+}
+
 export type BuiltEndpointRequest = {
   endpoint: UpstreamEndpoint;
   path: string;
@@ -66,7 +88,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
   for (let endpointIndex = 0; endpointIndex < endpointCount; endpointIndex += 1) {
     const endpoint = input.endpointCandidates[endpointIndex] as UpstreamEndpoint;
     const request = input.buildRequest(endpoint, endpointIndex);
-    const targetUrl = `${input.siteUrl}${request.path}`;
+    const targetUrl = normalizeUpstreamTargetUrl(input.siteUrl, request.path);
 
     let response = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
       method: 'POST',

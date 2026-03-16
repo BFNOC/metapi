@@ -20,7 +20,7 @@ type ParsedGeminiStreamPayload = {
   rest: string;
 };
 
-type AppliedGeminiStreamPayloads = ParsedSsePayloads & {
+type AppliedGeminiStreamPayloads = ParsedGeminiStreamPayload & {
   state: GeminiGenerateContentAggregateState;
 };
 

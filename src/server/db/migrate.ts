@@ -62,6 +62,8 @@ const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   // 0011: downstream key metadata columns
   { table: 'downstream_api_keys', column: 'group_name' },
   { table: 'downstream_api_keys', column: 'tags' },
+  // 0012: value_status column on account_tokens
+  { table: 'account_tokens', column: 'value_status' },
 ];
 
 

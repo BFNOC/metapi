@@ -34,7 +34,7 @@ type RecoveryMigration = RecoveryMigrationRecord & {
   statements: string[];
 };
 
-const VERIFIED_BOOTSTRAP_TAG = '0011_downstream_api_key_metadata';
+const VERIFIED_BOOTSTRAP_TAG = '0012_account_token_value_status';
 const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites' },
   { table: 'settings' },
@@ -205,6 +205,28 @@ function findMatchingMigrationByStatement(
   return null;
 }
 
+function findMatchingMigrationByErrorMessage(
+  migrationsFolder: string,
+  error: unknown,
+): RecoveryMigrationRecord | null {
+  const normalizedErrorMessage = normalizeSqlForMatch(normalizeSchemaErrorMessage(error));
+  const migrations = readRecoveryMigrations(migrationsFolder);
+
+  for (const migration of migrations) {
+    if (!migration.statements.some((statement) => normalizedErrorMessage.includes(normalizeSqlForMatch(statement)))) {
+      continue;
+    }
+
+    return {
+      tag: migration.tag,
+      createdAt: migration.createdAt,
+      hash: migration.hash,
+    };
+  }
+
+  return null;
+}
+
 function readRecoveryMigrations(migrationsFolder: string): RecoveryMigration[] {
   const journalPath = resolve(migrationsFolder, 'meta', '_journal.json');
   const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as MigrationJournalFile;
@@ -347,11 +369,10 @@ function tryRecoverDuplicateColumnMigrationError(
   }
 
   const failedSqlText = extractFailedSqlFromError(error);
-  if (!failedSqlText) {
-    return false;
-  }
-
-  const matchedMigration = findMatchingMigrationByStatement(migrationsFolder, failedSqlText);
+  const matchedMigration = failedSqlText
+    ? findMatchingMigrationByStatement(migrationsFolder, failedSqlText)
+      ?? findMatchingMigrationByErrorMessage(migrationsFolder, error)
+    : findMatchingMigrationByErrorMessage(migrationsFolder, error);
   if (!matchedMigration) {
     return false;
   }
@@ -369,6 +390,7 @@ export const __migrateTestUtils = {
   extractFailedSqlFromError,
   findMatchingSingleStatementMigration,
   findMatchingMigrationByStatement,
+  findMatchingMigrationByErrorMessage,
   readRecoveryMigrations,
   markMigrationRecordIfMissing,
   recoverMigrationSequence,

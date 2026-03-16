@@ -326,6 +326,7 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
+      expect(collectText(root.root)).toContain('隐藏 0 通道路由');
       expect(collectText(root.root)).toContain('gpt-5.2-codex');
       expect(collectText(root.root)).toContain('claude-opus-4-6');
       expect(collectText(root.root)).toContain('未生成');

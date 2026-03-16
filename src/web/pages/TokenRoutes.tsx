@@ -1031,7 +1031,7 @@ export default function TokenRoutes() {
             className="btn btn-ghost"
             style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
           >
-            {tr('显示 0 通道路由')}
+            {showZeroChannelRoutes ? tr('隐藏 0 通道路由') : tr('显示 0 通道路由')}
           </button>
         </div>
 

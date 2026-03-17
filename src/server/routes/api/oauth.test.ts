@@ -27,10 +27,6 @@ describe('oauth routes', { timeout: 15_000 }, () => {
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-oauth-routes-'));
     process.env.DATA_DIR = dataDir;
-    process.env.CODEX_CLIENT_ID = 'test-codex-client-id';
-    process.env.CLAUDE_CLIENT_ID = 'test-claude-client-id';
-    process.env.GEMINI_CLI_CLIENT_ID = 'test-gemini-client-id';
-    process.env.GEMINI_CLI_CLIENT_SECRET = 'test-gemini-client-secret';
 
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
@@ -56,10 +52,6 @@ describe('oauth routes', { timeout: 15_000 }, () => {
   afterAll(async () => {
     await app.close();
     delete process.env.DATA_DIR;
-    delete process.env.CODEX_CLIENT_ID;
-    delete process.env.CLAUDE_CLIENT_ID;
-    delete process.env.GEMINI_CLI_CLIENT_ID;
-    delete process.env.GEMINI_CLI_CLIENT_SECRET;
   });
 
   it('lists multi-provider oauth metadata', async () => {

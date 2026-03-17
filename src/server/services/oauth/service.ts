@@ -356,40 +356,50 @@ export async function handleOauthCallback(input: {
     throw new Error('missing oauth code');
   }
 
-  const exchange = await definition.exchangeAuthorizationCode({
-    code,
-    state: input.state,
-    redirectUri: session.redirectUri,
-    codeVerifier: session.codeVerifier,
-    projectId: session.projectId,
-  });
-  const { account, site, created } = await upsertOauthAccount({
-    definition,
-    exchange,
-    rebindAccountId: session.rebindAccountId,
-  });
-  if (!account) {
-    markOauthSessionError(input.state, 'failed to persist oauth account');
-    throw new Error('failed to persist oauth account');
-  }
-
-  const refreshResult = await refreshModelsForAccount(account.id);
-  if (refreshResult.status !== 'success') {
-    if (created) {
-      await db.delete(schema.accounts).where(eq(schema.accounts.id, account.id)).run();
+  try {
+    const exchange = await definition.exchangeAuthorizationCode({
+      code,
+      state: input.state,
+      redirectUri: session.redirectUri,
+      codeVerifier: session.codeVerifier,
+      projectId: session.projectId,
+    });
+    const { account, site, created } = await upsertOauthAccount({
+      definition,
+      exchange,
+      rebindAccountId: session.rebindAccountId,
+    });
+    if (!account) {
+      markOauthSessionError(input.state, 'failed to persist oauth account');
+      throw new Error('failed to persist oauth account');
     }
-    await rebuildTokenRoutesFromAvailability();
-    const errorMessage = refreshResult.errorMessage || `${input.provider} model discovery failed`;
-    markOauthSessionError(input.state, errorMessage);
-    throw new Error(errorMessage);
-  }
 
-  await rebuildTokenRoutesFromAvailability();
-  markOauthSessionSuccess(input.state, {
-    accountId: account.id,
-    siteId: site.id,
-  });
-  return { accountId: account.id, siteId: site.id };
+    const refreshResult = await refreshModelsForAccount(account.id);
+    if (refreshResult.status !== 'success') {
+      if (created) {
+        await db.delete(schema.accounts).where(eq(schema.accounts.id, account.id)).run();
+      }
+      await rebuildTokenRoutesFromAvailability();
+      const errorMessage = refreshResult.errorMessage || `${input.provider} model discovery failed`;
+      markOauthSessionError(input.state, errorMessage);
+      throw new Error(errorMessage);
+    }
+
+    await rebuildTokenRoutesFromAvailability();
+    markOauthSessionSuccess(input.state, {
+      accountId: account.id,
+      siteId: site.id,
+    });
+    return { accountId: account.id, siteId: site.id };
+  } catch (error) {
+    const message = (
+      error instanceof Error
+        ? (error.message || error.name)
+        : String(error || 'OAuth failed')
+    ).trim() || 'OAuth failed';
+    markOauthSessionError(input.state, message);
+    throw error;
+  }
 }
 
 export async function submitOauthManualCallback(input: {

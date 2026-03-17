@@ -156,16 +156,16 @@ async function resolveGeminiProjectId(accessToken: string, requestedProjectId?: 
   }
 
   const projects = await fetchGcpProjects(accessToken);
-  if (projects.length === 1 && projects[0]) {
-    await ensureGeminiProjectEnabled(accessToken, projects[0]);
-    return projects[0];
-  }
-
   if (projects.length <= 0) {
     throw new Error('no Google Cloud projects available for this account');
   }
 
-  throw new Error('gemini cli: project selection required');
+  const firstProject = projects[0];
+  if (!firstProject) {
+    throw new Error('no Google Cloud projects available for this account');
+  }
+  await ensureGeminiProjectEnabled(accessToken, firstProject);
+  return firstProject;
 }
 
 export const geminiCliOauthProvider: OAuthProviderDefinition = {

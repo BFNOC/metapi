@@ -23,6 +23,14 @@ import { getCodexOauthInfoFromExtraConfig, isCodexPlatform } from './oauth/codex
 import { buildOauthInfo, getOauthInfoFromExtraConfig } from './oauth/oauthAccount.js';
 import { CLAUDE_DEFAULT_ANTHROPIC_VERSION } from './oauth/claudeProvider.js';
 import {
+  ANTIGRAVITY_CLIENT_METADATA,
+  ANTIGRAVITY_DAILY_UPSTREAM_BASE_URL,
+  ANTIGRAVITY_GOOGLE_API_CLIENT,
+  ANTIGRAVITY_SANDBOX_DAILY_UPSTREAM_BASE_URL,
+  ANTIGRAVITY_UPSTREAM_BASE_URL,
+  ANTIGRAVITY_USER_AGENT,
+} from './oauth/antigravityProvider.js';
+import {
   GEMINI_CLI_GOOGLE_API_CLIENT,
   GEMINI_CLI_REQUIRED_SERVICE,
   GEMINI_CLI_USER_AGENT,
@@ -184,6 +192,46 @@ function extractCodexModelIds(payload: unknown): string[] {
   });
 }
 
+function normalizeBaseUrl(baseUrl: string): string {
+  return (baseUrl || '').replace(/\/+$/, '');
+}
+
+function extractAntigravityModelIds(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const record = payload as { models?: unknown };
+  if (record.models && typeof record.models === 'object' && !Array.isArray(record.models)) {
+    return Object.keys(record.models).map((name) => name.trim()).filter(Boolean);
+  }
+  if (!Array.isArray(record.models)) return [];
+  return record.models.flatMap((item) => {
+    if (typeof item === 'string') {
+      const trimmed = item.trim();
+      return trimmed ? [trimmed] : [];
+    }
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const value = item as { id?: unknown; name?: unknown };
+    const id = typeof value.id === 'string'
+      ? value.id.trim()
+      : (typeof value.name === 'string' ? value.name.trim() : '');
+    return id ? [id] : [];
+  });
+}
+
+function buildAntigravityDiscoveryBaseUrls(siteUrl: string): string[] {
+  const seen = new Set<string>();
+  return [
+    siteUrl,
+    ANTIGRAVITY_UPSTREAM_BASE_URL,
+    ANTIGRAVITY_DAILY_UPSTREAM_BASE_URL,
+    ANTIGRAVITY_SANDBOX_DAILY_UPSTREAM_BASE_URL,
+  ].flatMap((candidate) => {
+    const normalized = normalizeBaseUrl(candidate);
+    if (!normalized || seen.has(normalized)) return [];
+    seen.add(normalized);
+    return [normalized];
+  });
+}
+
 async function updateOauthModelDiscoveryState(input: {
   account: typeof schema.accounts.$inferSelect;
   checkedAt: string;
@@ -295,6 +343,51 @@ async function validateGeminiCliOauthConnection(input: {
   if (String(payload.state || '').trim().toUpperCase() !== 'ENABLED') {
     throw new Error(`Cloud AI API not enabled for project ${projectId}`);
   }
+}
+
+async function discoverAntigravityModelsFromCloud(input: {
+  site: typeof schema.sites.$inferSelect;
+  account: typeof schema.accounts.$inferSelect;
+}): Promise<string[]> {
+  const accessToken = (input.account.accessToken || '').trim();
+  if (!accessToken) {
+    throw new Error('antigravity oauth access token missing');
+  }
+
+  const oauth = getOauthInfoFromExtraConfig(input.account.extraConfig);
+  const requestBody = oauth?.projectId ? { project: oauth.projectId } : {};
+  let lastError = '';
+
+  for (const baseUrl of buildAntigravityDiscoveryBaseUrls(input.site.url || ANTIGRAVITY_UPSTREAM_BASE_URL)) {
+    const response = await fetch(
+      `${baseUrl}/v1internal:fetchAvailableModels`,
+      withSiteRecordProxyRequestInit(input.site, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': ANTIGRAVITY_USER_AGENT,
+          'X-Goog-Api-Client': ANTIGRAVITY_GOOGLE_API_CLIENT,
+          'Client-Metadata': ANTIGRAVITY_CLIENT_METADATA,
+        },
+        body: JSON.stringify(requestBody),
+      }),
+    );
+    if (!response.ok) {
+      lastError = await response.text().catch(() => '') || `HTTP ${response.status}`;
+      continue;
+    }
+
+    const payload = await response.json();
+    const models = normalizeModels(extractAntigravityModelIds(payload));
+    if (models.length > 0) {
+      return models;
+    }
+    lastError = '未获取到可用模型';
+  }
+
+  throw new Error(lastError || '未获取到可用模型');
 }
 
 function isExactModelPattern(modelPattern: string): boolean {
@@ -608,6 +701,76 @@ export async function refreshModelsForAccount(accountId: number): Promise<ModelR
       const rawMessage = (err as { message?: string })?.message || 'gemini cli oauth validation failed';
       const errorCode = classifyModelDiscoveryError(rawMessage);
       const errorMessage = `Gemini CLI 模型获取失败（${rawMessage}）`;
+      await updateOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'abnormal',
+        lastModelSyncError: errorMessage,
+        lastDiscoveredModels: [],
+      });
+      await setAccountRuntimeHealth(account.id, {
+        state: 'unhealthy',
+        reason: errorMessage,
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildFailedRefreshResult({
+        accountId,
+        errorCode,
+        errorMessage,
+        tokenScanned: 0,
+        discoveredByCredential: false,
+        discoveredApiToken: false,
+      });
+    }
+  }
+
+  if (oauth?.provider === 'antigravity') {
+    const checkedAt = new Date().toISOString();
+    const startedAt = Date.now();
+    try {
+      const antigravityModels = await withTimeout(
+        () => discoverAntigravityModelsFromCloud({ site, account }),
+        MODEL_DISCOVERY_TIMEOUT_MS,
+        `antigravity model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+      );
+      if (antigravityModels.length === 0) {
+        throw new Error('未获取到可用模型');
+      }
+
+      await db.insert(schema.modelAvailability).values(
+        antigravityModels.map((modelName) => ({
+          accountId,
+          modelName,
+          available: true,
+          latencyMs: Date.now() - startedAt,
+          checkedAt,
+        })),
+      ).run();
+      await updateOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'healthy',
+        lastDiscoveredModels: antigravityModels,
+      });
+      await setAccountRuntimeHealth(accountId, {
+        state: 'healthy',
+        reason: 'Antigravity OAuth 健康探测成功',
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildSuccessfulRefreshResult({
+        accountId,
+        modelCount: antigravityModels.length,
+        modelsPreview: antigravityModels.slice(0, 10),
+        tokenScanned: 0,
+        discoveredByCredential: true,
+        discoveredApiToken: false,
+      });
+    } catch (err) {
+      const rawMessage = (err as { message?: string })?.message || 'antigravity model discovery failed';
+      const errorCode = classifyModelDiscoveryError(rawMessage);
+      const errorMessage = `Antigravity 模型获取失败（${rawMessage}）`;
       await updateOauthModelDiscoveryState({
         account,
         checkedAt,

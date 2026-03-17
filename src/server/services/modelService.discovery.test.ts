@@ -482,13 +482,27 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(parsed.runtimeHealth?.state).toBe('unhealthy');
   });
 
-  it('discovers antigravity oauth models via direct credential routing', async () => {
+  it('discovers antigravity oauth models via fetchAvailableModels fallback using the oauth project id', async () => {
     getApiTokenMock.mockResolvedValue(null);
-    getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
-      token === 'antigravity-access-token'
-        ? ['gemini-3-pro-preview', 'claude-sonnet-4-5-20250929']
-        : []
-    ));
+    getModelsMock.mockRejectedValue(new Error('antigravity oauth discovery should not call adapter.getModels'));
+    undiciFetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: 'unavailable' }),
+        text: async () => 'unavailable',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: {
+            'gemini-3-pro-preview': { displayName: 'Gemini 3 Pro Preview' },
+            'claude-sonnet-4-5-20250929': { displayName: 'Claude Sonnet 4.5' },
+          },
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
 
     const site = await db.insert(schema.sites).values({
       name: 'antigravity-site',
@@ -526,11 +540,19 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelCount: 2,
       modelsPreview: ['gemini-3-pro-preview', 'claude-sonnet-4-5-20250929'],
     });
-    expect(getModelsMock).toHaveBeenCalledWith(
-      'https://cloudcode-pa.googleapis.com',
-      'antigravity-access-token',
-      undefined,
-    );
+    expect(getModelsMock).not.toHaveBeenCalled();
+    expect(undiciFetchMock).toHaveBeenCalledTimes(2);
+    expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels');
+    expect(String(undiciFetchMock.mock.calls[1]?.[0] || '')).toBe('https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels');
+    expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer antigravity-access-token',
+      }),
+    });
+    expect(JSON.parse(String(undiciFetchMock.mock.calls[0]?.[1]?.body || '{}'))).toEqual({
+      project: 'project-demo',
+    });
 
     const rows = await db.select().from(schema.modelAvailability)
       .where(eq(schema.modelAvailability.accountId, account.id))

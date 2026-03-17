@@ -481,4 +481,63 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(parsed.oauth.lastModelSyncAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
     expect(parsed.runtimeHealth?.state).toBe('unhealthy');
   });
+
+  it('discovers antigravity oauth models via direct credential routing', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
+      token === 'antigravity-access-token'
+        ? ['gemini-3-pro-preview', 'claude-sonnet-4-5-20250929']
+        : []
+    ));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'antigravity-site',
+      url: 'https://cloudcode-pa.googleapis.com',
+      platform: 'antigravity',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'antigravity-user@example.com',
+      accessToken: 'antigravity-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'antigravity',
+          email: 'antigravity-user@example.com',
+          projectId: 'project-demo',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      errorCode: null,
+      tokenScanned: 0,
+      discoveredByCredential: true,
+      discoveredApiToken: false,
+      modelCount: 2,
+      modelsPreview: ['gemini-3-pro-preview', 'claude-sonnet-4-5-20250929'],
+    });
+    expect(getModelsMock).toHaveBeenCalledWith(
+      'https://cloudcode-pa.googleapis.com',
+      'antigravity-access-token',
+      undefined,
+    );
+
+    const rows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(rows.map((row) => row.modelName).sort()).toEqual([
+      'claude-sonnet-4-5-20250929',
+      'gemini-3-pro-preview',
+    ]);
+  });
 });

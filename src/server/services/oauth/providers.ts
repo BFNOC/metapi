@@ -1,8 +1,9 @@
 import { codexOauthProvider } from './codexProvider.js';
 import { claudeOauthProvider } from './claudeProvider.js';
 import { geminiCliOauthProvider } from './geminiCliProvider.js';
+import { antigravityOauthProvider } from './antigravityProvider.js';
 
-export type OAuthProviderId = 'codex' | 'claude' | 'gemini-cli';
+export type OAuthProviderId = 'codex' | 'claude' | 'gemini-cli' | 'antigravity';
 
 export type OAuthProviderMetadata = {
   provider: OAuthProviderId;
@@ -85,6 +86,7 @@ const PROVIDERS: OAuthProviderDefinition[] = [
   codexOauthProvider,
   claudeOauthProvider,
   geminiCliOauthProvider,
+  antigravityOauthProvider,
 ];
 
 const PROVIDER_BY_ID = new Map(PROVIDERS.map((provider) => [provider.metadata.provider, provider] as const));

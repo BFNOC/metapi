@@ -83,7 +83,49 @@ describe('oauth routes', { timeout: 15_000 }, () => {
           loginType: 'oauth',
           requiresProjectId: true,
         }),
+        expect.objectContaining({
+          provider: 'antigravity',
+          platform: 'antigravity',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: false,
+        }),
       ]),
+    });
+  });
+
+  it('starts an antigravity oauth session and returns provider metadata', async () => {
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/antigravity/start',
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-proto': 'https',
+      },
+    });
+
+    expect(startResponse.statusCode).toBe(200);
+    const startBody = startResponse.json() as {
+      provider: string;
+      state: string;
+      authorizationUrl: string;
+      instructions?: {
+        redirectUri: string;
+        callbackPort: number;
+        callbackPath: string;
+        manualCallbackDelayMs: number;
+      };
+    };
+    expect(startBody.provider).toBe('antigravity');
+    expect(startBody.state).toMatch(/^[a-zA-Z0-9_-]{20,}$/);
+    expect(startBody.authorizationUrl).toContain('https://accounts.google.com/o/oauth2/v2/auth?');
+    expect(startBody.authorizationUrl).toContain(encodeURIComponent('http://localhost:51121/oauth-callback'));
+    expect(startBody.authorizationUrl).toContain(`state=${encodeURIComponent(startBody.state)}`);
+    expect(startBody.instructions).toMatchObject({
+      redirectUri: 'http://localhost:51121/oauth-callback',
+      callbackPort: 51121,
+      callbackPath: '/oauth-callback',
+      manualCallbackDelayMs: 15000,
     });
   });
 

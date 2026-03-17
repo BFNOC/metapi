@@ -332,6 +332,10 @@ function preferredEndpointOrder(
     return ['chat'];
   }
 
+  if (platform === 'antigravity') {
+    return ['chat'];
+  }
+
   if (platform === 'openai') {
     if (preferMessagesForClaudeModel && downstreamFormat !== 'responses') {
       // Some OpenAI-compatible gateways expose Claude natively via /v1/messages.
@@ -409,6 +413,7 @@ export async function resolveUpstreamEndpointCandidates(
     ? (() => {
       if (sitePlatform === 'claude') return ['messages'] as UpstreamEndpoint[];
       if (sitePlatform === 'gemini') return ['responses', 'chat'] as UpstreamEndpoint[];
+      if (sitePlatform === 'gemini-cli' || sitePlatform === 'antigravity') return ['chat'] as UpstreamEndpoint[];
       if (preferMessagesForClaudeModel) return ['messages', 'responses', 'chat'] as UpstreamEndpoint[];
       return ['responses', 'messages', 'chat'] as UpstreamEndpoint[];
     })()
@@ -428,6 +433,8 @@ export async function resolveUpstreamEndpointCandidates(
     && preferMessagesForClaudeModel
     && sitePlatform !== 'openai'
     && sitePlatform !== 'gemini'
+    && sitePlatform !== 'antigravity'
+    && sitePlatform !== 'gemini-cli'
   );
 
   try {
@@ -532,6 +539,8 @@ export function buildUpstreamEndpointRequest(input: {
   const isClaudeUpstream = sitePlatform === 'claude';
   const isGeminiUpstream = sitePlatform === 'gemini';
   const isGeminiCliUpstream = sitePlatform === 'gemini-cli';
+  const isAntigravityUpstream = sitePlatform === 'antigravity';
+  const isInternalGeminiUpstream = isGeminiCliUpstream || isAntigravityUpstream;
   const isClaudeOauthUpstream = isClaudeUpstream && input.oauthProvider === 'claude';
 
   const resolveGeminiEndpointPath = (endpoint: UpstreamEndpoint): string => {
@@ -562,7 +571,7 @@ export function buildUpstreamEndpointRequest(input: {
       return '/responses';
     }
 
-    if (sitePlatform === 'gemini-cli') {
+    if (sitePlatform === 'gemini-cli' || sitePlatform === 'antigravity') {
       return input.stream
         ? '/v1internal:streamGenerateContent?alt=sse'
         : '/v1internal:generateContent';
@@ -589,7 +598,7 @@ export function buildUpstreamEndpointRequest(input: {
 
   const stripGeminiUnsupportedFields = (body: Record<string, unknown>) => {
     const next = { ...body };
-    if (isGeminiUpstream || isGeminiCliUpstream) {
+    if (isGeminiUpstream || isInternalGeminiUpstream) {
       for (const key of [
         'frequency_penalty',
         'presence_penalty',
@@ -606,9 +615,9 @@ export function buildUpstreamEndpointRequest(input: {
 
   const openaiBody = stripGeminiUnsupportedFields(input.openaiBody);
 
-  if (isGeminiCliUpstream) {
+  if (isInternalGeminiUpstream) {
     const projectId = asTrimmedString(input.oauthProjectId);
-    if (!projectId) {
+    if (isGeminiCliUpstream && !projectId) {
       throw new Error('gemini-cli oauth project id missing');
     }
     const instructions = (
@@ -628,7 +637,7 @@ export function buildUpstreamEndpointRequest(input: {
       headers,
       body: wrapGeminiCliRequest({
         modelName: input.modelName,
-        projectId,
+        projectId: projectId || '',
         request: geminiRequest,
       }) as Record<string, unknown>,
     };

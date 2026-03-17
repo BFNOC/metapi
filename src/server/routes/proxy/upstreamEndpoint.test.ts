@@ -415,6 +415,52 @@ describe('buildUpstreamEndpointRequest', () => {
     });
   });
 
+  it('builds antigravity native requests with the same internal Gemini envelope', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'chat',
+      modelName: 'gemini-3-pro-preview',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      oauthProvider: 'antigravity',
+      oauthProjectId: 'project-demo',
+      sitePlatform: 'antigravity',
+      siteUrl: 'https://cloudcode-pa.googleapis.com',
+      openaiBody: {
+        model: 'gemini-3-pro-preview',
+        messages: [
+          { role: 'system', content: 'be concise' },
+          { role: 'user', content: 'hello antigravity' },
+        ],
+      },
+      downstreamFormat: 'openai',
+      providerHeaders: {
+        'User-Agent': 'google-api-nodejs-client/9.15.1',
+        'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+      },
+    });
+
+    expect(request.path).toBe('/v1internal:generateContent');
+    expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
+    expect(request.headers['User-Agent']).toContain('google-api-nodejs-client');
+    expect(request.headers['X-Goog-Api-Client']).toContain('google-cloud-sdk');
+    expect(request.body).toEqual({
+      project: 'project-demo',
+      model: 'gemini-3-pro-preview',
+      request: {
+        systemInstruction: {
+          role: 'user',
+          parts: [{ text: 'be concise' }],
+        },
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello antigravity' }],
+          },
+        ],
+      },
+    });
+  });
+
   it('uses bearer auth for claude oauth upstream requests', () => {
     const request = buildUpstreamEndpointRequest({
       endpoint: 'messages',

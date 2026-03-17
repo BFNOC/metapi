@@ -8,6 +8,7 @@ import {
   listOauthProviders,
   startOauthProviderFlow,
   startOauthRebindFlow,
+  submitOauthManualCallback,
 } from '../../services/oauth/service.js';
 
 const limitOauthProviderRead = createRateLimitGuard({
@@ -25,6 +26,12 @@ const limitOauthStart = createRateLimitGuard({
 const limitOauthSessionRead = createRateLimitGuard({
   bucket: 'oauth-session-read',
   max: 120,
+  windowMs: 60_000,
+});
+
+const limitOauthSessionMutate = createRateLimitGuard({
+  bucket: 'oauth-session-mutate',
+  max: 30,
   windowMs: 60_000,
 });
 
@@ -139,6 +146,34 @@ export async function oauthRoutes(app: FastifyInstance) {
         return reply.code(404).send({ message: 'oauth session not found' });
       }
       return session;
+    },
+  );
+
+  app.post<{ Params: { state: string }; Body: { callbackUrl?: string } }>(
+    '/api/oauth/sessions/:state/manual-callback',
+    { preHandler: [limitOauthSessionMutate] },
+    async (request, reply) => {
+      const callbackUrl = typeof request.body?.callbackUrl === 'string'
+        ? request.body.callbackUrl.trim()
+        : '';
+      if (!callbackUrl) {
+        return reply.code(400).send({ message: 'invalid oauth callback url' });
+      }
+      try {
+        return await submitOauthManualCallback({
+          state: request.params.state,
+          callbackUrl,
+        });
+      } catch (error: any) {
+        const message = error?.message || 'oauth callback submission failed';
+        if (message === 'invalid oauth callback url' || message === 'oauth callback state mismatch') {
+          return reply.code(400).send({ message });
+        }
+        if (message === 'oauth session not found') {
+          return reply.code(404).send({ message });
+        }
+        return reply.code(500).send({ message });
+      }
     },
   );
 

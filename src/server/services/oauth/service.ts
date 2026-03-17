@@ -18,6 +18,89 @@ import { buildOauthInfo, getOauthInfoFromExtraConfig } from './oauthAccount.js';
 import { buildCodexOauthInfo } from './codexAccount.js';
 
 type OAuthProviderMetadata = ReturnType<typeof listOauthProviders>[number];
+const MANUAL_CALLBACK_DELAY_MS = 15_000;
+
+type OAuthStartInstructions = {
+  redirectUri: string;
+  callbackPort: number;
+  callbackPath: string;
+  manualCallbackDelayMs: number;
+  sshTunnelCommand?: string;
+  sshTunnelKeyCommand?: string;
+};
+
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === 'localhost'
+    || normalized === '127.0.0.1'
+    || normalized === '::1'
+    || normalized === '[::1]';
+}
+
+function resolveSshTunnelHost(requestOrigin?: string): string | undefined {
+  if (!requestOrigin) return undefined;
+  try {
+    const parsed = new URL(requestOrigin);
+    if (!parsed.hostname || isLoopbackHost(parsed.hostname)) {
+      return undefined;
+    }
+    return parsed.hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildLoopbackInstructions(
+  definition: OAuthProviderDefinition,
+  requestOrigin?: string,
+): OAuthStartInstructions {
+  const sshHost = resolveSshTunnelHost(requestOrigin);
+  return {
+    redirectUri: definition.loopback.redirectUri,
+    callbackPort: definition.loopback.port,
+    callbackPath: definition.loopback.path,
+    manualCallbackDelayMs: MANUAL_CALLBACK_DELAY_MS,
+    sshTunnelCommand: sshHost
+      ? `ssh -L ${definition.loopback.port}:127.0.0.1:${definition.loopback.port} root@${sshHost} -p 22`
+      : undefined,
+    sshTunnelKeyCommand: sshHost
+      ? `ssh -i <path_to_your_key> -L ${definition.loopback.port}:127.0.0.1:${definition.loopback.port} root@${sshHost} -p 22`
+      : undefined,
+  };
+}
+
+function parseManualCallbackUrl(input: {
+  callbackUrl: string;
+  provider: string;
+}) {
+  const raw = asNonEmptyString(input.callbackUrl);
+  if (!raw) {
+    throw new Error('invalid oauth callback url');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('invalid oauth callback url');
+  }
+
+  const state = asNonEmptyString(parsed.searchParams.get('state'));
+  const code = asNonEmptyString(parsed.searchParams.get('code'));
+  const error = asNonEmptyString(parsed.searchParams.get('error'));
+  const errorDescription = asNonEmptyString(parsed.searchParams.get('error_description'));
+  if (!state || (!code && !error)) {
+    throw new Error('invalid oauth callback url');
+  }
+
+  return {
+    state,
+    code,
+    error: error
+      ? (errorDescription ? `${error}: ${errorDescription}` : error)
+      : undefined,
+  };
+}
 
 function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -209,12 +292,9 @@ export async function startOauthProviderFlow(input: {
   if (!definition) {
     throw new Error(`unsupported oauth provider: ${input.provider}`);
   }
-  const redirectUri = definition.resolveRedirectUri?.({
-    requestOrigin: input.requestOrigin,
-  }) || definition.loopback.redirectUri;
+  const redirectUri = definition.loopback.redirectUri;
   const callbackServerState = getOAuthLoopbackCallbackServerState(input.provider);
-  const usesLoopbackCallback = redirectUri === definition.loopback.redirectUri;
-  if (usesLoopbackCallback && callbackServerState.attempted && !callbackServerState.ready) {
+  if (callbackServerState.attempted && !callbackServerState.ready) {
     throw new Error(`${input.provider} oauth callback listener is unavailable: ${callbackServerState.error || 'unknown error'}`);
   }
   const session = createOauthSession({
@@ -232,6 +312,7 @@ export async function startOauthProviderFlow(input: {
       codeVerifier: session.codeVerifier,
       projectId: session.projectId,
     }),
+    instructions: buildLoopbackInstructions(definition, input.requestOrigin),
   };
 }
 
@@ -309,6 +390,32 @@ export async function handleOauthCallback(input: {
     siteId: site.id,
   });
   return { accountId: account.id, siteId: site.id };
+}
+
+export async function submitOauthManualCallback(input: {
+  state: string;
+  callbackUrl: string;
+}) {
+  const session = getOauthSession(input.state);
+  if (!session) {
+    throw new Error('oauth session not found');
+  }
+  const parsed = parseManualCallbackUrl({
+    callbackUrl: input.callbackUrl,
+    provider: session.provider,
+  });
+  if (parsed.state !== input.state) {
+    throw new Error('oauth callback state mismatch');
+  }
+
+  await handleOauthCallback({
+    provider: session.provider,
+    state: parsed.state,
+    code: parsed.code,
+    error: parsed.error,
+  });
+
+  return { success: true };
 }
 
 export async function listOauthConnections(options: {

@@ -385,6 +385,154 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
   });
 
+  it('marks gemini oauth session as error when token exchange fails before account persistence', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        error: 'invalid_grant',
+        error_description: 'Bad Request',
+      }),
+      text: async () => '{"error":"invalid_grant","error_description":"Bad Request"}',
+    });
+
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/gemini-cli/start',
+      payload: {
+        projectId: 'demo-project',
+      },
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    const startBody = startResponse.json() as { state: string };
+
+    const callbackResponse = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/sessions/${encodeURIComponent(startBody.state)}/manual-callback`,
+      payload: {
+        callbackUrl: `http://localhost:8085/oauth2callback?state=${encodeURIComponent(startBody.state)}&code=oauth-code-gemini-123`,
+      },
+    });
+    expect(callbackResponse.statusCode).toBe(500);
+    expect(callbackResponse.json()).toMatchObject({
+      message: expect.stringContaining('invalid_grant'),
+    });
+
+    const sessionResponse = await app.inject({
+      method: 'GET',
+      url: `/api/oauth/sessions/${startBody.state}`,
+    });
+    expect(sessionResponse.statusCode).toBe(200);
+    expect(sessionResponse.json()).toMatchObject({
+      provider: 'gemini-cli',
+      status: 'error',
+      error: expect.stringContaining('invalid_grant'),
+    });
+
+    const accounts = await db.select().from(schema.accounts).all();
+    expect(accounts).toEqual([]);
+  });
+
+  it('defaults Gemini CLI oauth to the first available Google Cloud project when projectId is omitted', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: 'gemini-access-token',
+          refresh_token: 'gemini-refresh-token',
+          expires_in: 3600,
+          token_type: 'Bearer',
+          scope: 'cloud-platform',
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          projects: [
+            { projectId: 'first-project-id' },
+            { projectId: 'second-project-id' },
+          ],
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: 'ENABLED' }),
+        text: async () => JSON.stringify({ state: 'ENABLED' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ email: 'gemini-user@example.com' }),
+        text: async () => JSON.stringify({ email: 'gemini-user@example.com' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: 'ENABLED' }),
+        text: async () => JSON.stringify({ state: 'ENABLED' }),
+      });
+
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/gemini-cli/start',
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    expect(startResponse.statusCode).toBe(200);
+    const startBody = startResponse.json() as { state: string };
+
+    const callbackResponse = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/sessions/${encodeURIComponent(startBody.state)}/manual-callback`,
+      payload: {
+        callbackUrl: `http://localhost:8085/oauth2callback?state=${encodeURIComponent(startBody.state)}&code=gemini-oauth-code-123`,
+      },
+    });
+    expect(callbackResponse.statusCode).toBe(200);
+    expect(callbackResponse.json()).toEqual({ success: true });
+
+    const sessionResponse = await app.inject({
+      method: 'GET',
+      url: `/api/oauth/sessions/${startBody.state}`,
+    });
+    expect(sessionResponse.statusCode).toBe(200);
+    expect(sessionResponse.json()).toMatchObject({
+      provider: 'gemini-cli',
+      status: 'success',
+    });
+
+    const accounts = await db.select().from(schema.accounts).all();
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({
+      oauthProvider: 'gemini-cli',
+      oauthProjectId: 'first-project-id',
+      username: 'gemini-user@example.com',
+      accessToken: 'gemini-access-token',
+    });
+
+    const parsed = JSON.parse(accounts[0]?.extraConfig || '{}');
+    expect(parsed.oauth).toMatchObject({
+      provider: 'gemini-cli',
+      email: 'gemini-user@example.com',
+      projectId: 'first-project-id',
+      refreshToken: 'gemini-refresh-token',
+    });
+
+    expect(String(fetchMock.mock.calls[1]?.[0] || '')).toContain('cloudresourcemanager.googleapis.com/v1/projects');
+    expect(String(fetchMock.mock.calls[2]?.[0] || '')).toContain('/projects/first-project-id/services/cloudaicompanion.googleapis.com');
+    expect(String(fetchMock.mock.calls[4]?.[0] || '')).toContain('/projects/first-project-id/services/cloudaicompanion.googleapis.com');
+  });
+
   it('lists oauth connection health metadata and supports deleting the connection', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'ChatGPT Codex OAuth',

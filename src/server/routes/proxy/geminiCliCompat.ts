@@ -1,6 +1,10 @@
 import { TextDecoder, TextEncoder } from 'node:util';
 import { resolveGeminiThinkingConfigFromRequest } from '../../transformers/gemini/generate-content/convert.js';
 
+// Dummy sentinel used when no real thoughtSignature is available but thinking
+// mode is enabled. Gemini accepts any base64 string and won't reject this.
+const DUMMY_THOUGHT_SIGNATURE = 'c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -143,6 +147,27 @@ export function buildGeminiGenerateContentRequestFromOpenAi(input: {
     }
   }
 
+  // Detect if thinking mode is enabled (needed for dummy signature fallback)
+  const hasThinkingEnabled = !!resolveGeminiThinkingConfigFromRequest(input.modelName, input.body);
+
+  // Collect thoughtSignatures from assistant tool_calls for injection.
+  // OpenAI format stores signatures in provider_specific_fields or encoded in tool call IDs.
+  const thoughtSignatureById = new Map<string, string>();
+  for (const message of messages) {
+    if (!isRecord(message) || asTrimmedString(message.role) !== 'assistant') continue;
+    const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    for (const toolCall of toolCalls) {
+      if (!isRecord(toolCall)) continue;
+      const id = asTrimmedString(toolCall.id);
+      if (!id) continue;
+      // Check provider_specific_fields first
+      const providerFields = isRecord(toolCall.provider_specific_fields) ? toolCall.provider_specific_fields : null;
+      if (providerFields && typeof providerFields.thought_signature === 'string') {
+        thoughtSignatureById.set(id, providerFields.thought_signature);
+      }
+    }
+  }
+
   const systemParts: Array<Record<string, unknown>> = [];
   if (typeof input.instructions === 'string' && input.instructions.trim()) {
     systemParts.push({ text: input.instructions.trim() });
@@ -176,7 +201,8 @@ export function buildGeminiGenerateContentRequestFromOpenAi(input: {
       continue;
     }
 
-    const parts = convertContentToGeminiParts(message.content);
+    const textParts = convertContentToGeminiParts(message.content);
+    const fcParts: Array<Record<string, unknown>> = [];
     const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
     for (const toolCall of toolCalls) {
       if (!isRecord(toolCall) || !isRecord(toolCall.function)) continue;
@@ -193,21 +219,45 @@ export function buildGeminiGenerateContentRequestFromOpenAi(input: {
       } else if (isRecord(rawArguments)) {
         args = rawArguments;
       }
-      parts.push({
-        functionCall: {
-          name,
-          args,
-        },
-      });
+      const fcPart: Record<string, unknown> = {
+        functionCall: { name, args },
+      };
+      // Inject thoughtSignature if available from provider_specific_fields.
+      // If no signature is found, use a dummy sentinel so Gemini doesn't reject
+      // the request outright. Gemini 3+ requires thoughtSignature on all
+      // functionCall parts when thinking is enabled.
+      // Ref: https://ai.google.dev/gemini-api/docs/thought-signatures
+      const id = asTrimmedString(toolCall.id);
+      const signature = thoughtSignatureById.get(id);
+      if (signature) {
+        fcPart.thoughtSignature = signature;
+      } else if (hasThinkingEnabled) {
+        fcPart.thoughtSignature = DUMMY_THOUGHT_SIGNATURE;
+      }
+      fcParts.push(fcPart);
     }
-    if (parts.length <= 0) continue;
-    request.contents = [
-      ...(Array.isArray(request.contents) ? request.contents : []),
-      {
-        role: role === 'assistant' ? 'model' : 'user',
-        parts,
-      },
-    ];
+
+    const geminiRole = role === 'assistant' ? 'model' : 'user';
+
+    // Gemini requires that parts WITH thoughtSignature and parts WITHOUT
+    // are not mixed in the same message. Split if needed.
+    // Ref: https://ai.google.dev/gemini-api/docs/thought-signatures
+    const hasSigned = fcParts.some((p) => 'thoughtSignature' in p);
+    if (hasSigned && textParts.length > 0 && fcParts.length > 0) {
+      // Emit text parts first, then functionCall parts in a separate message
+      request.contents = [
+        ...(Array.isArray(request.contents) ? request.contents : []),
+        { role: geminiRole, parts: textParts },
+        { role: geminiRole, parts: fcParts },
+      ];
+    } else {
+      const allParts = [...textParts, ...fcParts];
+      if (allParts.length <= 0) continue;
+      request.contents = [
+        ...(Array.isArray(request.contents) ? request.contents : []),
+        { role: geminiRole, parts: allParts },
+      ];
+    }
   }
 
   if (systemParts.length > 0) {

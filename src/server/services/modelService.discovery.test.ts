@@ -548,8 +548,14 @@ describe('refreshModelsForAccount credential discovery', () => {
       method: 'POST',
       headers: expect.objectContaining({
         Authorization: 'Bearer antigravity-access-token',
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'antigravity/1.19.6 darwin/arm64',
       }),
     });
+    const discoveryHeaders = undiciFetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(discoveryHeaders).not.toHaveProperty('X-Goog-Api-Client');
+    expect(discoveryHeaders).not.toHaveProperty('Client-Metadata');
     expect(JSON.parse(String(undiciFetchMock.mock.calls[0]?.[1]?.body || '{}'))).toEqual({
       project: 'project-demo',
     });

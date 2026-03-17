@@ -23,12 +23,10 @@ import { getCodexOauthInfoFromExtraConfig, isCodexPlatform } from './oauth/codex
 import { buildOauthInfo, getOauthInfoFromExtraConfig } from './oauth/oauthAccount.js';
 import { CLAUDE_DEFAULT_ANTHROPIC_VERSION } from './oauth/claudeProvider.js';
 import {
-  ANTIGRAVITY_CLIENT_METADATA,
   ANTIGRAVITY_DAILY_UPSTREAM_BASE_URL,
-  ANTIGRAVITY_GOOGLE_API_CLIENT,
+  ANTIGRAVITY_MODELS_USER_AGENT,
   ANTIGRAVITY_SANDBOX_DAILY_UPSTREAM_BASE_URL,
   ANTIGRAVITY_UPSTREAM_BASE_URL,
-  ANTIGRAVITY_USER_AGENT,
 } from './oauth/antigravityProvider.js';
 import {
   GEMINI_CLI_GOOGLE_API_CLIENT,
@@ -367,9 +365,7 @@ async function discoverAntigravityModelsFromCloud(input: {
           Authorization: `Bearer ${accessToken}`,
           Accept: 'application/json',
           'Content-Type': 'application/json',
-          'User-Agent': ANTIGRAVITY_USER_AGENT,
-          'X-Goog-Api-Client': ANTIGRAVITY_GOOGLE_API_CLIENT,
-          'Client-Metadata': ANTIGRAVITY_CLIENT_METADATA,
+          'User-Agent': ANTIGRAVITY_MODELS_USER_AGENT,
         },
         body: JSON.stringify(requestBody),
       }),

@@ -10,6 +10,7 @@ const { apiMock, openMock, focusMock, confirmMock, promptMock } = vi.hoisted(() 
     getOAuthConnections: vi.fn(),
     startOAuthProvider: vi.fn(),
     getOAuthSession: vi.fn(),
+    submitOAuthManualCallback: vi.fn(),
     rebindOAuthConnection: vi.fn(),
     deleteOAuthConnection: vi.fn(),
   },
@@ -180,6 +181,13 @@ describe('OAuthManagement page', () => {
       provider: 'codex',
       state: 'oauth-state-123',
       authorizationUrl: 'https://auth.openai.com/oauth/authorize?state=oauth-state-123',
+      instructions: {
+        redirectUri: 'http://localhost:1455/auth/callback',
+        callbackPort: 1455,
+        callbackPath: '/auth/callback',
+        manualCallbackDelayMs: 15000,
+        sshTunnelCommand: 'ssh -L 1455:127.0.0.1:1455 root@metapi.example -p 22',
+      },
     });
     apiMock.getOAuthSession
       .mockResolvedValueOnce({
@@ -228,6 +236,7 @@ describe('OAuthManagement page', () => {
         'oauth-codex',
         expect.stringContaining('width=540'),
       );
+      expect(collectText(root!.root)).toContain('ssh -L 1455:127.0.0.1:1455 root@metapi.example -p 22');
 
       await act(async () => {
         vi.advanceTimersByTime(1600);
@@ -248,6 +257,111 @@ describe('OAuthManagement page', () => {
       const text = collectText(root!.root);
       expect(text).toContain('授权成功');
       expect(text).toContain('codex-user@example.com');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('reveals manual callback input after delay and submits the pasted callback url', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'claude',
+          label: 'Claude',
+          platform: 'claude',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: false,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 });
+    apiMock.startOAuthProvider.mockResolvedValue({
+      provider: 'claude',
+      state: 'oauth-state-456',
+      authorizationUrl: 'https://claude.ai/oauth/authorize?state=oauth-state-456',
+      instructions: {
+        redirectUri: 'http://localhost:54545/callback',
+        callbackPort: 54545,
+        callbackPath: '/callback',
+        manualCallbackDelayMs: 15000,
+        sshTunnelCommand: 'ssh -L 54545:127.0.0.1:54545 root@metapi.example -p 22',
+      },
+    });
+    apiMock.getOAuthSession.mockResolvedValue({
+      provider: 'claude',
+      state: 'oauth-state-456',
+      status: 'pending',
+    });
+    apiMock.submitOAuthManualCallback.mockResolvedValue({ success: true });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+      });
+
+      const startButton = root!.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('连接 Claude')
+      ));
+
+      await act(async () => {
+        await startButton.props.onClick();
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+      });
+
+      expect(collectText(root!.root)).not.toContain('提交回调 URL');
+
+      await act(async () => {
+        vi.advanceTimersByTime(15000);
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        expect(collectText(root!.root)).toContain('提交回调 URL');
+      });
+
+      const textInput = root!.root.find((node) => (
+        node.type === 'input'
+        && node.props.value !== undefined
+      ));
+
+      await act(async () => {
+        textInput.props.onChange({ target: { value: 'http://localhost:54545/callback?code=test-code&state=oauth-state-456' } });
+      });
+
+      const submitButton = root!.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('提交回调 URL')
+      ));
+
+      await act(async () => {
+        await submitButton.props.onClick();
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+      });
+
+      expect(apiMock.submitOAuthManualCallback).toHaveBeenCalledWith(
+        'oauth-state-456',
+        'http://localhost:54545/callback?code=test-code&state=oauth-state-456',
+      );
     } finally {
       root?.unmount();
     }

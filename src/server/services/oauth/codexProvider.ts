@@ -20,32 +20,6 @@ function requireCodexClientId(): string {
   return CODEX_CLIENT_ID;
 }
 
-function normalizeOrigin(origin?: string): string | null {
-  if (typeof origin !== 'string') return null;
-  const trimmed = origin.trim().replace(/\/+$/, '');
-  return trimmed || null;
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase();
-  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1' || normalized === '[::1]';
-}
-
-export function resolveCodexRedirectUri(requestOrigin?: string): string {
-  const origin = normalizeOrigin(requestOrigin);
-  if (!origin) return CODEX_LOOPBACK_REDIRECT_URI;
-
-  try {
-    const parsed = new URL(origin);
-    if (isLoopbackHostname(parsed.hostname)) {
-      return CODEX_LOOPBACK_REDIRECT_URI;
-    }
-    return `${origin}${CODEX_CALLBACK_PATH}`;
-  } catch {
-    return CODEX_LOOPBACK_REDIRECT_URI;
-  }
-}
-
 type CodexJwtClaims = {
   email?: unknown;
   'https://api.openai.com/auth'?: {
@@ -210,7 +184,6 @@ export const codexOauthProvider: OAuthProviderDefinition = {
     path: CODEX_LOOPBACK_CALLBACK_PATH,
     redirectUri: CODEX_LOOPBACK_REDIRECT_URI,
   },
-  resolveRedirectUri: ({ requestOrigin }) => resolveCodexRedirectUri(requestOrigin),
   buildAuthorizationUrl: ({ state, redirectUri, codeVerifier }) => buildCodexAuthorizationUrl({
     state,
     redirectUri,

@@ -258,6 +258,22 @@ export type OAuthProviderInfo = {
   supportsNativeProxy: boolean;
 };
 
+export type OAuthStartInstructions = {
+  redirectUri: string;
+  callbackPort: number;
+  callbackPath: string;
+  manualCallbackDelayMs: number;
+  sshTunnelCommand?: string;
+  sshTunnelKeyCommand?: string;
+};
+
+export type OAuthStartResponse = {
+  provider: string;
+  state: string;
+  authorizationUrl: string;
+  instructions: OAuthStartInstructions;
+};
+
 export type OAuthSessionInfo = {
   provider: string;
   state: string;
@@ -408,14 +424,18 @@ export const api = {
   startOAuthProvider: (provider: string, data?: { accountId?: number; projectId?: string }) => request(`/api/oauth/providers/${encodeURIComponent(provider)}/start`, {
     method: 'POST',
     body: JSON.stringify(data || {}),
-  }) as Promise<{ provider: string; state: string; authorizationUrl: string }>,
+  }) as Promise<OAuthStartResponse>,
   getOAuthSession: (state: string) => request(`/api/oauth/sessions/${encodeURIComponent(state)}`) as Promise<OAuthSessionInfo>,
+  submitOAuthManualCallback: (state: string, callbackUrl: string) => request(`/api/oauth/sessions/${encodeURIComponent(state)}/manual-callback`, {
+    method: 'POST',
+    body: JSON.stringify({ callbackUrl }),
+  }) as Promise<{ success: true }>,
   getOAuthConnections: (params?: { limit?: number; offset?: number }) =>
     request(`/api/oauth/connections${buildQueryString(params)}`) as Promise<OAuthConnectionsResponse>,
   rebindOAuthConnection: (accountId: number) => request(`/api/oauth/connections/${accountId}/rebind`, {
     method: 'POST',
     body: JSON.stringify({}),
-  }) as Promise<{ provider: string; state: string; authorizationUrl: string }>,
+  }) as Promise<OAuthStartResponse>,
   deleteOAuthConnection: (accountId: number) => request(`/api/oauth/connections/${accountId}`, {
     method: 'DELETE',
   }) as Promise<{ success: true }>,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type OAuthConnectionInfo, type OAuthProviderInfo } from '../api.js';
+import { api, type OAuthConnectionInfo, type OAuthProviderInfo, type OAuthStartInstructions } from '../api.js';
 
 const POLL_INTERVAL_MS = 1500;
 const CONNECTION_PAGE_LIMIT = 100;
@@ -7,6 +7,8 @@ const CONNECTION_PAGE_LIMIT = 100;
 type ActiveSession = {
   provider: string;
   state: string;
+  authorizationUrl: string;
+  instructions: OAuthStartInstructions;
 };
 
 function openOAuthPopup(provider: string, authorizationUrl: string) {
@@ -39,6 +41,9 @@ export default function OAuthManagement() {
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [sessionMessage, setSessionMessage] = useState('');
   const [actionLoadingKey, setActionLoadingKey] = useState('');
+  const [manualCallbackVisible, setManualCallbackVisible] = useState(false);
+  const [manualCallbackUrl, setManualCallbackUrl] = useState('');
+  const [manualCallbackSubmitting, setManualCallbackSubmitting] = useState(false);
 
   const loadConnections = async () => {
     const response = await api.getOAuthConnections({
@@ -107,6 +112,25 @@ export default function OAuthManagement() {
     };
   }, [activeSession]);
 
+  useEffect(() => {
+    if (!activeSession) {
+      setManualCallbackVisible(false);
+      setManualCallbackUrl('');
+      setManualCallbackSubmitting(false);
+      return;
+    }
+
+    setManualCallbackVisible(false);
+    setManualCallbackUrl('');
+    setManualCallbackSubmitting(false);
+
+    const timer = setTimeout(() => {
+      setManualCallbackVisible(true);
+    }, Math.max(0, activeSession.instructions.manualCallbackDelayMs || 0));
+
+    return () => clearTimeout(timer);
+  }, [activeSession]);
+
   const handleStart = async (provider: OAuthProviderInfo, accountId?: number) => {
     const actionKey = `start:${provider.provider}:${accountId || 0}`;
     setActionLoadingKey(actionKey);
@@ -129,12 +153,32 @@ export default function OAuthManagement() {
       setActiveSession({
         provider: started.provider,
         state: started.state,
+        authorizationUrl: started.authorizationUrl,
+        instructions: started.instructions,
       });
       openOAuthPopup(provider.provider, started.authorizationUrl);
     } catch (error: any) {
       setSessionMessage(error?.message || '无法启动 OAuth 授权');
     } finally {
       setActionLoadingKey('');
+    }
+  };
+
+  const handleSubmitManualCallback = async () => {
+    if (!activeSession) return;
+    const callbackUrl = manualCallbackUrl.trim();
+    if (!callbackUrl) {
+      setSessionMessage('请输入完整的回调 URL');
+      return;
+    }
+    setManualCallbackSubmitting(true);
+    try {
+      await api.submitOAuthManualCallback(activeSession.state, callbackUrl);
+      setSessionMessage('回调已提交，等待授权完成');
+    } catch (error: any) {
+      setSessionMessage(error?.message || '提交回调 URL 失败');
+    } finally {
+      setManualCallbackSubmitting(false);
     }
   };
 
@@ -168,6 +212,62 @@ export default function OAuthManagement() {
       {sessionMessage && (
         <div className="card" style={{ padding: 16, marginBottom: 16 }}>
           <div style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{sessionMessage}</div>
+        </div>
+      )}
+
+      {activeSession && (
+        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>授权指引</div>
+          <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', display: 'grid', gap: 10 }}>
+            <div>回调地址固定为 {activeSession.instructions.redirectUri}</div>
+            <div>
+              打开授权页后，如果你在云端部署 metapi，请先在本地运行 SSH 隧道，再继续登录。
+            </div>
+            {activeSession.instructions.sshTunnelCommand && (
+              <div>
+                <div style={{ marginBottom: 4 }}>SSH 隧道命令</div>
+                <code>{activeSession.instructions.sshTunnelCommand}</code>
+              </div>
+            )}
+            {activeSession.instructions.sshTunnelKeyCommand && (
+              <div>
+                <div style={{ marginBottom: 4 }}>SSH Key 隧道命令</div>
+                <code>{activeSession.instructions.sshTunnelKeyCommand}</code>
+              </div>
+            )}
+            <div>
+              如果授权完成后浏览器停在 localhost 错误页，复制完整地址，等待 {Math.max(1, Math.round(activeSession.instructions.manualCallbackDelayMs / 1000))} 秒后粘贴回来。
+            </div>
+            {manualCallbackVisible ? (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <input
+                  type="text"
+                  value={manualCallbackUrl}
+                  onChange={(event) => setManualCallbackUrl(event.target.value)}
+                  placeholder="粘贴完整的 callback URL"
+                />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleSubmitManualCallback}
+                    disabled={manualCallbackSubmitting}
+                  >
+                    {manualCallbackSubmitting ? '提交中...' : '提交回调 URL'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => openOAuthPopup(activeSession.provider, activeSession.authorizationUrl)}
+                  >
+                    重新打开授权页
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>手动回调入口将在几秒后可用。</div>
+            )}
+          </div>
         </div>
       )}
 

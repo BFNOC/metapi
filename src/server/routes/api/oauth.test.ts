@@ -101,14 +101,28 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       provider: string;
       state: string;
       authorizationUrl: string;
+      instructions?: {
+        redirectUri: string;
+        callbackPort: number;
+        callbackPath: string;
+        manualCallbackDelayMs: number;
+        sshTunnelCommand?: string;
+      };
     };
     expect(startBody.provider).toBe('codex');
     expect(startBody.state).toMatch(/^[a-zA-Z0-9_-]{20,}$/);
     expect(startBody.authorizationUrl).toContain('https://auth.openai.com/oauth/authorize?');
     expect(startBody.authorizationUrl).toContain('client_id=');
-    expect(startBody.authorizationUrl).toContain(encodeURIComponent('https://metapi.example/api/oauth/callback/codex'));
+    expect(startBody.authorizationUrl).toContain(encodeURIComponent('http://localhost:1455/auth/callback'));
     expect(startBody.authorizationUrl).toContain(`state=${encodeURIComponent(startBody.state)}`);
     expect(startBody.authorizationUrl).toContain('code_challenge=');
+    expect(startBody.instructions).toMatchObject({
+      redirectUri: 'http://localhost:1455/auth/callback',
+      callbackPort: 1455,
+      callbackPath: '/auth/callback',
+      manualCallbackDelayMs: 15000,
+      sshTunnelCommand: 'ssh -L 1455:127.0.0.1:1455 root@metapi.example -p 22',
+    });
 
     const sessionResponse = await app.inject({
       method: 'GET',
@@ -142,7 +156,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(startBody.authorizationUrl).not.toContain(encodeURIComponent('http://localhost:4000/api/oauth/callback/codex'));
   });
 
-  it('handles codex callback, creates oauth-backed account, and discovers plan models', async () => {
+  it('handles manual codex callback submission, creates oauth-backed account, and discovers plan models', async () => {
     const jwt = buildJwt({
       email: 'codex-user@example.com',
       'https://api.openai.com/auth': {
@@ -187,17 +201,16 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const startBody = startResponse.json() as { state: string };
 
     const callbackResponse = await app.inject({
-      method: 'GET',
-      url: `/api/oauth/callback/codex?state=${encodeURIComponent(startBody.state)}&code=oauth-code-123`,
-      headers: {
-        host: 'metapi.example',
-        'x-forwarded-proto': 'https',
+      method: 'POST',
+      url: `/api/oauth/sessions/${encodeURIComponent(startBody.state)}/manual-callback`,
+      payload: {
+        callbackUrl: `http://localhost:1455/auth/callback?state=${encodeURIComponent(startBody.state)}&code=oauth-code-123`,
       },
     });
     expect(callbackResponse.statusCode).toBe(200);
-    expect(callbackResponse.body).toContain('window.close()');
+    expect(callbackResponse.json()).toEqual({ success: true });
     expect(String(fetchMock.mock.calls[0]?.[1]?.body || '')).toContain(
-      'redirect_uri=https%3A%2F%2Fmetapi.example%2Fapi%2Foauth%2Fcallback%2Fcodex',
+      'redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback',
     );
 
     const sessionResponse = await app.inject({
@@ -252,7 +265,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(modelNames.sort()).toEqual(['gpt-5', 'gpt-5.2-codex', 'gpt-5.4']);
   });
 
-  it('marks oauth session as error and avoids creating a connection when codex model discovery fails', async () => {
+  it('marks oauth session as error and avoids creating a connection when manual codex callback model discovery fails', async () => {
     const jwt = buildJwt({
       email: 'codex-fail@example.com',
       'https://api.openai.com/auth': {
@@ -291,15 +304,16 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const startBody = startResponse.json() as { state: string };
 
     const callbackResponse = await app.inject({
-      method: 'GET',
-      url: `/api/oauth/callback/codex?state=${encodeURIComponent(startBody.state)}&code=oauth-code-456`,
-      headers: {
-        host: 'metapi.example',
-        'x-forwarded-proto': 'https',
+      method: 'POST',
+      url: `/api/oauth/sessions/${encodeURIComponent(startBody.state)}/manual-callback`,
+      payload: {
+        callbackUrl: `http://localhost:1455/auth/callback?state=${encodeURIComponent(startBody.state)}&code=oauth-code-456`,
       },
     });
-    expect(callbackResponse.statusCode).toBe(200);
-    expect(callbackResponse.body).toContain('OAuth authorization failed');
+    expect(callbackResponse.statusCode).toBe(500);
+    expect(callbackResponse.json()).toMatchObject({
+      message: expect.stringContaining('HTTP 403'),
+    });
 
     const sessionResponse = await app.inject({
       method: 'GET',
@@ -411,5 +425,30 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toEqual([]);
+  });
+
+  it('rejects malformed manual callback submissions', async () => {
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/claude/start',
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    const startBody = startResponse.json() as { state: string };
+
+    const callbackResponse = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/sessions/${encodeURIComponent(startBody.state)}/manual-callback`,
+      payload: {
+        callbackUrl: 'not-a-valid-url',
+      },
+    });
+
+    expect(callbackResponse.statusCode).toBe(400);
+    expect(callbackResponse.json()).toMatchObject({
+      message: expect.stringContaining('invalid oauth callback url'),
+    });
   });
 });

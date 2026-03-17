@@ -89,8 +89,9 @@ describe('chat proxy codex oauth compatibility', () => {
   };
 
   beforeAll(async () => {
-    const { claudeMessagesProxyRoute } = await import('./chat.js');
+    const { chatProxyRoute, claudeMessagesProxyRoute } = await import('./chat.js');
     app = Fastify();
+    await app.register(chatProxyRoute);
     await app.register(claudeMessagesProxyRoute);
   });
 
@@ -175,5 +176,73 @@ describe('chat proxy codex oauth compatibility', () => {
     expect(body.model).toBe('gpt-5.4');
     expect(body.content?.[0]?.type).toBe('text');
     expect(body.content?.[0]?.text).toContain('pong from codex');
+  });
+
+  it('translates codex SSE into Claude messages stream events instead of leaking raw response events', async () => {
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_codex_claude_stream","model":"gpt-5.4","created_at":1706000000,"status":"in_progress","output":[]}}\n\n',
+      'event: response.output_item.added\n',
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_codex_claude_stream","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
+      'event: response.content_part.added\n',
+      'data: {"type":"response.content_part.added","output_index":0,"content_index":0,"item_id":"msg_codex_claude_stream","part":{"type":"output_text","text":""}}\n\n',
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_codex_claude_stream","content_index":0,"delta":"pong from codex"}\n\n',
+      'event: response.content_part.done\n',
+      'data: {"type":"response.content_part.done","output_index":0,"content_index":0,"item_id":"msg_codex_claude_stream","part":{"type":"output_text","text":"pong from codex"}}\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_codex_claude_stream","model":"gpt-5.4","status":"completed","usage":{"input_tokens":9,"output_tokens":3,"total_tokens":12}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      payload: {
+        model: 'gpt-5.4',
+        stream: true,
+        max_tokens: 256,
+        messages: [{ role: 'user', content: 'hello codex' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('event: message_start');
+    expect(response.body).toContain('event: content_block_delta');
+    expect(response.body).toContain('pong from codex');
+    expect(response.body).not.toContain('event: response.created');
+    expect(response.body).not.toContain('"type":"response.output_text.delta"');
+  });
+
+  it('translates codex SSE into OpenAI chat completion chunks instead of leaking raw response events', async () => {
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_codex_openai_stream","model":"gpt-5.4","created_at":1706000000,"status":"in_progress","output":[]}}\n\n',
+      'event: response.output_item.added\n',
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_codex_openai_stream","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_codex_openai_stream","delta":"pong from codex"}\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_codex_openai_stream","model":"gpt-5.4","status":"completed","usage":{"input_tokens":9,"output_tokens":3,"total_tokens":12}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-5.4',
+        stream: true,
+        messages: [{ role: 'user', content: 'hello codex' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('"object":"chat.completion.chunk"');
+    expect(response.body).toContain('pong from codex');
+    expect(response.body).not.toContain('event: response.created');
+    expect(response.body).not.toContain('"type":"response.output_text.delta"');
   });
 });

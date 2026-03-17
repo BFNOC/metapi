@@ -374,6 +374,289 @@ describe('OAuthManagement page', () => {
     }
   });
 
+  it('explains oauth usage and disables unavailable providers', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'codex',
+          label: 'Codex',
+          platform: 'codex',
+          enabled: false,
+          loginType: 'oauth',
+          requiresProjectId: false,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 100,
+      offset: 0,
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        const text = collectText(root!.root);
+        expect(text).toContain('官方上游连接');
+        expect(text).toContain('CLI');
+        expect(text).toContain('下游密钥');
+      });
+
+      const startButton = root!.root.find((node) => (
+        node.type === 'button'
+        && collectText(node).includes('当前不可用')
+      ));
+      expect(startButton.props.disabled).toBe(true);
+      expect(collectText(root!.root)).toContain('当前环境未启用');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('prefers renamed account title and still shows oauth email', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'codex',
+          label: 'Codex',
+          platform: 'codex',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: false,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [
+        {
+          accountId: 7,
+          provider: 'codex',
+          username: 'Juricek Team A',
+          email: 'juricek.chen@gmail.com',
+          accountKey: 'chatgpt-account-123',
+          planType: 'team',
+          modelCount: 11,
+          modelsPreview: ['gpt-5.4'],
+          status: 'healthy',
+          routeChannelCount: 11,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        const text = collectText(root!.root);
+        expect(text).toContain('Juricek Team A');
+        expect(text).toContain('juricek.chen@gmail.com');
+      });
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('allows starting gemini oauth without entering a project id', async () => {
+    promptMock.mockReturnValueOnce('');
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'gemini-cli',
+          label: 'Gemini CLI',
+          platform: 'gemini-cli',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: true,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 100,
+      offset: 0,
+    });
+    apiMock.startOAuthProvider.mockResolvedValue({
+      provider: 'gemini-cli',
+      state: 'gemini-state-123',
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=gemini-state-123',
+      instructions: {
+        redirectUri: 'http://localhost:8085/oauth2callback',
+        callbackPort: 8085,
+        callbackPath: '/oauth2callback',
+        manualCallbackDelayMs: 15000,
+      },
+    });
+    apiMock.getOAuthSession.mockResolvedValue({
+      provider: 'gemini-cli',
+      state: 'gemini-state-123',
+      status: 'pending',
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+      });
+
+      const startButton = root!.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('连接 Gemini CLI')
+      ));
+
+      await act(async () => {
+        await startButton.props.onClick();
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+      });
+
+      expect(promptMock).toHaveBeenCalled();
+      expect(apiMock.startOAuthProvider).toHaveBeenCalledWith('gemini-cli', { projectId: undefined });
+      expect(openMock).toHaveBeenCalledWith(
+        'https://accounts.google.com/o/oauth2/v2/auth?state=gemini-state-123',
+        'oauth-gemini-cli',
+        expect.stringContaining('width=540'),
+      );
+      expect(collectText(root!.root)).not.toContain('Gemini CLI 连接需要 Project ID');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('rebinds gemini oauth without prompting for a project id again', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'gemini-cli',
+          label: 'Gemini CLI',
+          platform: 'gemini-cli',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: true,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [
+        {
+          accountId: 11,
+          provider: 'gemini-cli',
+          email: 'gemini-user@example.com',
+          planType: 'cloud',
+          modelCount: 2,
+          modelsPreview: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+          status: 'healthy',
+          projectId: 'project-demo',
+          routeChannelCount: 0,
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    });
+    apiMock.rebindOAuthConnection.mockResolvedValue({
+      provider: 'gemini-cli',
+      state: 'gemini-rebind-123',
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=gemini-rebind-123',
+      instructions: {
+        redirectUri: 'http://localhost:8085/oauth2callback',
+        callbackPort: 8085,
+        callbackPath: '/oauth2callback',
+        manualCallbackDelayMs: 15000,
+      },
+    });
+    apiMock.getOAuthSession.mockResolvedValue({
+      provider: 'gemini-cli',
+      state: 'gemini-rebind-123',
+      status: 'pending',
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+      });
+
+      const rebindButton = root!.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('重新授权')
+      ));
+
+      await act(async () => {
+        await rebindButton.props.onClick();
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+      });
+
+      expect(promptMock).not.toHaveBeenCalled();
+      expect(apiMock.rebindOAuthConnection).toHaveBeenCalledWith(11);
+      expect(openMock).toHaveBeenCalledWith(
+        'https://accounts.google.com/o/oauth2/v2/auth?state=gemini-rebind-123',
+        'oauth-gemini-cli',
+        expect.stringContaining('width=540'),
+      );
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('shows oauth connection status metadata and allows deleting a connection', async () => {
     apiMock.getOAuthProviders.mockResolvedValue({
       providers: [

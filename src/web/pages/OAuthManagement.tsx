@@ -34,6 +34,29 @@ function resolveConnectionStatusLabel(status?: string): string {
   return status === 'abnormal' ? '异常' : '正常';
 }
 
+function asTrimmedString(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveProviderActionLabel(provider: OAuthProviderInfo, loading: boolean): string {
+  if (loading) return '启动中...';
+  if (!provider.enabled) return '当前不可用';
+  return `连接 ${provider.label}`;
+}
+
+function resolveConnectionPrimaryTitle(connection: OAuthConnectionInfo): string {
+  return asTrimmedString(connection.username)
+    || asTrimmedString(connection.email)
+    || asTrimmedString(connection.provider)
+    || 'OAuth 连接';
+}
+
+function resolveConnectionEmailLabel(connection: OAuthConnectionInfo): string {
+  const email = asTrimmedString(connection.email);
+  if (!email) return '';
+  return email;
+}
+
 function renderCodeBlock(value: string) {
   return (
     <code style={{
@@ -172,20 +195,21 @@ export default function OAuthManagement() {
   }, [activeSession]);
 
   const handleStart = async (provider: OAuthProviderInfo, accountId?: number) => {
+    if (!provider.enabled) {
+      setSessionMessage(`${provider.label} 当前环境未启用`);
+      return;
+    }
     const actionKey = `start:${provider.provider}:${accountId || 0}`;
     setActionLoadingKey(actionKey);
     try {
-      const projectId = provider.requiresProjectId
+      const shouldPromptForProjectId = provider.requiresProjectId && !accountId;
+      const projectId = shouldPromptForProjectId
         ? (() => {
           if (typeof window === 'undefined' || typeof window.prompt !== 'function') return undefined;
-          const value = window.prompt('输入 Google Cloud Project ID');
+          const value = window.prompt('输入 Google Cloud Project ID（可选，留空则自动解析）');
           return typeof value === 'string' && value.trim() ? value.trim() : undefined;
         })()
         : undefined;
-      if (provider.requiresProjectId && !projectId && !accountId) {
-        setSessionMessage('Gemini CLI 连接需要 Project ID');
-        return;
-      }
       const started = accountId
         ? await api.rebindOAuthConnection(accountId)
         : await api.startOAuthProvider(provider.provider, { projectId });
@@ -245,7 +269,9 @@ export default function OAuthManagement() {
       <div className="page-header">
         <div>
           <div className="page-title">OAuth 管理</div>
-          <div className="page-subtitle">统一管理需要浏览器授权的上游连接，包括 Codex、Claude 和 Gemini CLI。</div>
+          <div className="page-subtitle">
+            统一管理需要浏览器授权的官方上游连接。授权完成后，可把 Codex、Claude、Gemini CLI 等 CLI / Web 登录态接入 metapi，继续通过统一路由、下游密钥、模型操练场和第三方客户端转发使用。
+          </div>
         </div>
       </div>
 
@@ -348,26 +374,33 @@ export default function OAuthManagement() {
 
       <div className="card" style={{ padding: 20, marginBottom: 16 }}>
         <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>授权入口</div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
+          适合把官方 CLI / Web 登录得到的账号统一接入 metapi，再供各种 CLI、SDK、下游密钥和模型操练场复用。
+        </div>
         <div style={{ display: 'grid', gap: 12 }}>
           {providers.map((provider) => {
             const actionKey = `start:${provider.provider}:0`;
+            const disabled = !provider.enabled || actionLoadingKey === actionKey;
             return (
               <div key={provider.provider} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{provider.label}</div>
                   <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
                     {provider.platform}
-                    {provider.requiresProjectId ? ' · 需要 Project ID' : ''}
+                    {provider.requiresProjectId ? ' · 可选 Project ID' : ''}
                     {provider.supportsNativeProxy ? ' · 原生代理' : ''}
+                    {!provider.enabled ? ' · 当前环境未启用' : ''}
                   </div>
                 </div>
                 <button
                   type="button"
                   className="btn btn-primary"
                   onClick={() => handleStart(provider)}
-                  disabled={actionLoadingKey === actionKey}
+                  disabled={disabled}
+                  title={!provider.enabled ? `${provider.label} 当前环境未启用` : undefined}
+                  style={!provider.enabled ? { opacity: 0.55, cursor: 'not-allowed' } : undefined}
                 >
-                  {actionLoadingKey === actionKey ? '启动中...' : `连接 ${provider.label}`}
+                  {resolveProviderActionLabel(provider, actionLoadingKey === actionKey)}
                 </button>
               </div>
             );
@@ -384,13 +417,20 @@ export default function OAuthManagement() {
           {connections.map((connection) => {
             const rebindActionKey = `start:${connection.provider}:${connection.accountId}`;
             const deleteActionKey = `delete:${connection.accountId}`;
+            const primaryTitle = resolveConnectionPrimaryTitle(connection);
+            const emailLabel = resolveConnectionEmailLabel(connection);
             return (
               <div key={connection.accountId} style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: 14 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{connection.email || connection.username || connection.provider}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{primaryTitle}</div>
+                    {emailLabel && emailLabel !== primaryTitle && (
+                      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
+                        授权邮箱: {emailLabel}
+                      </div>
+                    )}
                     <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
-                      {connection.planType || 'unknown'} · {connection.modelCount} 个模型
+                      {connection.provider} · {connection.planType || 'unknown'} · {connection.modelCount} 个模型
                     </div>
                     {connection.accountKey && (
                       <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>

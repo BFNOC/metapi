@@ -43,6 +43,7 @@ const FAILURE_BACKOFF_BASE_SEC = 15;
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
 const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
+const MAX_ROUTE_REGEX_BODY_LENGTH = 256;
 
 function fibonacciNumber(index: number): number {
   if (index <= 2) return 1;
@@ -289,10 +290,121 @@ export function isRegexModelPattern(pattern: string): boolean {
   return pattern.trim().toLowerCase().startsWith('re:');
 }
 
+function readRegexQuantifierLength(pattern: string, startIndex: number): number {
+  const ch = pattern[startIndex];
+  if (ch === '*' || ch === '+' || ch === '?') return 1;
+  if (ch !== '{') return 0;
+
+  let index = startIndex + 1;
+  let sawDigit = false;
+  while (index < pattern.length && /\d/.test(pattern[index])) {
+    sawDigit = true;
+    index += 1;
+  }
+  if (!sawDigit) return 0;
+
+  if (pattern[index] === ',') {
+    index += 1;
+    while (index < pattern.length && /\d/.test(pattern[index])) {
+      index += 1;
+    }
+  }
+
+  if (pattern[index] !== '}') return 0;
+  return index - startIndex + 1;
+}
+
+function isSafeRegexPatternBody(body: string): boolean {
+  if (!body || body.length > MAX_ROUTE_REGEX_BODY_LENGTH) return false;
+  if (!/^[a-z0-9\s.^$|()[\]{}+*?\\:_/-]+$/i.test(body)) return false;
+  if (body.includes('(?=') || body.includes('(?!') || body.includes('(?<=') || body.includes('(?<!') || body.includes('(?<')) {
+    return false;
+  }
+  if (/(^|[^\\])\\[1-9]/.test(body)) {
+    return false;
+  }
+
+  const groupStack: Array<{ hasInnerQuantifier: boolean; hasAlternation: boolean }> = [];
+  let escaped = false;
+  let inCharClass = false;
+
+  for (let index = 0; index < body.length; index += 1) {
+    const ch = body[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (inCharClass) {
+      if (ch === ']') inCharClass = false;
+      continue;
+    }
+
+    if (ch === '[') {
+      inCharClass = true;
+      continue;
+    }
+
+    if (ch === '(') {
+      if (body[index + 1] === '?') {
+        if (body[index + 2] !== ':') {
+          return false;
+        }
+        groupStack.push({ hasInnerQuantifier: false, hasAlternation: false });
+        index += 2;
+        continue;
+      }
+
+      groupStack.push({ hasInnerQuantifier: false, hasAlternation: false });
+      continue;
+    }
+
+    if (ch === '|') {
+      if (groupStack.length > 0) {
+        groupStack[groupStack.length - 1].hasAlternation = true;
+      }
+      continue;
+    }
+
+    if (ch === ')') {
+      const group = groupStack.pop();
+      if (!group) return false;
+
+      const quantifierLength = readRegexQuantifierLength(body, index + 1);
+      if (quantifierLength > 0 && (group.hasInnerQuantifier || group.hasAlternation)) {
+        return false;
+      }
+
+      const parent = groupStack[groupStack.length - 1];
+      if (parent && (group.hasInnerQuantifier || quantifierLength > 0)) {
+        parent.hasInnerQuantifier = true;
+      }
+      continue;
+    }
+
+    const quantifierLength = readRegexQuantifierLength(body, index);
+    if (quantifierLength > 0) {
+      if (groupStack.length > 0) {
+        groupStack[groupStack.length - 1].hasInnerQuantifier = true;
+      }
+      index += quantifierLength - 1;
+    }
+  }
+
+  return !escaped && !inCharClass && groupStack.length === 0;
+}
+
 export function parseRegexModelPattern(pattern: string): RegExp | null {
   if (!isRegexModelPattern(pattern)) return null;
   const body = pattern.trim().slice(3).trim();
   if (!body) return null;
+  if (!isSafeRegexPatternBody(body)) return null;
   try {
     return new RegExp(body);
   } catch {

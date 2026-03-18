@@ -350,6 +350,7 @@ describe('buildUpstreamEndpointRequest', () => {
         Originator: 'codex_cli_rs',
         'Chatgpt-Account-Id': 'chatgpt-account-123',
       },
+      codexSessionCacheKey: 'gpt-5.2-codex:proxy:test-key',
     } as any);
 
     expect(request.path).toBe('/responses');
@@ -415,6 +416,56 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(firstRequest.headers.Session_id).toBe(secondRequest.headers.Session_id);
     expect(firstRequest.headers.Conversation_id).toBe(secondRequest.headers.Conversation_id);
     expect(firstRequest.body.prompt_cache_key).toBe(secondRequest.body.prompt_cache_key);
+  });
+
+  it('does not synthesize prompt_cache_key or conversation_id for native codex responses requests without one', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {},
+      downstreamFormat: 'responses',
+      responsesOriginalBody: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+      },
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+    } as any);
+
+    expect(request.headers.Session_id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(request.headers.Conversation_id).toBeUndefined();
+    expect(request.body.prompt_cache_key).toBeUndefined();
+  });
+
+  it('preserves explicit prompt_cache_key for native codex responses requests', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {},
+      downstreamFormat: 'responses',
+      responsesOriginalBody: {
+        model: 'gpt-5.4',
+        prompt_cache_key: 'codex-cache-123',
+        input: 'hello codex',
+      },
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+      codexExplicitSessionId: 'codex-cache-123',
+    } as any);
+
+    expect(request.headers.Session_id).toBe('codex-cache-123');
+    expect(request.headers.Conversation_id).toBe('codex-cache-123');
+    expect(request.body.prompt_cache_key).toBe('codex-cache-123');
   });
 
   it('builds gemini-cli native requests with project envelope and bearer headers', () => {

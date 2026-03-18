@@ -124,24 +124,11 @@ function carriesResponsesFileUrlInput(value: unknown): boolean {
 
 type UsageSummary = ReturnType<typeof parseProxyUsage>;
 
-function deriveCodexSessionCacheKey(input: {
-  body: Record<string, unknown>;
-  requestedModel: string;
-  proxyToken: string | null;
-}): string | null {
-  const promptCacheKey = typeof input.body.prompt_cache_key === 'string'
-    ? input.body.prompt_cache_key.trim()
+function deriveCodexExplicitSessionId(body: Record<string, unknown>): string | null {
+  const promptCacheKey = typeof body.prompt_cache_key === 'string'
+    ? body.prompt_cache_key.trim()
     : '';
-  if (promptCacheKey) {
-    return `${input.requestedModel}:responses:${promptCacheKey}`;
-  }
-
-  const proxyToken = typeof input.proxyToken === 'string' ? input.proxyToken.trim() : '';
-  if (proxyToken) {
-    return `${input.requestedModel}:proxy:${proxyToken}`;
-  }
-
-  return null;
+  return promptCacheKey || null;
 }
 
 export async function responsesProxyRoute(app: FastifyInstance) {
@@ -271,11 +258,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
       );
       const buildEndpointRequest = (endpoint: 'chat' | 'messages' | 'responses') => {
         const upstreamStream = isStream || (isCodexSite && endpoint === 'responses');
-        const codexSessionCacheKey = deriveCodexSessionCacheKey({
-          body: normalizedResponsesBody,
-          requestedModel,
-          proxyToken: getProxyAuthContext(request)?.token || null,
-        });
+        const codexExplicitSessionId = deriveCodexExplicitSessionId(normalizedResponsesBody);
         const endpointRequest = buildUpstreamEndpointRequest({
           endpoint,
           modelName,
@@ -290,7 +273,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           responsesOriginalBody: normalizedResponsesBody,
           downstreamHeaders: request.headers as Record<string, unknown>,
           providerHeaders: buildProviderHeaders(),
-          codexSessionCacheKey,
+          codexExplicitSessionId,
         });
         const upstreamPath = (
           isCompactRequest && endpoint === 'responses'

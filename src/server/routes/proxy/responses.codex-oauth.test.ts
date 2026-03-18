@@ -193,9 +193,7 @@ describe('responses proxy codex oauth refresh', () => {
     expect(secondOptions.headers['Chatgpt-Account-Id'] || secondOptions.headers['chatgpt-account-id']).toBe('chatgpt-account-123');
     expect(secondOptions.headers.Version || secondOptions.headers.version).toBe('0.101.0');
     expect(String(secondOptions.headers.Session_id || secondOptions.headers.session_id || '')).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(secondOptions.headers.Conversation_id || secondOptions.headers.conversation_id).toBe(
-      secondOptions.headers.Session_id || secondOptions.headers.session_id,
-    );
+    expect(secondOptions.headers.Conversation_id || secondOptions.headers.conversation_id).toBeUndefined();
     expect(secondOptions.headers['User-Agent'] || secondOptions.headers['user-agent']).toBe('codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464');
     expect(secondOptions.headers.Accept || secondOptions.headers.accept).toBe('text/event-stream');
     expect(secondOptions.headers.Connection || secondOptions.headers.connection).toBe('Keep-Alive');
@@ -230,9 +228,7 @@ describe('responses proxy codex oauth refresh', () => {
     const [, options] = fetchMock.mock.calls[0] as [string, any];
     const forwardedBody = JSON.parse(options.body);
     expect(forwardedBody.instructions).toBe('');
-    expect(forwardedBody.prompt_cache_key).toBe(
-      options.headers.Session_id || options.headers.session_id,
-    );
+    expect(forwardedBody.prompt_cache_key).toBeUndefined();
     expect(forwardedBody.stream).toBe(true);
     expect(forwardedBody.input).toEqual([
       {
@@ -241,6 +237,39 @@ describe('responses proxy codex oauth refresh', () => {
         content: [{ type: 'input_text', text: 'hello codex' }],
       },
     ]);
+  });
+
+  it('preserves explicit prompt_cache_key for codex responses requests', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_codex_with_cache_key',
+      object: 'response',
+      model: 'gpt-5.2-codex',
+      status: 'completed',
+      output_text: 'ok with cache key',
+      usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2-codex',
+        prompt_cache_key: 'codex-cache-123',
+        input: 'hello codex',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, any];
+    const forwardedBody = JSON.parse(options.body);
+    expect(options.headers.Session_id || options.headers.session_id).toBe('codex-cache-123');
+    expect(options.headers.Conversation_id || options.headers.conversation_id).toBe('codex-cache-123');
+    expect(forwardedBody.prompt_cache_key).toBe('codex-cache-123');
   });
 
   it('records codex usage_limit_reached reset hints on upstream 429 failures', async () => {

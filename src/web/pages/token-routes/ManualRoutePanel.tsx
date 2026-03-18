@@ -4,8 +4,10 @@ import ModernSelect from '../../components/ModernSelect.js';
 import { tr } from '../../i18n.js';
 import type { RouteIconOption, RouteMode, RouteSummaryRow } from './types.js';
 import {
+  ROUTE_ICON_NONE_VALUE,
   getModelPatternError,
   isExactModelPattern,
+  isRouteIconNoneValue,
   matchesModelPattern,
   normalizeRouteDisplayIconValue,
   normalizeRouteMode,
@@ -46,6 +48,29 @@ function toggleSourceRouteId(sourceRouteIds: number[], routeId: number): number[
   return [...sourceRouteIds, routeId].sort((a, b) => a - b);
 }
 
+function SearchField({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (nextValue: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <div className="toolbar-search" style={{ width: '100%' }}>
+      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+      </svg>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+      />
+    </div>
+  );
+}
+
 export default function ManualRoutePanel({
   show,
   editingRouteId,
@@ -59,11 +84,15 @@ export default function ManualRoutePanel({
   onSave,
   onCancel,
 }: ManualRoutePanelProps) {
+  const [showSourcePicker, setShowSourcePicker] = useState(false);
   const [sourceSearch, setSourceSearch] = useState('');
+  const [sourcePickerSelection, setSourcePickerSelection] = useState<number[]>([]);
 
   useEffect(() => {
     if (!show) {
+      setShowSourcePicker(false);
       setSourceSearch('');
+      setSourcePickerSelection([]);
     }
   }, [show]);
 
@@ -106,6 +135,29 @@ export default function ManualRoutePanel({
       .filter((route): route is RouteSummaryRow => !!route);
   }, [exactSourceRouteOptions, form.sourceRouteIds]);
 
+  const autoBrandIconEnabled = !isRouteIconNoneValue(form.displayIcon);
+  const hasExplicitIconValue = !!normalizeRouteDisplayIconValue(form.displayIcon);
+
+  const openSourcePicker = () => {
+    setSourcePickerSelection([...form.sourceRouteIds]);
+    setSourceSearch('');
+    setShowSourcePicker(true);
+  };
+
+  const closeSourcePicker = () => {
+    setShowSourcePicker(false);
+    setSourceSearch('');
+  };
+
+  const confirmSourcePicker = () => {
+    setForm((current) => ({
+      ...current,
+      sourceRouteIds: [...sourcePickerSelection].sort((a, b) => a - b),
+    }));
+    setShowSourcePicker(false);
+    setSourceSearch('');
+  };
+
   const footer = (
     <>
       <button
@@ -137,214 +189,279 @@ export default function ManualRoutePanel({
     </>
   );
 
+  const sourcePickerFooter = (
+    <>
+      <button
+        type="button"
+        onClick={closeSourcePicker}
+        className="btn btn-ghost"
+        style={{ border: '1px solid var(--color-border)' }}
+      >
+        {tr('取消')}
+      </button>
+      <button
+        type="button"
+        onClick={() => setSourcePickerSelection([])}
+        className="btn btn-ghost"
+        disabled={sourcePickerSelection.length === 0}
+      >
+        {tr('清空')}
+      </button>
+      <button
+        type="button"
+        onClick={confirmSourcePicker}
+        className="btn btn-primary"
+      >
+        {`确认选择 (${sourcePickerSelection.length})`}
+      </button>
+    </>
+  );
+
   return (
-    <CenteredModal
-      open={show}
-      onClose={onCancel}
-      title={editingRouteId ? tr('编辑群组') : tr('新建群组')}
-      footer={footer}
-      maxWidth={860}
-      closeOnEscape
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {editingLegacyPatternGroup ? (
-          <div
-            style={{
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: '12px 14px',
-              background: 'var(--color-bg-card)',
-            }}
-          >
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 6 }}>
-              {tr('高级规则群组')}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              {tr('该群组使用高级模型匹配规则创建，普通模式不可编辑；修改后会按当前可用模型重新匹配自动通道。')}
-            </div>
-          </div>
-        ) : routeMode === 'explicit_group' ? (
-          <div
-            style={{
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: '12px 14px',
-              background: 'var(--color-bg-card)',
-            }}
-          >
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 6 }}>
-              {tr('模型重定向')}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              {tr('将多个现有模型合并为一个对外模型名，实现模型重定向。')}
-            </div>
-          </div>
-        ) : (
-          <div
-            style={{
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              padding: '12px 14px',
-              background: 'var(--color-bg-card)',
-            }}
-          >
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 6 }}>
-              {tr('高级规则群组')}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              {tr('使用模型匹配规则创建群组，适合需要 regex / glob 的高级场景。')}
-            </div>
-          </div>
-        )}
-
-        {routeMode === 'explicit_group' ? (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12 }}>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('对外模型名')}</span>
-                <input
-                  placeholder={tr('对外模型名（例如 claude-opus-4-6）')}
-                  value={form.displayName}
-                  onChange={(e) => setForm((current) => ({ ...current, displayName: e.target.value }))}
-                  style={{
-                    width: '100%',
-                    padding: '10px 14px',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: 13,
-                    outline: 'none',
-                    background: 'var(--color-bg)',
-                    color: 'var(--color-text-primary)',
-                  }}
-                />
-              </label>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
-                    {tr('来源模型')}
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                    {tr('选择一个或多个现有精确模型路由作为来源。')}
-                  </div>
-                </div>
-                {!editingRouteId && (
-                  <button
-                    type="button"
-                    className="btn btn-link"
-                    onClick={() => setForm((current) => ({ ...current, routeMode: 'pattern', advancedOpen: true }))}
-                  >
-                    {tr('改用高级规则')}
-                  </button>
-                )}
-              </div>
-
-              <input
-                placeholder={tr('搜索来源模型')}
-                value={sourceSearch}
-                onChange={(e) => setSourceSearch(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '10px 14px',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: 13,
-                  outline: 'none',
-                  background: 'var(--color-bg)',
-                  color: 'var(--color-text-primary)',
-                }}
-              />
-
-              {selectedSourceRoutes.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {selectedSourceRoutes.map((route) => (
-                    <button
-                      key={`selected-${route.id}`}
-                      type="button"
-                      className="badge badge-info"
-                      style={{ fontSize: 11, cursor: 'pointer' }}
-                      onClick={() => setForm((current) => ({
-                        ...current,
-                        sourceRouteIds: toggleSourceRouteId(current.sourceRouteIds, route.id),
-                      }))}
-                    >
-                      {renderRouteOptionLabel(route)} ×
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                  gap: 10,
-                  maxHeight: 280,
-                  overflowY: 'auto',
-                  paddingRight: 4,
-                }}
-              >
-                {filteredSourceRoutes.map((route) => {
-                  const selected = form.sourceRouteIds.includes(route.id);
-                  const label = renderRouteOptionLabel(route);
-                  return (
-                    <button
-                      key={route.id}
-                      type="button"
-                      onClick={() => setForm((current) => ({
-                        ...current,
-                        sourceRouteIds: toggleSourceRouteId(current.sourceRouteIds, route.id),
-                      }))}
-                      className="btn btn-ghost"
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'flex-start',
-                        gap: 6,
-                        padding: '12px 14px',
-                        border: `1px solid ${selected ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                        background: selected ? 'color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-card))' : 'var(--color-bg-card)',
-                        boxShadow: selected ? '0 0 0 1px color-mix(in srgb, var(--color-primary) 25%, transparent)' : 'none',
-                      }}
-                    >
-                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>{label}</span>
-                      {label !== route.modelPattern && (
-                        <code style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{route.modelPattern}</code>
-                      )}
-                      <span style={{ fontSize: 11, color: selected ? 'var(--color-primary)' : 'var(--color-text-muted)' }}>
-                        {selected ? tr('已选中') : tr('点击添加')}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {filteredSourceRoutes.length === 0 && (
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                  {tr('没有匹配的来源模型。')}
-                </div>
-              )}
-            </div>
-
-            <details
-              open={form.advancedOpen}
-              onToggle={(event) => {
-                const nextOpen = (event.currentTarget as HTMLDetailsElement).open;
-                setForm((current) => ({ ...current, advancedOpen: nextOpen }));
-              }}
+    <>
+      <CenteredModal
+        open={show}
+        onClose={onCancel}
+        title={editingRouteId ? tr('编辑群组') : tr('新建群组')}
+        footer={footer}
+        maxWidth={860}
+        closeOnEscape
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {editingLegacyPatternGroup ? (
+            <div
               style={{
                 border: '1px solid var(--color-border)',
                 borderRadius: 'var(--radius-md)',
-                padding: '0 14px',
+                padding: '12px 14px',
                 background: 'var(--color-bg-card)',
               }}
             >
-              <summary style={{ cursor: 'pointer', padding: '12px 0', fontSize: 13, fontWeight: 600 }}>
-                {tr('高级配置')}
-              </summary>
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12, paddingBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 6 }}>
+                {tr('高级规则群组')}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                {tr('该群组使用高级模型匹配规则创建，普通模式不可编辑；修改后会按当前可用模型重新匹配自动通道。')}
+              </div>
+            </div>
+          ) : routeMode === 'explicit_group' ? (
+            <div
+              style={{
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                padding: '12px 14px',
+                background: 'var(--color-bg-card)',
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 6 }}>
+                {tr('模型重定向')}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                {tr('将多个现有模型合并为一个对外模型名，实现模型重定向。')}
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                padding: '12px 14px',
+                background: 'var(--color-bg-card)',
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 6 }}>
+                {tr('高级规则群组')}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                {tr('使用模型匹配规则创建群组，适合需要 regex / glob 的高级场景。')}
+              </div>
+            </div>
+          )}
+
+          {routeMode === 'explicit_group' ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 12 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('对外模型名')}</span>
+                  <input
+                    placeholder={tr('对外模型名（例如 claude-opus-4-6）')}
+                    value={form.displayName}
+                    onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: 13,
+                      outline: 'none',
+                      background: 'var(--color-bg)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+                      {tr('来源模型')}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                      {tr('选择一个或多个现有精确模型路由作为来源。')}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {!editingRouteId && (
+                      <button
+                        type="button"
+                        className="btn btn-link"
+                        onClick={() => setForm((current) => ({ ...current, routeMode: 'pattern', advancedOpen: true }))}
+                      >
+                        {tr('改用高级规则')}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={openSourcePicker}
+                    >
+                      {tr('选择来源模型')}
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '12px 14px',
+                    background: 'var(--color-bg-card)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                    {selectedSourceRoutes.length > 0
+                      ? `已选择 ${selectedSourceRoutes.length} 个来源模型`
+                      : tr('尚未选择来源模型。')}
+                  </div>
+
+                  {selectedSourceRoutes.length > 0 ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {selectedSourceRoutes.slice(0, 8).map((route) => (
+                        <button
+                          key={`selected-${route.id}`}
+                          type="button"
+                          className="badge badge-info"
+                          style={{ fontSize: 11, cursor: 'pointer' }}
+                          onClick={() => setForm((current) => ({
+                            ...current,
+                            sourceRouteIds: toggleSourceRouteId(current.sourceRouteIds, route.id),
+                          }))}
+                        >
+                          {renderRouteOptionLabel(route)} ×
+                        </button>
+                      ))}
+                      {selectedSourceRoutes.length > 8 && (
+                        <span className="badge badge-muted" style={{ fontSize: 11 }}>
+                          {`+${selectedSourceRoutes.length - 8}`}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                      {tr('点击“选择来源模型”打开大列表，搜索后快速勾选。')}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '12px 14px',
+                  background: 'var(--color-bg-card)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                  {tr('高级配置')}
+                </div>
+
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoBrandIconEnabled}
+                    onChange={(event) => {
+                      const checked = !!event.target.checked;
+                      setForm((current) => ({
+                        ...current,
+                        displayIcon: checked
+                          ? (isRouteIconNoneValue(current.displayIcon) ? '' : current.displayIcon)
+                          : ROUTE_ICON_NONE_VALUE,
+                      }));
+                    }}
+                    style={{ marginTop: 2, width: 16, height: 16, accentColor: 'var(--color-primary)' }}
+                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>{tr('自动品牌图标')}</span>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+                      {autoBrandIconEnabled
+                        ? tr('开启后会优先保留现有图标策略；未设置固定图标时按模型自动识别品牌。')
+                        : tr('关闭后该群组不显示品牌图标，只保留文字标题。')}
+                    </span>
+                    {hasExplicitIconValue && autoBrandIconEnabled && (
+                      <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                        {tr('当前群组如果已设置固定品牌图标，保持开启不会移除它。')}
+                      </span>
+                    )}
+                  </div>
+                </label>
+              </div>
+            </>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {!editingLegacyPatternGroup && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="btn btn-link"
+                    onClick={() => setForm((current) => ({
+                      ...current,
+                      routeMode: 'explicit_group',
+                      advancedOpen: false,
+                    }))}
+                  >
+                    {tr('返回简单模式')}
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 220px', gap: 12 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('群组显示名')}</span>
+                  <input
+                    placeholder={tr('群组显示名（可选，例如 claude-opus-4-6）')}
+                    value={form.displayName}
+                    onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: 13,
+                      outline: 'none',
+                      background: 'var(--color-bg)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                  />
+                </label>
+
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('群组图标')}</span>
                   <ModernSelect
@@ -356,140 +473,173 @@ export default function ManualRoutePanel({
                   />
                 </label>
               </div>
-            </details>
-          </>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {!editingLegacyPatternGroup && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button
-                  type="button"
-                  className="btn btn-link"
-                  onClick={() => setForm((current) => ({
-                    ...current,
-                    routeMode: 'explicit_group',
-                    advancedOpen: false,
-                  }))}
-                >
-                  {tr('返回简单模式')}
-                </button>
-              </div>
-            )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 220px', gap: 12 }}>
               <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('群组显示名')}</span>
+                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('模型匹配')}</span>
                 <input
-                  placeholder={tr('群组显示名（可选，例如 claude-opus-4-6）')}
-                  value={form.displayName}
-                  onChange={(e) => setForm((current) => ({ ...current, displayName: e.target.value }))}
+                  placeholder={tr('模型匹配（如 gpt-4o、claude-*、re:^claude-.*$）')}
+                  value={form.modelPattern}
+                  onChange={(event) => setForm((current) => ({ ...current, modelPattern: event.target.value }))}
                   style={{
                     width: '100%',
                     padding: '10px 14px',
-                    border: '1px solid var(--color-border)',
+                    border: `1px solid ${modelPatternError ? 'var(--color-danger)' : 'var(--color-border)'}`,
                     borderRadius: 'var(--radius-sm)',
                     fontSize: 13,
                     outline: 'none',
                     background: 'var(--color-bg)',
                     color: 'var(--color-text-primary)',
+                    fontFamily: 'var(--font-mono)',
                   }}
                 />
               </label>
 
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('群组图标')}</span>
-                <ModernSelect
-                  value={routeIconSelectValue}
-                  onChange={(nextValue) => setForm((current) => ({ ...current, displayIcon: nextValue }))}
-                  options={routeIconSelectOptions}
-                  placeholder={tr('图标（可选，选择品牌图标）')}
-                  emptyLabel={tr('暂无可选品牌图标')}
-                />
-              </label>
-            </div>
-
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('模型匹配')}</span>
-              <input
-                placeholder={tr('模型匹配（如 gpt-4o、claude-*、re:^claude-.*$）')}
-                value={form.modelPattern}
-                onChange={(e) => setForm((current) => ({ ...current, modelPattern: e.target.value }))}
-                style={{
-                  width: '100%',
-                  padding: '10px 14px',
-                  border: `1px solid ${modelPatternError ? 'var(--color-danger)' : 'var(--color-border)'}`,
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: 13,
-                  outline: 'none',
-                  background: 'var(--color-bg)',
-                  color: 'var(--color-text-primary)',
-                  fontFamily: 'var(--font-mono)',
-                }}
-              />
-            </label>
-
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: -4 }}>
-              {isExactModelPattern(form.modelPattern)
-                ? tr('当前为精确模型匹配。')
-                : tr('正则请使用 re: 前缀；例如 re:^claude-(opus|sonnet)-4-6$')}
-            </div>
-
-            {modelPatternError && (
-              <div style={{ fontSize: 12, color: 'var(--color-danger)', marginTop: -4 }}>
-                {modelPatternError}
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: -4 }}>
+                {isExactModelPattern(form.modelPattern)
+                  ? tr('当前为精确模型匹配。')
+                  : tr('正则请使用 re: 前缀；例如 re:^claude-(opus|sonnet)-4-6$')}
               </div>
-            )}
 
-            {form.modelPattern.trim() && !modelPatternError && (
-              <div
-                style={{
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: '10px 12px',
-                  background: 'var(--color-bg)',
-                }}
-              >
-                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
-                  {tr('规则预览：命中样本')} {previewMatchedModels.length} / {previewModelSamples.length}
+              {modelPatternError && (
+                <div style={{ fontSize: 12, color: 'var(--color-danger)', marginTop: -4 }}>
+                  {modelPatternError}
                 </div>
+              )}
 
-                {previewModelSamples.length === 0 ? (
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                    {tr('当前暂无可预览模型，请先同步模型。')}
+              {form.modelPattern.trim() && !modelPatternError && (
+                <div
+                  style={{
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '10px 12px',
+                    background: 'var(--color-bg)',
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
+                    {tr('规则预览：命中样本')} {previewMatchedModels.length} / {previewModelSamples.length}
                   </div>
-                ) : previewMatchedModels.length === 0 ? (
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                    {tr('当前规则未命中任何样本模型。')}
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {previewMatchedModels.slice(0, 12).map((modelName) => (
-                      <code
-                        key={modelName}
-                        style={{
-                          fontSize: 11,
-                          padding: '2px 6px',
-                          borderRadius: 6,
-                          border: '1px solid var(--color-border)',
-                          background: 'var(--color-bg-card)',
-                        }}
-                      >
-                        {modelName}
-                      </code>
-                    ))}
-                  </div>
-                )}
 
-                {previewMatchedModels.length > 12 && (
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 8 }}>
-                    {tr('仅展示前 12 个命中样本。')}
-                  </div>
-                )}
+                  {previewModelSamples.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                      {tr('当前暂无可预览模型，请先同步模型。')}
+                    </div>
+                  ) : previewMatchedModels.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                      {tr('当前规则未命中任何样本模型。')}
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {previewMatchedModels.slice(0, 12).map((modelName) => (
+                        <code
+                          key={modelName}
+                          style={{
+                            fontSize: 11,
+                            padding: '2px 6px',
+                            borderRadius: 6,
+                            border: '1px solid var(--color-border)',
+                            background: 'var(--color-bg-card)',
+                          }}
+                        >
+                          {modelName}
+                        </code>
+                      ))}
+                    </div>
+                  )}
+
+                  {previewMatchedModels.length > 12 && (
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 8 }}>
+                      {tr('仅展示前 12 个命中样本。')}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </CenteredModal>
+
+      <CenteredModal
+        open={show && showSourcePicker}
+        onClose={closeSourcePicker}
+        title={tr('选择来源模型')}
+        footer={sourcePickerFooter}
+        maxWidth={980}
+        closeOnEscape
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                {`已选择 ${sourcePickerSelection.length} 个来源模型`}
               </div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                {`候选 ${filteredSourceRoutes.length} / ${exactSourceRouteOptions.length}`}
+              </div>
+            </div>
+          </div>
+
+          <SearchField
+            value={sourceSearch}
+            onChange={setSourceSearch}
+            placeholder={tr('搜索来源模型')}
+          />
+
+          <div style={{ maxHeight: 440, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {filteredSourceRoutes.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', padding: '12px 0', textAlign: 'center' }}>
+                {exactSourceRouteOptions.length === 0
+                  ? tr('当前没有可选的精确模型路由。')
+                  : tr('没有匹配的来源模型。')}
+              </div>
+            ) : (
+              filteredSourceRoutes.map((route) => {
+                const selected = sourcePickerSelection.includes(route.id);
+                const label = renderRouteOptionLabel(route);
+                return (
+                  <button
+                    key={route.id}
+                    type="button"
+                    onClick={() => setSourcePickerSelection((current) => toggleSourceRouteId(current, route.id))}
+                    className="btn btn-ghost"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      padding: '12px 14px',
+                      border: `1px solid ${selected ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                      background: selected
+                        ? 'color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-card))'
+                        : 'var(--color-bg-card)',
+                      boxShadow: selected
+                        ? '0 0 0 1px color-mix(in srgb, var(--color-primary) 20%, transparent)'
+                        : 'none',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0, flex: 1 }}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        readOnly
+                        style={{ marginTop: 2, cursor: 'pointer', pointerEvents: 'none' }}
+                      />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>{label}</span>
+                        {label !== route.modelPattern && (
+                          <code style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{route.modelPattern}</code>
+                        )}
+                      </div>
+                    </div>
+                    <span className={selected ? 'badge badge-info' : 'badge badge-muted'} style={{ fontSize: 10, flexShrink: 0 }}>
+                      {selected ? tr('已选中') : tr('可选择')}
+                    </span>
+                  </button>
+                );
+              })
             )}
           </div>
-        )}
-      </div>
-    </CenteredModal>
+        </div>
+      </CenteredModal>
+    </>
   );
 }

@@ -161,7 +161,7 @@ export type SortableChannelRowProps = {
 export type GroupRouteItem = {
   id: number;
   title: string;
-  icon: { kind: 'none' } | { kind: 'text'; value: string } | { kind: 'brand'; value: string };
+  icon: { kind: 'auto' } | { kind: 'none' } | { kind: 'text'; value: string } | { kind: 'brand'; value: string };
   brand: BrandInfo | null;
   modelPattern: string;
   channelCount: number;

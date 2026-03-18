@@ -3,6 +3,7 @@ import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import TokenRoutes from './TokenRoutes.js';
+import { ROUTE_ICON_NONE_VALUE } from './token-routes/utils.js';
 
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
@@ -52,6 +53,15 @@ function findInputByPlaceholder(root: ReactTestInstance, placeholderText: string
     node.type === 'input'
     && typeof node.props.placeholder === 'string'
     && node.props.placeholder.includes(placeholderText)
+  ));
+}
+
+function findCheckboxByLabelText(root: ReactTestInstance, text: string): ReactTestInstance {
+  return root.find((node) => (
+    node.type === 'input'
+    && node.props.type === 'checkbox'
+    && !!node.parent
+    && collectText(node.parent).includes(text)
   ));
 }
 
@@ -855,7 +865,7 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
-  it('opens a modal-based group creator and submits explicit-group sourceRouteIds', async () => {
+  it('uses a dedicated source picker modal and submits explicit-group sourceRouteIds', async () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
         id: 11, modelPattern: 'claude-opus-4-5', displayName: null,
@@ -896,9 +906,23 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
+      expect(root.root.findAll((node) => typeof node.props?.placeholder === 'string' && node.props.placeholder.includes('搜索来源模型'))).toHaveLength(0);
+
+      await act(async () => {
+        findButtonByText(root.root, '选择来源模型').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(findInputByPlaceholder(root.root, '搜索来源模型')).toBeTruthy();
+
       await act(async () => {
         findButtonByText(root.root, 'claude-opus-4-5').props.onClick();
         findButtonByText(root.root, 'claude-sonnet-4-5').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '确认选择').props.onClick();
       });
       await flushMicrotasks();
 
@@ -912,6 +936,76 @@ describe('TokenRoutes grouped source models', () => {
         routeMode: 'explicit_group',
         displayName: 'claude-opus-4-6',
         sourceRouteIds: [11, 12],
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('saves explicit groups with auto brand icon disabled as a no-icon sentinel', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 11, modelPattern: 'claude-opus-4-5', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '新建群组').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findInputByPlaceholder(root.root, '对外模型名').props.onChange({ target: { value: 'claude-opus-4-6' } });
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '选择来源模型').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, 'claude-opus-4-5').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '确认选择').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findCheckboxByLabelText(root.root, '自动品牌图标').props.onChange({ target: { checked: false } });
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '创建群组').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.addRoute).toHaveBeenCalledWith(expect.objectContaining({
+        routeMode: 'explicit_group',
+        displayName: 'claude-opus-4-6',
+        sourceRouteIds: [11],
+        displayIcon: ROUTE_ICON_NONE_VALUE,
       }));
     } finally {
       root?.unmount();
@@ -1046,7 +1140,17 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       await act(async () => {
+        findButtonByText(root.root, '选择来源模型').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
         findButtonByText(root.root, 'claude-sonnet-4-5').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '确认选择').props.onClick();
       });
       await flushMicrotasks();
 

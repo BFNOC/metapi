@@ -457,9 +457,32 @@ export async function responsesProxyRoute(app: FastifyInstance) {
               reply.raw.write(chunk);
             },
           });
-          await streamSession.run(reader, reply.raw);
+          const streamResult = await streamSession.run(reader, reply.raw);
 
           const latency = Date.now() - startTime;
+          if (streamResult.status === 'failed') {
+            tokenRouter.recordFailure(selected.channel.id);
+            logProxy(
+              selected,
+              requestedModel,
+              'failed',
+              200,
+              latency,
+              streamResult.errorMessage,
+              retryCount,
+              downstreamPath,
+              parsedUsage.promptTokens,
+              parsedUsage.completionTokens,
+              parsedUsage.totalTokens,
+              0,
+              null,
+              successfulUpstreamPath,
+              clientContext,
+              logDownstreamApiKeyId ? downstreamApiKeyId : null,
+            );
+            return;
+          }
+
           const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
             site: selected.site,
             account: selected.account,

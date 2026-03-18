@@ -185,6 +185,22 @@ describe('executeEndpointFlow', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('uses proxyUrl for the default fetch path when no dispatch hook is provided', async () => {
+    fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+
+    await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      proxyUrl: 'https://proxy.internal/base',
+      endpointCandidates: ['responses'],
+      buildRequest: () => requestFor('/v1/responses'),
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://proxy.internal/base/v1/responses');
+  });
+
   it('returns normalized final error when all endpoints fail', async () => {
     fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({
       error: { message: 'upstream_error', type: 'upstream_error' },

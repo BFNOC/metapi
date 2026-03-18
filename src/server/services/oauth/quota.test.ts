@@ -76,7 +76,7 @@ describe('oauth quota snapshot helpers', () => {
     expect(snapshot).toEqual({
       status: 'unsupported',
       source: 'official',
-      providerMessage: 'current local CLIProxyAPI evidence does not expose official quota windows for antigravity oauth',
+      providerMessage: 'official quota windows are not exposed for antigravity oauth',
       windows: {
         fiveHour: {
           supported: false,

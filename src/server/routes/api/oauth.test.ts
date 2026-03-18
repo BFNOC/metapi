@@ -994,7 +994,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       success: true,
       quota: expect.objectContaining({
         status: 'unsupported',
-        providerMessage: 'current local CLIProxyAPI evidence does not expose official quota windows for antigravity oauth',
+        providerMessage: 'official quota windows are not exposed for antigravity oauth',
       }),
     });
   });

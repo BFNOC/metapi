@@ -286,8 +286,15 @@ function buildCodexRuntimeHeaders(input: {
   explicitSessionId?: string | null;
   continuityKey?: string | null;
 }): Record<string, string> {
+  const authorization = (
+    getInputHeader(input.baseHeaders, 'authorization')
+    || getInputHeader(input.baseHeaders, 'Authorization')
+    || ''
+  );
   const originator = getInputHeader(input.providerHeaders, 'originator') || 'codex_cli_rs';
   const accountId = getInputHeader(input.providerHeaders, 'chatgpt-account-id');
+  const version = getInputHeader(input.baseHeaders, 'version') || CODEX_CLIENT_VERSION;
+  const userAgent = getInputHeader(input.baseHeaders, 'user-agent') || CODEX_DEFAULT_USER_AGENT;
   const explicitSessionId = asTrimmedString(input.explicitSessionId);
   const continuityKey = asTrimmedString(input.continuityKey);
   const sessionId = (
@@ -305,13 +312,14 @@ function buildCodexRuntimeHeaders(input: {
   );
 
   return {
-    ...input.baseHeaders,
+    Authorization: authorization,
+    'Content-Type': 'application/json',
     ...(accountId ? { 'Chatgpt-Account-Id': accountId } : {}),
     Originator: originator,
-    Version: CODEX_CLIENT_VERSION,
+    Version: version,
     Session_id: sessionId,
     ...(conversationId ? { Conversation_id: conversationId } : {}),
-    'User-Agent': CODEX_DEFAULT_USER_AGENT,
+    'User-Agent': userAgent,
     Accept: 'text/event-stream',
     Connection: 'Keep-Alive',
   };

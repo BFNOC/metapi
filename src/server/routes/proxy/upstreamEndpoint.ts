@@ -283,15 +283,25 @@ function extractClaudeBetasFromBody(body: Record<string, unknown>): {
 function buildCodexRuntimeHeaders(input: {
   baseHeaders: Record<string, string>;
   providerHeaders?: Record<string, string>;
+  explicitSessionId?: string | null;
   continuityKey?: string | null;
 }): Record<string, string> {
   const originator = getInputHeader(input.providerHeaders, 'originator') || 'codex_cli_rs';
   const accountId = getInputHeader(input.providerHeaders, 'chatgpt-account-id');
+  const explicitSessionId = asTrimmedString(input.explicitSessionId);
+  const continuityKey = asTrimmedString(input.continuityKey);
   const sessionId = (
     getInputHeader(input.baseHeaders, 'session_id')
     || getInputHeader(input.baseHeaders, 'session-id')
-    || (input.continuityKey ? uuidFromSeed(`metapi:codex:${input.continuityKey}`) : null)
+    || explicitSessionId
+    || (continuityKey ? uuidFromSeed(`metapi:codex:${continuityKey}`) : null)
     || randomUUID()
+  );
+  const conversationId = (
+    getInputHeader(input.baseHeaders, 'conversation_id')
+    || getInputHeader(input.baseHeaders, 'conversation-id')
+    || explicitSessionId
+    || (continuityKey ? sessionId : null)
   );
 
   return {
@@ -300,7 +310,7 @@ function buildCodexRuntimeHeaders(input: {
     Originator: originator,
     Version: CODEX_CLIENT_VERSION,
     Session_id: sessionId,
-    Conversation_id: sessionId,
+    ...(conversationId ? { Conversation_id: conversationId } : {}),
     'User-Agent': CODEX_DEFAULT_USER_AGENT,
     Accept: 'text/event-stream',
     Connection: 'Keep-Alive',
@@ -753,6 +763,7 @@ export function buildUpstreamEndpointRequest(input: {
   downstreamHeaders?: Record<string, unknown>;
   providerHeaders?: Record<string, string>;
   codexSessionCacheKey?: string | null;
+  codexExplicitSessionId?: string | null;
 }): {
   path: string;
   headers: Record<string, string>;
@@ -985,6 +996,7 @@ export function buildUpstreamEndpointRequest(input: {
           ...responsesHeaders,
         },
         providerHeaders: input.providerHeaders,
+        explicitSessionId: asTrimmedString(input.codexExplicitSessionId) || null,
         continuityKey: asTrimmedString(input.codexSessionCacheKey) || null,
       })
       : ensureStreamAcceptHeader({
@@ -994,7 +1006,12 @@ export function buildUpstreamEndpointRequest(input: {
     const codexSessionId = sitePlatform === 'codex'
       ? (getInputHeader(headers, 'session_id') || getInputHeader(headers, 'session-id'))
       : null;
-    const runtimeBody = sitePlatform === 'codex' && codexSessionId
+    const shouldInjectDerivedPromptCacheKey = sitePlatform === 'codex'
+      && !!codexSessionId
+      && !asTrimmedString((body as Record<string, unknown>).prompt_cache_key)
+      && !asTrimmedString(input.codexExplicitSessionId)
+      && !!asTrimmedString(input.codexSessionCacheKey);
+    const runtimeBody = shouldInjectDerivedPromptCacheKey
       ? {
         ...body,
         prompt_cache_key: codexSessionId,

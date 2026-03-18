@@ -173,6 +173,9 @@ describe('responses proxy codex oauth refresh', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/v1/responses',
+      headers: {
+        'user-agent': 'CodexClient/1.0',
+      },
       payload: {
         model: 'gpt-5.2-codex',
         input: 'hello codex',
@@ -194,7 +197,7 @@ describe('responses proxy codex oauth refresh', () => {
     expect(secondOptions.headers.Version || secondOptions.headers.version).toBe('0.101.0');
     expect(String(secondOptions.headers.Session_id || secondOptions.headers.session_id || '')).toMatch(/^[0-9a-f-]{36}$/i);
     expect(secondOptions.headers.Conversation_id || secondOptions.headers.conversation_id).toBeUndefined();
-    expect(secondOptions.headers['User-Agent'] || secondOptions.headers['user-agent']).toBe('codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464');
+    expect(secondOptions.headers['User-Agent'] || secondOptions.headers['user-agent']).toBe('CodexClient/1.0');
     expect(secondOptions.headers.Accept || secondOptions.headers.accept).toBe('text/event-stream');
     expect(secondOptions.headers.Connection || secondOptions.headers.connection).toBe('Keep-Alive');
     expect(response.json()?.output_text).toContain('ok after codex token refresh');
@@ -270,6 +273,50 @@ describe('responses proxy codex oauth refresh', () => {
     expect(options.headers.Session_id || options.headers.session_id).toBe('codex-cache-123');
     expect(options.headers.Conversation_id || options.headers.conversation_id).toBe('codex-cache-123');
     expect(forwardedBody.prompt_cache_key).toBe('codex-cache-123');
+  });
+
+  it('strips generic downstream headers before forwarding codex responses upstream', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_codex_header_filter',
+      object: 'response',
+      model: 'gpt-5.2-codex',
+      status: 'completed',
+      output_text: 'ok with filtered headers',
+      usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: {
+        'openai-beta': 'responses-2025-03-11',
+        'x-openai-client-user-agent': '{"client":"openclaw"}',
+        origin: 'https://openclaw.example',
+        referer: 'https://openclaw.example/app',
+        'user-agent': 'OpenClaw/1.0',
+        version: '0.202.0',
+        session_id: 'session-from-client',
+      },
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: 'hello codex',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, any];
+    expect(options.headers.Version || options.headers.version).toBe('0.202.0');
+    expect(options.headers.Session_id || options.headers.session_id).toBe('session-from-client');
+    expect(options.headers['User-Agent'] || options.headers['user-agent']).toBe('OpenClaw/1.0');
+    expect(options.headers['openai-beta']).toBeUndefined();
+    expect(options.headers['x-openai-client-user-agent']).toBeUndefined();
+    expect(options.headers.origin).toBeUndefined();
+    expect(options.headers.referer).toBeUndefined();
   });
 
   it('records codex usage_limit_reached reset hints on upstream 429 failures', async () => {

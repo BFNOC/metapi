@@ -54,7 +54,7 @@ function buildProviderUnsupportedSnapshot(provider: string): OauthQuotaSnapshot 
   return {
     status: 'unsupported',
     source: 'official',
-    providerMessage: `current local CLIProxyAPI evidence does not expose official quota windows for ${provider} oauth`,
+    providerMessage: `official quota windows are not exposed for ${provider} oauth`,
     windows: {
       fiveHour: buildUnsupportedWindow('official 5h quota window is unavailable for this provider'),
       sevenDay: buildUnsupportedWindow('official 7d quota window is unavailable for this provider'),

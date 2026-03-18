@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { getBrand, normalizeBrandIconKey, type BrandInfo } from '../../components/BrandIcon.js';
-import type { RouteRow, RouteChannel, RouteDecisionCandidate, ChannelDecisionState, RouteSummaryRow } from './types.js';
+import type { RouteRow, RouteChannel, RouteDecisionCandidate, ChannelDecisionState, RouteSummaryRow, RouteMode } from './types.js';
 
 export const AUTO_ROUTE_DECISION_LIMIT = 80;
 export const ROUTE_RENDER_CHUNK = 40;
@@ -46,6 +46,18 @@ export function isExactModelPattern(modelPattern: string): boolean {
   if (!normalized) return false;
   if (isRegexModelPattern(normalized)) return false;
   return !/[\*\?]/.test(normalized);
+}
+
+export function normalizeRouteMode(routeMode: RouteMode | string | null | undefined): RouteMode {
+  return routeMode === 'explicit_group' ? 'explicit_group' : 'pattern';
+}
+
+export function isExplicitGroupRoute(route: Pick<RouteRow | RouteSummaryRow, 'routeMode'>): boolean {
+  return normalizeRouteMode(route.routeMode) === 'explicit_group';
+}
+
+export function isRouteExactModel(route: Pick<RouteRow | RouteSummaryRow, 'modelPattern' | 'routeMode'>): boolean {
+  return !isExplicitGroupRoute(route) && isExactModelPattern(route.modelPattern);
 }
 
 export function parseRegexModelPattern(modelPattern: string): { regex: RegExp | null; error: string | null } {

@@ -16,10 +16,14 @@ const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) =>
 }));
 const refreshOauthAccessTokenSingleflightMock = vi.fn();
 const recordOauthQuotaResetHintMock = vi.fn();
+const insertedProxyLogs: Record<string, unknown>[] = [];
 const dbInsertMock = vi.fn((_arg?: any) => ({
-  values: () => ({
-    run: () => undefined,
-  }),
+  values: (values: Record<string, unknown>) => {
+    insertedProxyLogs.push(values);
+    return {
+      run: () => undefined,
+    };
+  },
 }));
 
 vi.mock('undici', () => ({
@@ -117,6 +121,7 @@ describe('responses proxy codex oauth refresh', () => {
     refreshOauthAccessTokenSingleflightMock.mockReset();
     recordOauthQuotaResetHintMock.mockReset();
     dbInsertMock.mockClear();
+    insertedProxyLogs.length = 0;
 
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
@@ -430,5 +435,36 @@ describe('responses proxy codex oauth refresh', () => {
     expect(secondBody.instructions).toBe('');
     expect(secondBody.store).toBe(false);
     expect(secondBody.stream).toBe(true);
+  });
+
+  it('does not record success when a streaming responses request ends with response.failed', async () => {
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_codex_failed","model":"gpt-5.4","created_at":1706000000,"status":"in_progress","output":[]}}\n\n',
+      'event: response.failed\n',
+      'data: {"type":"response.failed","response":{"id":"resp_codex_failed","model":"gpt-5.4","status":"failed","error":{"message":"tool execution failed"}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('response.failed');
+    expect(response.body).not.toContain('response.completed');
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+    expect(insertedProxyLogs.at(-1)).toMatchObject({
+      status: 'failed',
+      httpStatus: 200,
+    });
+    expect(String(insertedProxyLogs.at(-1)?.errorMessage || '')).toContain('tool execution failed');
   });
 });

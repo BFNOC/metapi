@@ -63,6 +63,12 @@ type ExecuteEndpointFlowInput = {
   onDowngrade?: (ctx: EndpointAttemptContext & { errText: string }) => void | Promise<void>;
 };
 
+function buildAbsoluteUrl(base: string, path: string): string {
+  const normalizedBase = base.replace(/\/+$/, '');
+  const normalizedPath = path.replace(/^\/+/, '');
+  return normalizedPath ? `${normalizedBase}/${normalizedPath}` : normalizedBase;
+}
+
 export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Promise<EndpointFlowResult> {
   const endpointCount = input.endpointCandidates.length;
   if (endpointCount <= 0) {
@@ -80,7 +86,10 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
   for (let endpointIndex = 0; endpointIndex < endpointCount; endpointIndex += 1) {
     const endpoint = input.endpointCandidates[endpointIndex] as UpstreamEndpoint;
     const request = input.buildRequest(endpoint, endpointIndex);
-    const targetUrl = buildUpstreamUrl(input.siteUrl, request.path);
+    const defaultTarget = buildUpstreamUrl(input.siteUrl, request.path);
+    const targetUrl = input.proxyUrl
+      ? buildAbsoluteUrl(input.proxyUrl, request.path)
+      : defaultTarget;
 
     let response = input.dispatchRequest
       ? await input.dispatchRequest(request, targetUrl)

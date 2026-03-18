@@ -366,6 +366,7 @@ async function handleChatProxyRequest(
         const streamSession = openAiChatTransformer.proxyStream.createSession({
           downstreamFormat,
           modelName,
+          successfulUpstreamPath,
           onParsedPayload: (payload) => {
             if (payload && typeof payload === 'object') {
               parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
@@ -389,9 +390,32 @@ async function handleChatProxyRequest(
           if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
             fallbackData = unwrapGeminiCliPayload(fallbackData);
           }
-          streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, reply.raw);
+          const streamResult = streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, reply.raw);
 
           const latency = Date.now() - startTime;
+          if (streamResult.status === 'failed') {
+            tokenRouter.recordFailure(selected.channel.id);
+            logProxy(
+              selected,
+              requestedModel,
+              'failed',
+              200,
+              latency,
+              streamResult.errorMessage,
+              retryCount,
+              downstreamPath,
+              parsedUsage.promptTokens,
+              parsedUsage.completionTokens,
+              parsedUsage.totalTokens,
+              0,
+              null,
+              successfulUpstreamPath,
+              clientContext,
+              logDownstreamApiKeyId ? downstreamApiKeyId : null,
+            );
+            return;
+          }
+
           const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
             site: selected.site,
             account: selected.account,
@@ -443,9 +467,32 @@ async function handleChatProxyRequest(
         const reader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
           ? createGeminiCliStreamReader(upstreamReader)
           : upstreamReader;
-        await streamSession.run(reader, reply.raw);
+        const streamResult = await streamSession.run(reader, reply.raw);
 
         const latency = Date.now() - startTime;
+        if (streamResult.status === 'failed') {
+          tokenRouter.recordFailure(selected.channel.id);
+          logProxy(
+            selected,
+            requestedModel,
+            'failed',
+            200,
+            latency,
+            streamResult.errorMessage,
+            retryCount,
+            downstreamPath,
+            parsedUsage.promptTokens,
+            parsedUsage.completionTokens,
+            parsedUsage.totalTokens,
+            0,
+            null,
+            successfulUpstreamPath,
+            clientContext,
+            logDownstreamApiKeyId ? downstreamApiKeyId : null,
+          );
+          return;
+        }
+
         const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
           site: selected.site,
           account: selected.account,

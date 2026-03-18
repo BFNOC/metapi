@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   hasProxyLogBillingDetailsColumnMock,
+  hasProxyLogDownstreamApiKeyIdColumnMock,
   dbInsertMock,
   dbInsertValuesMock,
   dbInsertRunMock,
   proxyLogsSchema,
 } = vi.hoisted(() => ({
   hasProxyLogBillingDetailsColumnMock: vi.fn(),
+  hasProxyLogDownstreamApiKeyIdColumnMock: vi.fn(),
   dbInsertMock: vi.fn(),
   dbInsertValuesMock: vi.fn(),
   dbInsertRunMock: vi.fn(),
@@ -40,6 +42,7 @@ vi.mock('../db/index.js', () => ({
     proxyLogs: proxyLogsSchema,
   },
   hasProxyLogBillingDetailsColumn: (...args: unknown[]) => hasProxyLogBillingDetailsColumnMock(...args),
+  hasProxyLogDownstreamApiKeyIdColumn: (...args: unknown[]) => hasProxyLogDownstreamApiKeyIdColumnMock(...args),
 }));
 
 import { insertProxyLog, withProxyLogSelectFields } from './proxyLogStore.js';
@@ -47,9 +50,12 @@ import { insertProxyLog, withProxyLogSelectFields } from './proxyLogStore.js';
 describe('proxyLogStore', () => {
   beforeEach(() => {
     hasProxyLogBillingDetailsColumnMock.mockReset();
+    hasProxyLogDownstreamApiKeyIdColumnMock.mockReset();
     dbInsertMock.mockReset();
     dbInsertValuesMock.mockReset();
     dbInsertRunMock.mockReset();
+    hasProxyLogBillingDetailsColumnMock.mockResolvedValue(false);
+    hasProxyLogDownstreamApiKeyIdColumnMock.mockResolvedValue(false);
 
     dbInsertMock.mockReturnValue({
       values: (...args: unknown[]) => dbInsertValuesMock(...args),
@@ -94,5 +100,36 @@ describe('proxyLogStore', () => {
       modelRequested: 'gpt-5',
     });
     expect(dbInsertValuesMock.mock.calls[1][0].billingDetails).toBeUndefined();
+  });
+
+  it('falls back to base values when both billing details and downstream key columns are missing', async () => {
+    hasProxyLogBillingDetailsColumnMock.mockResolvedValue(true);
+    hasProxyLogDownstreamApiKeyIdColumnMock.mockResolvedValue(true);
+    dbInsertRunMock
+      .mockRejectedValueOnce(new Error('column proxy_logs.billing_details does not exist'))
+      .mockRejectedValueOnce(new Error('column proxy_logs.downstream_api_key_id does not exist'))
+      .mockResolvedValueOnce(undefined);
+
+    await insertProxyLog({
+      modelRequested: 'gpt-5',
+      billingDetails: { total: 1 },
+      downstreamApiKeyId: 12,
+    });
+
+    expect(dbInsertValuesMock).toHaveBeenCalledTimes(3);
+    expect(dbInsertValuesMock.mock.calls[0][0]).toMatchObject({
+      modelRequested: 'gpt-5',
+      billingDetails: JSON.stringify({ total: 1 }),
+      downstreamApiKeyId: 12,
+    });
+    expect(dbInsertValuesMock.mock.calls[1][0]).toMatchObject({
+      modelRequested: 'gpt-5',
+      downstreamApiKeyId: 12,
+    });
+    expect(dbInsertValuesMock.mock.calls[2][0]).toMatchObject({
+      modelRequested: 'gpt-5',
+    });
+    expect(dbInsertValuesMock.mock.calls[2][0].billingDetails).toBeUndefined();
+    expect(dbInsertValuesMock.mock.calls[2][0].downstreamApiKeyId).toBeUndefined();
   });
 });

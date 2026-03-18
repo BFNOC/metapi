@@ -11,6 +11,7 @@ import {
   buildApiPayload,
   buildEmbeddingsRequestEnvelope,
   buildFileUploadRequestEnvelope,
+  buildGeminiNativeConversationProxyEnvelope,
   buildImagesEditRequestEnvelope,
   buildImagesGenerationsRequestEnvelope,
   buildRawProxyRequestEnvelope,
@@ -1027,30 +1028,6 @@ export default function ModelTester() {
     };
   }, [buildConversationMessagesWithSystem, inputs.max_tokens, inputs.model, inputs.stream, inputs.temperature, inputs.top_p, parameterEnabled.max_tokens, parameterEnabled.temperature, parameterEnabled.top_p]);
 
-  const buildGeminiBodyFromMessages = useCallback((baseMessages: ChatMessage[]) => {
-    const effectiveMessages = buildConversationMessagesWithSystem(baseMessages);
-    const systemContents = effectiveMessages
-      .filter((message) => message.role === 'system' || message.role === 'developer')
-      .map((message) => message.content.trim())
-      .filter(Boolean);
-    const contents = effectiveMessages
-      .filter((message) => message.role !== 'system' && message.role !== 'developer')
-      .map((message) => ({
-        role: message.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: message.content }],
-      }));
-
-    return {
-      ...(systemContents.length > 0 ? { systemInstruction: { parts: [{ text: systemContents.join('\n\n') }] } } : {}),
-      contents,
-      generationConfig: {
-        ...(parameterEnabled.temperature ? { temperature: inputs.temperature } : {}),
-        ...(parameterEnabled.top_p ? { topP: inputs.top_p } : {}),
-        ...(parameterEnabled.max_tokens ? { maxOutputTokens: inputs.max_tokens } : {}),
-      },
-    };
-  }, [buildConversationMessagesWithSystem, inputs.max_tokens, inputs.temperature, inputs.top_p, parameterEnabled.max_tokens, parameterEnabled.temperature, parameterEnabled.top_p]);
-
   const buildConversationProxyEnvelope = useCallback((baseMessages: ChatMessage[]): ProxyTestEnvelope => {
     const normalizedMessages = buildConversationMessagesWithSystem(baseMessages);
 
@@ -1099,15 +1076,7 @@ export default function ModelTester() {
     }
 
     if (inputs.protocol === 'gemini') {
-      return {
-        method: 'POST',
-        path: `/gemini/v1beta/models/${encodeURIComponent(inputs.model)}:generateContent${inputs.stream ? '?alt=sse' : ''}`,
-        requestKind: 'json',
-        stream: inputs.stream,
-        jobMode: false,
-        rawMode: false,
-        jsonBody: buildGeminiBodyFromMessages(baseMessages),
-      };
+      return buildGeminiNativeConversationProxyEnvelope(baseMessages, inputs, parameterEnabled);
     }
 
     const openAiEnvelope = buildApiPayload(normalizedMessages, { ...inputs, protocol: 'openai' }, parameterEnabled);
@@ -1124,7 +1093,7 @@ export default function ModelTester() {
       rawMode: false,
       jsonBody: openAiPayload,
     };
-  }, [buildApiPayload, buildClaudeBodyFromMessages, buildConversationMessagesWithSystem, buildGeminiBodyFromMessages, buildResponsesBodyFromMessages, customRequestBody, customRequestMode, inputs, parameterEnabled]);
+  }, [buildApiPayload, buildClaudeBodyFromMessages, buildConversationMessagesWithSystem, buildResponsesBodyFromMessages, customRequestBody, customRequestMode, inputs, parameterEnabled]);
 
   const buildModeProxyEnvelope = useCallback((): ProxyTestEnvelope | null => {
     if (inputs.mode === 'embeddings') {

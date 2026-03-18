@@ -12,6 +12,8 @@ export type DownstreamApiKeyPolicyView = {
   key: string;
   keyMasked: string;
   description: string | null;
+  groupName: string | null;
+  tags: string[];
   enabled: boolean;
   expiresAt: string | null;
   maxCost: number | null;
@@ -95,6 +97,34 @@ function parseJson(value: string | null | undefined): unknown {
   } catch {
     return null;
   }
+}
+
+export function normalizeGroupNameInput(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const value = input.trim();
+  if (!value) return null;
+  return value.slice(0, 64);
+}
+
+export function normalizeTagsInput(input: unknown): string[] {
+  const rawValues = Array.isArray(input)
+    ? input
+    : (typeof input === 'string' ? input.split(/[\r\n,，]+/g) : []);
+
+  const tags: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of rawValues) {
+    const value = String(raw || '').trim();
+    if (!value) continue;
+    const normalized = value.slice(0, 32);
+    const dedupeKey = normalized.toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    tags.push(normalized);
+    if (tags.length >= 20) break;
+  }
+
+  return tags;
 }
 
 export function normalizeSupportedModelsInput(input: unknown): string[] {
@@ -226,6 +256,8 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
     key: row.key,
     keyMasked: maskSecret(row.key),
     description: row.description || null,
+    groupName: normalizeGroupNameInput(row.groupName),
+    tags: normalizeTagsInput(parseJson(row.tags)),
     enabled: !!row.enabled,
     expiresAt: row.expiresAt || null,
     maxCost: row.maxCost ?? null,
@@ -385,6 +417,8 @@ export function normalizeDownstreamApiKeyPayload(input: {
   name?: unknown;
   key?: unknown;
   description?: unknown;
+  groupName?: unknown;
+  tags?: unknown;
   enabled?: unknown;
   expiresAt?: unknown;
   maxCost?: unknown;
@@ -398,6 +432,8 @@ export function normalizeDownstreamApiKeyPayload(input: {
   const description = typeof input.description === 'string'
     ? input.description.trim()
     : '';
+  const groupName = normalizeGroupNameInput(input.groupName);
+  const tags = normalizeTagsInput(input.tags);
   const enabled = input.enabled === undefined ? true : !!input.enabled;
 
   const expiresAtRaw = typeof input.expiresAt === 'string'
@@ -422,6 +458,8 @@ export function normalizeDownstreamApiKeyPayload(input: {
     name,
     key,
     description: description || null,
+    groupName,
+    tags,
     enabled,
     expiresAt,
     maxCost,

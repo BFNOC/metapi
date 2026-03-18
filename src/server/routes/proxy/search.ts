@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { fetch } from 'undici';
-import { db, schema } from '../../db/index.js';
+import { db, hasProxyLogDownstreamApiKeyIdColumn, schema } from '../../db/index.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
@@ -11,6 +11,7 @@ import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { getProxyUrlFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { composeProxyLogMessage } from './logPathMeta.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
+import { getProxyAuthContext } from '../../middleware/auth.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
 
 const MAX_RETRIES = 2;
@@ -53,6 +54,9 @@ export async function searchProxyRoute(app: FastifyInstance) {
 
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
+    const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
+    const logDownstreamApiKeyId = downstreamApiKeyId !== null
+      && await hasProxyLogDownstreamApiKeyIdColumn();
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
@@ -98,7 +102,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
         const text = await upstream.text();
         if (!upstream.ok) {
           tokenRouter.recordFailure(selected.channel.id);
-          logProxy(selected, requestedModel, 'failed', upstream.status, Date.now() - startTime, text, retryCount);
+          logProxy(selected, requestedModel, 'failed', upstream.status, Date.now() - startTime, text, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null);
           if (isTokenExpiredError({ status: upstream.status, message: text })) {
             await reportTokenExpired({
               accountId: selected.account.id,
@@ -124,11 +128,11 @@ export async function searchProxyRoute(app: FastifyInstance) {
         const latency = Date.now() - startTime;
         tokenRouter.recordSuccess(selected.channel.id, latency, 0);
         recordDownstreamCostUsage(request, 0);
-        logProxy(selected, requestedModel, 'success', upstream.status, latency, null, retryCount);
+        logProxy(selected, requestedModel, 'success', upstream.status, latency, null, retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null);
         return reply.code(upstream.status).send(data);
       } catch (error: any) {
         tokenRouter.recordFailure(selected.channel.id);
-        logProxy(selected, requestedModel, 'failed', 0, Date.now() - startTime, error?.message || 'network error', retryCount);
+        logProxy(selected, requestedModel, 'failed', 0, Date.now() - startTime, error?.message || 'network error', retryCount, logDownstreamApiKeyId ? downstreamApiKeyId : null);
         if (retryCount < MAX_RETRIES) {
           retryCount += 1;
           continue;
@@ -153,6 +157,7 @@ async function logProxy(
   latencyMs: number,
   errorMessage: string | null,
   retryCount: number,
+  downstreamApiKeyId: number | null = null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -160,6 +165,7 @@ async function logProxy(
       routeId: selected.channel.routeId,
       channelId: selected.channel.id,
       accountId: selected.account.id,
+      ...(downstreamApiKeyId !== null ? { downstreamApiKeyId } : {}),
       modelRequested,
       modelActual: selected.actualModel,
       status,

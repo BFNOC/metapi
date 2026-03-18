@@ -5,6 +5,8 @@ export type RouteSortBy = 'modelPattern' | 'channelCount';
 export type RouteSortDir = 'asc' | 'desc';
 export type GroupFilter = null | '__all__' | number;
 export type RouteRoutingStrategy = 'weighted' | 'round_robin';
+export type RouteRowKind = 'persisted' | 'zero_channel';
+export type RouteMode = 'pattern' | 'explicit_group';
 
 export type RouteChannelDraft = {
   accountId: number;
@@ -46,6 +48,8 @@ export type RouteRow = {
   modelPattern: string;
   displayName?: string | null;
   displayIcon?: string | null;
+  routeMode?: RouteMode | null;
+  sourceRouteIds?: number[];
   modelMapping?: string | null;
   routingStrategy?: RouteRoutingStrategy | null;
   decisionSnapshot?: RouteDecision | null;
@@ -59,6 +63,8 @@ export type RouteSummaryRow = {
   modelPattern: string;
   displayName: string | null;
   displayIcon: string | null;
+  routeMode?: RouteMode | null;
+  sourceRouteIds?: number[];
   modelMapping: string | null;
   routingStrategy?: RouteRoutingStrategy | null;
   enabled: boolean;
@@ -67,6 +73,9 @@ export type RouteSummaryRow = {
   siteNames: string[];
   decisionSnapshot: RouteDecision | null;
   decisionRefreshedAt: string | null;
+  kind?: RouteRowKind;
+  readOnly?: boolean;
+  isVirtual?: boolean;
 };
 
 export type RouteDecisionCandidate = {
@@ -124,6 +133,17 @@ export type MissingTokenRouteSiteActionItem = {
   accountLabel: string;
 };
 
+export type MissingTokenGroupRouteSiteActionItem = {
+  key: string;
+  siteName: string;
+  accountId: number;
+  accountLabel: string;
+  missingGroups: string[];
+  requiredGroups: string[];
+  availableGroups: string[];
+  groupCoverageUncertain?: boolean;
+};
+
 export type SortableChannelRowProps = {
   channel: RouteChannel;
   decisionCandidate?: RouteDecisionCandidate;
@@ -141,7 +161,7 @@ export type SortableChannelRowProps = {
 export type GroupRouteItem = {
   id: number;
   title: string;
-  icon: { kind: 'none' } | { kind: 'text'; value: string } | { kind: 'brand'; value: string };
+  icon: { kind: 'auto' } | { kind: 'none' } | { kind: 'text'; value: string } | { kind: 'brand'; value: string };
   brand: BrandInfo | null;
   modelPattern: string;
   channelCount: number;

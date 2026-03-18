@@ -3,6 +3,10 @@ export type MissingTokenModelAccount = {
   username: string | null;
   siteId: number;
   siteName: string;
+  missingGroups?: string[];
+  requiredGroups?: string[];
+  availableGroups?: string[];
+  groupCoverageUncertain?: boolean;
 };
 
 export type MissingTokenModelsByName = Record<string, MissingTokenModelAccount[]>;
@@ -29,11 +33,21 @@ export function normalizeMissingTokenModels(
       if (!account || !Number.isFinite(account.accountId)) continue;
       const accountName = (account.username || '').trim();
       const siteName = String(account.siteName || '').trim();
+      const normalizeLabels = (labels: unknown): string[] => Array.isArray(labels)
+        ? Array.from(new Set(labels
+          .map((label) => String(label || '').trim())
+          .filter(Boolean)))
+          .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+        : [];
       accountMap.set(account.accountId, {
         accountId: account.accountId,
         username: accountName || null,
         siteId: account.siteId,
         siteName,
+        ...(normalizeLabels(account.missingGroups).length > 0 ? { missingGroups: normalizeLabels(account.missingGroups) } : {}),
+        ...(normalizeLabels(account.requiredGroups).length > 0 ? { requiredGroups: normalizeLabels(account.requiredGroups) } : {}),
+        ...(normalizeLabels(account.availableGroups).length > 0 ? { availableGroups: normalizeLabels(account.availableGroups) } : {}),
+        ...(account.groupCoverageUncertain === true ? { groupCoverageUncertain: true } : {}),
       });
     }
     if (accountMap.size > 0) {

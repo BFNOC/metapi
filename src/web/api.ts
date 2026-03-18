@@ -204,6 +204,10 @@ export type ProxyLogListItem = {
   siteName?: string | null;
   siteUrl?: string | null;
   errorMessage?: string | null;
+  downstreamKeyId?: number | null;
+  downstreamKeyName?: string | null;
+  downstreamKeyGroupName?: string | null;
+  downstreamKeyTags?: string[];
   promptTokens?: number | null;
   completionTokens?: number | null;
   estimatedCost?: number | null;
@@ -240,6 +244,96 @@ export type ProxyLogsResponse = {
   page: number;
   pageSize: number;
   summary: ProxyLogsSummary;
+};
+
+export type OAuthProviderInfo = {
+  provider: string;
+  label: string;
+  platform: string;
+  enabled: boolean;
+  loginType: 'oauth';
+  requiresProjectId: boolean;
+  supportsDirectAccountRouting: boolean;
+  supportsCloudValidation: boolean;
+  supportsNativeProxy: boolean;
+};
+
+export type OAuthStartInstructions = {
+  redirectUri: string;
+  callbackPort: number;
+  callbackPath: string;
+  manualCallbackDelayMs: number;
+  sshTunnelCommand?: string;
+  sshTunnelKeyCommand?: string;
+};
+
+export type OAuthStartResponse = {
+  provider: string;
+  state: string;
+  authorizationUrl: string;
+  instructions: OAuthStartInstructions;
+};
+
+export type OAuthSessionInfo = {
+  provider: string;
+  state: string;
+  status: 'pending' | 'success' | 'error';
+  accountId?: number;
+  siteId?: number;
+  error?: string;
+};
+
+export type OAuthQuotaWindowInfo = {
+  supported: boolean;
+  limit?: number | null;
+  used?: number | null;
+  remaining?: number | null;
+  resetAt?: string | null;
+  message?: string | null;
+};
+
+export type OAuthQuotaInfo = {
+  status: 'supported' | 'unsupported' | 'error';
+  source: 'official' | 'reverse_engineered';
+  lastSyncAt?: string | null;
+  lastError?: string | null;
+  providerMessage?: string | null;
+  subscription?: {
+    planType?: string | null;
+    activeStart?: string | null;
+    activeUntil?: string | null;
+  } | null;
+  windows: {
+    fiveHour: OAuthQuotaWindowInfo;
+    sevenDay: OAuthQuotaWindowInfo;
+  };
+  lastLimitResetAt?: string | null;
+};
+
+export type OAuthConnectionInfo = {
+  accountId: number;
+  siteId: number;
+  provider: string;
+  username?: string | null;
+  email?: string | null;
+  accountKey?: string | null;
+  planType?: string | null;
+  projectId?: string | null;
+  modelCount: number;
+  modelsPreview: string[];
+  status: 'healthy' | 'abnormal';
+  quota?: OAuthQuotaInfo | null;
+  routeChannelCount?: number;
+  lastModelSyncAt?: string | null;
+  lastModelSyncError?: string | null;
+  site?: { id: number; name: string; url: string; platform: string } | null;
+};
+
+export type OAuthConnectionsResponse = {
+  items: OAuthConnectionInfo[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export const api = {
@@ -353,6 +447,31 @@ export const api = {
   // Search
   search: (query: string) => request('/api/search', { method: 'POST', body: JSON.stringify({ query, limit: 20 }) }),
 
+  // OAuth
+  getOAuthProviders: () => request('/api/oauth/providers') as Promise<{ providers: OAuthProviderInfo[] }>,
+  startOAuthProvider: (provider: string, data?: { accountId?: number; projectId?: string }) => request(`/api/oauth/providers/${encodeURIComponent(provider)}/start`, {
+    method: 'POST',
+    body: JSON.stringify(data || {}),
+  }) as Promise<OAuthStartResponse>,
+  getOAuthSession: (state: string) => request(`/api/oauth/sessions/${encodeURIComponent(state)}`) as Promise<OAuthSessionInfo>,
+  submitOAuthManualCallback: (state: string, callbackUrl: string) => request(`/api/oauth/sessions/${encodeURIComponent(state)}/manual-callback`, {
+    method: 'POST',
+    body: JSON.stringify({ callbackUrl }),
+  }) as Promise<{ success: true }>,
+  getOAuthConnections: (params?: { limit?: number; offset?: number }) =>
+    request(`/api/oauth/connections${buildQueryString(params)}`) as Promise<OAuthConnectionsResponse>,
+  refreshOAuthConnectionQuota: (accountId: number) => request(`/api/oauth/connections/${accountId}/quota/refresh`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }) as Promise<{ success: true; quota: OAuthQuotaInfo }>,
+  rebindOAuthConnection: (accountId: number) => request(`/api/oauth/connections/${accountId}/rebind`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }) as Promise<OAuthStartResponse>,
+  deleteOAuthConnection: (accountId: number) => request(`/api/oauth/connections/${accountId}`, {
+    method: 'DELETE',
+  }) as Promise<{ success: true }>,
+
   // Events
   getEvents: (params?: string) => request(`/api/events${params ? '?' + params : ''}`),
   getEventCount: () => request('/api/events/count'),
@@ -401,9 +520,26 @@ export const api = {
   deleteDownstreamApiKey: (id: number) => request(`/api/downstream-keys/${id}`, {
     method: 'DELETE',
   }),
+  batchDownstreamApiKeys: (data: {
+    ids: number[];
+    action: 'enable' | 'disable' | 'delete' | 'resetUsage' | 'updateMetadata';
+    groupOperation?: 'keep' | 'set' | 'clear';
+    groupName?: string;
+    tagOperation?: 'keep' | 'append';
+    tags?: string[];
+  }) =>
+    request('/api/downstream-keys/batch', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   resetDownstreamApiKeyUsage: (id: number) => request(`/api/downstream-keys/${id}/reset-usage`, {
     method: 'POST',
   }),
+  getDownstreamApiKeysSummary: (params?: { range?: '24h' | '7d' | 'all'; status?: 'all' | 'enabled' | 'disabled'; search?: string }) =>
+    request(`/api/downstream-keys/summary${buildQueryString(params)}`),
+  getDownstreamApiKeyOverview: (id: number) => request(`/api/downstream-keys/${id}/overview`),
+  getDownstreamApiKeyTrend: (id: number, params?: { range?: '24h' | '7d' | 'all' }) =>
+    request(`/api/downstream-keys/${id}/trend${buildQueryString(params)}`),
   exportBackup: (type: 'all' | 'accounts' | 'preferences' = 'all') =>
     request(`/api/settings/backup/export?type=${encodeURIComponent(type)}`),
   importBackup: (data: any) =>

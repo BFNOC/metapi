@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { generateDialectArtifacts, type GeneratedDialectArtifacts } from './schemaArtifactGenerator.js';
+import { generateDialectArtifacts, generateUpgradeSql, type GeneratedDialectArtifacts } from './schemaArtifactGenerator.js';
 import type { SchemaContract, SchemaContractColumn } from './schemaContract.js';
 
 const dbDir = dirname(fileURLToPath(import.meta.url));
@@ -121,6 +121,45 @@ describe('schema artifact generator', () => {
     expect(artifacts.mysqlBootstrap).toContain('CREATE INDEX `events_read_created_at_idx` ON `events` (`read`, `created_at`)');
     expect(artifacts.mysqlBootstrap).not.toContain('`created_at`(191)');
     expect(artifacts.mysqlBootstrap).not.toContain('`read`(191)');
+  });
+
+  it('allows mysql upgrade generation to force prefix lengths for live text-backed columns', () => {
+    const previousContract: SchemaContract = {
+      tables: {
+        proxy_logs: {
+          columns: {
+            downstream_api_key_id: makeColumn({ logicalType: 'integer' }),
+            created_at: makeColumn({ logicalType: 'datetime', defaultValue: "datetime('now')" }),
+          },
+        },
+      },
+      indexes: [],
+      uniques: [],
+      foreignKeys: [],
+    };
+    const currentContract: SchemaContract = {
+      ...previousContract,
+      indexes: [
+        {
+          name: 'proxy_logs_downstream_api_key_created_at_idx',
+          table: 'proxy_logs',
+          columns: ['downstream_api_key_id', 'created_at'],
+          unique: false,
+        },
+      ],
+    };
+
+    const mysqlUpgrade = generateUpgradeSql('mysql', currentContract, previousContract, {
+      mysqlIndexPrefixRequirements: {
+        proxy_logs: {
+          created_at: true,
+        },
+      },
+    });
+
+    expect(mysqlUpgrade).toContain(
+      'CREATE INDEX `proxy_logs_downstream_api_key_created_at_idx` ON `proxy_logs` (`downstream_api_key_id`, `created_at`(191))',
+    );
   });
 
   it('rejects destructive diffs when generating additive upgrades', () => {

@@ -36,6 +36,7 @@ type BackupSnapshot = {
     tokenModelAvailability: Array<Record<string, unknown>>;
     tokenRoutes: Array<Record<string, unknown>>;
     routeChannels: Array<Record<string, unknown>>;
+    routeGroupSources: Array<Record<string, unknown>>;
     proxyLogs: Array<Record<string, unknown>>;
     proxyVideoTasks: Array<Record<string, unknown>>;
     proxyFiles: Array<Record<string, unknown>>;
@@ -60,6 +61,7 @@ export interface DatabaseMigrationSummary {
     accountTokens: number;
     tokenRoutes: number;
     routeChannels: number;
+    routeGroupSources: number;
     checkinLogs: number;
     modelAvailability: number;
     tokenModelAvailability: number;
@@ -218,6 +220,7 @@ async function toBackupSnapshot(): Promise<BackupSnapshot> {
       tokenModelAvailability: await db.select().from(schema.tokenModelAvailability).all() as Array<Record<string, unknown>>,
       tokenRoutes: await db.select().from(schema.tokenRoutes).all() as Array<Record<string, unknown>>,
       routeChannels: await db.select().from(schema.routeChannels).all() as Array<Record<string, unknown>>,
+      routeGroupSources: await db.select().from(schema.routeGroupSources).all() as Array<Record<string, unknown>>,
       proxyLogs: await db.select().from(schema.proxyLogs).all() as Array<Record<string, unknown>>,
       proxyVideoTasks: await db.select().from(schema.proxyVideoTasks).all() as Array<Record<string, unknown>>,
       proxyFiles: await db.select().from(schema.proxyFiles).all() as Array<Record<string, unknown>>,
@@ -245,6 +248,7 @@ async function ensureTargetState(client: SqlClient, overwrite: boolean): Promise
 async function clearTargetData(client: SqlClient): Promise<void> {
   const tables = [
     'route_channels',
+    'route_group_sources',
     'token_model_availability',
     'model_availability',
     'checkin_logs',
@@ -336,13 +340,14 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
   for (const row of snapshot.accounts.accountTokens) {
     statements.push({
       table: 'account_tokens',
-      columns: ['id', 'account_id', 'name', 'token', 'token_group', 'source', 'enabled', 'is_default', 'created_at', 'updated_at'],
+      columns: ['id', 'account_id', 'name', 'token', 'token_group', 'value_status', 'source', 'enabled', 'is_default', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.accountId, 0),
         asNullableString(row.name),
         asNullableString(row.token),
         asNullableString(row.tokenGroup),
+        asNullableString((row as { valueStatus?: unknown }).valueStatus) ?? 'ready',
         asNullableString(row.source) ?? 'manual',
         asBoolean(row.enabled, true),
         asBoolean(row.isDefault, false),
@@ -400,13 +405,14 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
   for (const row of snapshot.accounts.tokenRoutes) {
     statements.push({
       table: 'token_routes',
-      columns: ['id', 'model_pattern', 'display_name', 'display_icon', 'model_mapping', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy', 'enabled', 'created_at', 'updated_at'],
+      columns: ['id', 'model_pattern', 'display_name', 'display_icon', 'model_mapping', 'route_mode', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy', 'enabled', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNullableString(row.modelPattern),
         asNullableString(row.displayName),
         asNullableString(row.displayIcon),
         asNullableString(row.modelMapping),
+        asNullableString(row.routeMode) ?? 'pattern',
         asNullableString(row.decisionSnapshot),
         asNullableString(row.decisionRefreshedAt),
         asNullableString(row.routingStrategy),
@@ -445,15 +451,28 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
     });
   }
 
+  for (const row of (snapshot.accounts.routeGroupSources || [])) {
+    statements.push({
+      table: 'route_group_sources',
+      columns: ['id', 'group_route_id', 'source_route_id'],
+      values: [
+        asNumber(row.id, 0),
+        asNumber(row.groupRouteId, 0),
+        asNumber(row.sourceRouteId, 0),
+      ],
+    });
+  }
+
   for (const row of snapshot.accounts.proxyLogs) {
     statements.push({
       table: 'proxy_logs',
-      columns: ['id', 'route_id', 'channel_id', 'account_id', 'model_requested', 'model_actual', 'status', 'http_status', 'latency_ms', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost', 'billing_details', 'error_message', 'retry_count', 'created_at'],
+      columns: ['id', 'route_id', 'channel_id', 'account_id', 'downstream_api_key_id', 'model_requested', 'model_actual', 'status', 'http_status', 'latency_ms', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost', 'billing_details', 'error_message', 'retry_count', 'created_at'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.routeId, null),
         asNumber(row.channelId, null),
         asNumber(row.accountId, null),
+        asNumber((row as any).downstreamApiKeyId ?? (row as any).downstream_api_key_id, null),
         asNullableString(row.modelRequested),
         asNullableString(row.modelActual),
         asNullableString(row.status),
@@ -606,6 +625,7 @@ async function syncPostgresSequences(client: SqlClient): Promise<void> {
     'token_model_availability',
     'token_routes',
     'route_channels',
+    'route_group_sources',
     'proxy_logs',
     'proxy_video_tasks',
     'proxy_files',
@@ -613,9 +633,9 @@ async function syncPostgresSequences(client: SqlClient): Promise<void> {
     'events',
   ];
   for (const table of tables) {
-    await client.execute(`SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM "${table}"), 1), TRUE)`);
+      await client.execute(`SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM "${table}"), 1), TRUE)`);
+    }
   }
-}
 
 export async function bootstrapRuntimeDatabaseSchema(input: Pick<NormalizedDatabaseMigrationInput, 'dialect' | 'connectionString' | 'ssl'>): Promise<void> {
   const client = await createClient({
@@ -678,6 +698,7 @@ export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Pro
       downstreamApiKeys: snapshot.accounts.downstreamApiKeys.length,
       events: snapshot.accounts.events.length,
       settings: snapshot.preferences.settings.length,
+      routeGroupSources: snapshot.accounts.routeGroupSources.length,
     },
   };
 }

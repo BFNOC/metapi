@@ -2,6 +2,7 @@ import { asc } from 'drizzle-orm';
 import cron from 'node-cron';
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
+import { getOauthInfoFromExtraConfig } from './oauth/oauthAccount.js';
 
 const BACKUP_VERSION = '2.0';
 
@@ -12,6 +13,7 @@ type AccountRow = typeof schema.accounts.$inferSelect;
 type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
 type TokenRouteRow = typeof schema.tokenRoutes.$inferSelect;
 type RouteChannelRow = typeof schema.routeChannels.$inferSelect;
+type RouteGroupSourceRow = typeof schema.routeGroupSources.$inferSelect;
 
 interface AccountsBackupSection {
   sites: SiteRow[];
@@ -19,6 +21,7 @@ interface AccountsBackupSection {
   accountTokens: AccountTokenRow[];
   tokenRoutes: TokenRouteRow[];
   routeChannels: RouteChannelRow[];
+  routeGroupSources: RouteGroupSourceRow[];
 }
 
 interface PreferencesBackupSection {
@@ -102,6 +105,18 @@ function normalizeLegacyQuota(raw: unknown): number {
   // Convert obvious raw values to display currency units.
   if (value >= 10_000) return value / 500_000;
   return value;
+}
+
+function resolveImportedOauthColumns(row: Pick<AccountRow, 'oauthProvider' | 'oauthAccountKey' | 'oauthProjectId' | 'extraConfig'>) {
+  const oauth = getOauthInfoFromExtraConfig(row.extraConfig);
+  const oauthProvider = row.oauthProvider || oauth?.provider || null;
+  const oauthAccountKey = row.oauthAccountKey || oauth?.accountKey || oauth?.accountId || null;
+  const oauthProjectId = row.oauthProjectId || oauth?.projectId || null;
+  return {
+    oauthProvider,
+    oauthAccountKey,
+    oauthProjectId,
+  };
 }
 
 function normalizeLegacyPlatform(raw: string): string {
@@ -215,6 +230,9 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
       username,
       accessToken: accountAccessToken,
       apiToken,
+      oauthProvider: null,
+      oauthAccountKey: null,
+      oauthProjectId: null,
       balance: importedBalance,
       balanceUsed: importedUsed,
       quota: importedQuota > 0 ? importedQuota : importedBalance,
@@ -238,6 +256,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         name: 'default',
         token: apiToken,
         tokenGroup: 'default',
+        valueStatus: 'ready',
         source: 'legacy',
         enabled: true,
         isDefault: true,
@@ -253,6 +272,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
     accountTokens,
     tokenRoutes,
     routeChannels,
+    routeGroupSources: [],
   };
 }
 
@@ -331,6 +351,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
   const accountTokens = await db.select().from(schema.accountTokens).orderBy(asc(schema.accountTokens.id)).all();
   const tokenRoutes = await db.select().from(schema.tokenRoutes).orderBy(asc(schema.tokenRoutes.id)).all();
   const routeChannels = await db.select().from(schema.routeChannels).orderBy(asc(schema.routeChannels.id)).all();
+  const routeGroupSources = await db.select().from(schema.routeGroupSources).orderBy(asc(schema.routeGroupSources.id)).all();
 
   return {
     sites,
@@ -338,6 +359,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     accountTokens,
     tokenRoutes,
     routeChannels,
+    routeGroupSources,
   };
 }
 
@@ -388,6 +410,9 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   const accountTokens = Array.isArray(input.accountTokens) ? input.accountTokens as AccountTokenRow[] : null;
   const tokenRoutes = Array.isArray(input.tokenRoutes) ? input.tokenRoutes as TokenRouteRow[] : null;
   const routeChannels = Array.isArray(input.routeChannels) ? input.routeChannels as RouteChannelRow[] : null;
+  const routeGroupSources = Array.isArray(input.routeGroupSources)
+    ? input.routeGroupSources as RouteGroupSourceRow[]
+    : [];
 
   if (!sites || !accounts || !accountTokens || !tokenRoutes || !routeChannels) return null;
 
@@ -397,6 +422,7 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
     accountTokens,
     tokenRoutes,
     routeChannels,
+    routeGroupSources,
   };
 }
 
@@ -460,6 +486,7 @@ function detectPreferencesSection(data: RawBackupData): PreferencesBackupSection
 async function importAccountsSection(section: AccountsBackupSection): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.delete(schema.routeChannels).run();
+    await tx.delete(schema.routeGroupSources).run();
     await tx.delete(schema.tokenRoutes).run();
     await tx.delete(schema.tokenModelAvailability).run();
     await tx.delete(schema.modelAvailability).run();
@@ -490,12 +517,16 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     }
 
     for (const row of section.accounts) {
+      const oauthColumns = resolveImportedOauthColumns(row);
       await tx.insert(schema.accounts).values({
         id: row.id,
         siteId: row.siteId,
         username: row.username,
         accessToken: row.accessToken,
         apiToken: row.apiToken,
+        oauthProvider: oauthColumns.oauthProvider,
+        oauthAccountKey: oauthColumns.oauthAccountKey,
+        oauthProjectId: oauthColumns.oauthProjectId,
         balance: row.balance,
         balanceUsed: row.balanceUsed,
         quota: row.quota,
@@ -520,6 +551,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         name: row.name,
         token: row.token,
         tokenGroup: row.tokenGroup ?? null,
+        valueStatus: row.valueStatus ?? 'ready',
         source: row.source,
         enabled: row.enabled,
         isDefault: row.isDefault,
@@ -535,9 +567,21 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         displayName: row.displayName ?? null,
         displayIcon: row.displayIcon ?? null,
         modelMapping: row.modelMapping,
+        routeMode: row.routeMode ?? 'pattern',
+        decisionSnapshot: row.decisionSnapshot ?? null,
+        decisionRefreshedAt: row.decisionRefreshedAt ?? null,
+        routingStrategy: row.routingStrategy ?? 'weighted',
         enabled: row.enabled,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
+      }).run();
+    }
+
+    for (const row of section.routeGroupSources || []) {
+      await tx.insert(schema.routeGroupSources).values({
+        id: row.id,
+        groupRouteId: row.groupRouteId,
+        sourceRouteId: row.sourceRouteId,
       }).run();
     }
 

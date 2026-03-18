@@ -64,6 +64,41 @@
       "when": 1773528832339,
       "tag": "0009_model_availability_is_manual",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1773553945763,
+      "tag": "0010_proxy_logs_downstream_api_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1773605400000,
+      "tag": "0011_downstream_api_key_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1773665311013,
+      "tag": "0012_account_token_value_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1773682200000,
+      "tag": "0013_oauth_multi_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1773855000000,
+      "tag": "0014_explicit_group_routes",
+      "breakpoints": true
     }
   ]
 }

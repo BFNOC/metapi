@@ -8,6 +8,8 @@ import {
   mergeAccountExtraConfig,
   normalizeCredentialMode,
   resolvePlatformUserId,
+  requiresManagedAccountTokens,
+  supportsDirectAccountRoutingConnection,
 } from './accountExtraConfig.js';
 
 describe('accountExtraConfig', () => {
@@ -81,5 +83,41 @@ describe('accountExtraConfig', () => {
     expect(getProxyUrlFromExtraConfig(null)).toBeNull();
     expect(getProxyUrlFromExtraConfig(undefined)).toBeNull();
     expect(getProxyUrlFromExtraConfig('invalid-json')).toBeNull();
+  });
+
+  it('treats auto-mode api token connections as direct-account routable', () => {
+    expect(supportsDirectAccountRoutingConnection({
+      accessToken: '',
+      apiToken: 'sk-demo',
+      extraConfig: null,
+    })).toBe(true);
+    expect(requiresManagedAccountTokens({
+      accessToken: '',
+      apiToken: 'sk-demo',
+      extraConfig: null,
+    })).toBe(false);
+  });
+
+  it('treats oauth and session connections as non-managed-token direct routes only when intended', () => {
+    expect(supportsDirectAccountRoutingConnection({
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      extraConfig: JSON.stringify({ credentialMode: 'session', oauth: { provider: 'codex' } }),
+    })).toBe(true);
+    expect(requiresManagedAccountTokens({
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      extraConfig: JSON.stringify({ credentialMode: 'session', oauth: { provider: 'codex' } }),
+    })).toBe(false);
+    expect(supportsDirectAccountRoutingConnection({
+      accessToken: 'session-token',
+      apiToken: 'sk-default',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    })).toBe(false);
+    expect(requiresManagedAccountTokens({
+      accessToken: 'session-token',
+      apiToken: 'sk-default',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    })).toBe(true);
   });
 });

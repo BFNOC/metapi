@@ -17,7 +17,8 @@ import {
   parseProxyLogBillingDetails,
   withProxyLogSelectFields,
 } from '../../services/proxyLogStore.js';
-import { getCredentialModeFromExtraConfig } from '../../services/accountExtraConfig.js';
+import { requiresManagedAccountTokens } from '../../services/accountExtraConfig.js';
+import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from '../../services/accountTokenService.js';
 import {
   formatLocalDateTime,
   formatUtcSqlDateTime,
@@ -26,6 +27,7 @@ import {
   parseStoredUtcDateTime,
   toLocalDayKeyFromStoredUtc,
 } from '../../services/localTimeService.js';
+import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
 
 function parseBooleanFlag(raw?: string): boolean {
   if (!raw) return false;
@@ -33,14 +35,13 @@ function parseBooleanFlag(raw?: string): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
-function isApiKeyConnection(account: { accessToken?: string | null; extraConfig?: string | null }): boolean {
-  const explicit = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (explicit && explicit !== 'auto') return explicit === 'apikey';
-  return !(account.accessToken || '').trim();
-}
-
 const MODELS_MARKETPLACE_BASE_TTL_MS = 15_000;
 const MODELS_MARKETPLACE_PRICING_TTL_MS = 90_000;
+const limitModelTokenCandidatesRead = createRateLimitGuard({
+  bucket: 'models-token-candidates-read',
+  max: 30,
+  windowMs: 60_000,
+});
 
 type ModelsMarketplaceCacheEntry = {
   expiresAt: number;
@@ -121,12 +122,36 @@ function normalizeProxyLogTimeBoundary(raw?: string): string | null {
   return formatUtcSqlDateTime(parsed);
 }
 
+function parseDownstreamKeyTags(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const value of parsed) {
+      const text = String(value || '').trim();
+      if (!text) continue;
+      const dedupeKey = text.toLowerCase();
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      result.push(text);
+    }
+    return result;
+  } catch {
+    return [];
+  }
+}
+
 function buildProxyLogSearchCondition(search: string) {
   if (!search) return null;
   const likeTerm = `%${search}%`;
   return sql<boolean>`(
     lower(coalesce(${schema.proxyLogs.modelRequested}, '')) like ${likeTerm}
     or lower(coalesce(${schema.proxyLogs.modelActual}, '')) like ${likeTerm}
+    or lower(coalesce(${schema.downstreamApiKeys.name}, '')) like ${likeTerm}
+    or lower(coalesce(${schema.downstreamApiKeys.groupName}, '')) like ${likeTerm}
+    or lower(coalesce(${schema.downstreamApiKeys.tags}, '')) like ${likeTerm}
   )`;
 }
 
@@ -316,6 +341,12 @@ function mapProxyLogRow(
     proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
     accounts: { username?: string | null } | null;
     sites: { id?: number | null; name?: string | null; url?: string | null } | null;
+    downstream_api_keys: {
+      id?: number | null;
+      name?: string | null;
+      groupName?: string | null;
+      tags?: string | null;
+    } | null;
   },
   options?: { includeBillingDetails?: boolean },
 ) {
@@ -328,6 +359,10 @@ function mapProxyLogRow(
     siteId: row.sites?.id || null,
     siteName: row.sites?.name || null,
     siteUrl: row.sites?.url || null,
+    downstreamKeyId: row.downstream_api_keys?.id || null,
+    downstreamKeyName: row.downstream_api_keys?.name || null,
+    downstreamKeyGroupName: row.downstream_api_keys?.groupName || null,
+    downstreamKeyTags: parseDownstreamKeyTags(row.downstream_api_keys?.tags),
   };
 }
 
@@ -530,9 +565,16 @@ export async function statsRoutes(app: FastifyInstance) {
         proxy_logs: fields,
         accounts: schema.accounts,
         sites: schema.sites,
+        downstream_api_keys: {
+          id: schema.downstreamApiKeys.id,
+          name: schema.downstreamApiKeys.name,
+          groupName: schema.downstreamApiKeys.groupName,
+          tags: schema.downstreamApiKeys.tags,
+        },
       }).from(schema.proxyLogs)
         .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
-        .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id));
+        .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+        .leftJoin(schema.downstreamApiKeys, eq(schema.proxyLogs.downstreamApiKeyId, schema.downstreamApiKeys.id));
 
       if (listWhere) {
         query = query.where(listWhere) as typeof query;
@@ -547,13 +589,15 @@ export async function statsRoutes(app: FastifyInstance) {
       proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
       accounts: { username?: string | null } | null;
       sites: { id?: number | null; name?: string | null; url?: string | null } | null;
+      downstream_api_keys: { id?: number | null; name?: string | null; groupName?: string | null; tags?: string | null } | null;
     }>;
 
     let totalQuery = db.select({
       total: sql<number>`count(*)`,
     }).from(schema.proxyLogs)
       .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
-      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id));
+      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .leftJoin(schema.downstreamApiKeys, eq(schema.proxyLogs.downstreamApiKeyId, schema.downstreamApiKeys.id));
     if (listWhere) {
       totalQuery = totalQuery.where(listWhere) as typeof totalQuery;
     }
@@ -567,7 +611,8 @@ export async function statsRoutes(app: FastifyInstance) {
       totalTokensAll: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
     }).from(schema.proxyLogs)
       .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
-      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id));
+      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .leftJoin(schema.downstreamApiKeys, eq(schema.proxyLogs.downstreamApiKeyId, schema.downstreamApiKeys.id));
     if (summaryWhere) {
       summaryQuery = summaryQuery.where(summaryWhere) as typeof summaryQuery;
     }
@@ -599,15 +644,23 @@ export async function statsRoutes(app: FastifyInstance) {
         proxy_logs: fields,
         accounts: schema.accounts,
         sites: schema.sites,
+        downstream_api_keys: {
+          id: schema.downstreamApiKeys.id,
+          name: schema.downstreamApiKeys.name,
+          groupName: schema.downstreamApiKeys.groupName,
+          tags: schema.downstreamApiKeys.tags,
+        },
       }).from(schema.proxyLogs)
         .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
         .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+        .leftJoin(schema.downstreamApiKeys, eq(schema.proxyLogs.downstreamApiKeyId, schema.downstreamApiKeys.id))
         .where(eq(schema.proxyLogs.id, id))
         .get()
     ), { includeBillingDetails: true }) as {
       proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
       accounts: { username?: string | null } | null;
       sites: { id?: number | null; name?: string | null; url?: string | null } | null;
+      downstream_api_keys: { id?: number | null; name?: string | null; groupName?: string | null; tags?: string | null } | null;
     } | undefined;
 
     if (!row) {
@@ -672,6 +725,15 @@ export async function statsRoutes(app: FastifyInstance) {
       .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
       .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
       .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(
+        and(
+          eq(schema.tokenModelAvailability.available, true),
+          eq(schema.accountTokens.enabled, true),
+          eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
+          eq(schema.accounts.status, 'active'),
+          eq(schema.sites.status, 'active'),
+        ),
+      )
       .all();
     const accountAvailability = await db.select().from(schema.modelAvailability)
       .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
@@ -914,7 +976,7 @@ export async function statsRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get('/api/models/token-candidates', async () => {
+  app.get('/api/models/token-candidates', { preHandler: [limitModelTokenCandidatesRead] }, async () => {
     const resolveTokenGroupLabel = (tokenGroup: string | null, tokenName: string | null): string | null => {
       const explicit = (tokenGroup || '').trim();
       if (explicit) return explicit;
@@ -937,6 +999,7 @@ export async function statsRoutes(app: FastifyInstance) {
         and(
           eq(schema.tokenModelAvailability.available, true),
           eq(schema.accountTokens.enabled, true),
+          eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
           eq(schema.accounts.status, 'active'),
           eq(schema.sites.status, 'active'),
         ),
@@ -949,6 +1012,7 @@ export async function statsRoutes(app: FastifyInstance) {
       siteId: schema.sites.id,
       siteName: schema.sites.name,
       accessToken: schema.accounts.accessToken,
+      apiToken: schema.accounts.apiToken,
       extraConfig: schema.accounts.extraConfig,
     })
       .from(schema.modelAvailability)
@@ -1027,7 +1091,7 @@ export async function statsRoutes(app: FastifyInstance) {
     }
 
     for (const row of availableModelRows) {
-      if (isApiKeyConnection(row)) continue;
+      if (!requiresManagedAccountTokens(row)) continue;
       const modelName = (row.modelName || '').trim();
       if (!modelName) continue;
       const coverageKey = `${row.accountId}::${modelName.toLowerCase()}`;
@@ -1044,7 +1108,7 @@ export async function statsRoutes(app: FastifyInstance) {
 
     const accountIdsForGroupHints = new Set(
       availableModelRows
-        .filter((row) => !isApiKeyConnection(row))
+        .filter((row) => requiresManagedAccountTokens(row))
         .map((row) => row.accountId),
     );
     const requiredGroupsByAccountModel = new Map<string, Map<string, string>>();
@@ -1106,7 +1170,7 @@ export async function statsRoutes(app: FastifyInstance) {
     }
 
     for (const row of availableModelRows) {
-      if (isApiKeyConnection(row)) continue;
+      if (!requiresManagedAccountTokens(row)) continue;
       const modelName = (row.modelName || '').trim();
       if (!modelName) continue;
       const accountModelKey = `${row.accountId}::${modelName.toLowerCase()}`;

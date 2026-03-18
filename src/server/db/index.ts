@@ -8,7 +8,6 @@ import * as schema from './schema.js';
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from './siteSchemaCompatibility.js';
 import { ensureRouteGroupingSchemaCompatibility } from './routeGroupingSchemaCompatibility.js';
 import { ensureProxyFileSchemaCompatibility } from './proxyFileSchemaCompatibility.js';
-import { ensureSharedIndexSchemaCompatibility } from './sharedIndexSchemaCompatibility.js';
 import { executeLegacyCompat, executeLegacyCompatSync } from './legacySchemaCompat.js';
 import { config } from '../config.js';
 import { ensureRuntimeDatabaseReady } from '../runtimeDatabaseBootstrap.js';
@@ -28,6 +27,7 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'model_availability',
   'token_model_availability',
   'token_routes',
+  'route_group_sources',
   'route_channels',
   'proxy_logs',
   'proxy_video_tasks',
@@ -42,6 +42,7 @@ let sqliteConnection: Database.Database | null = null;
 let mysqlPool: mysql.Pool | null = null;
 let pgPool: pg.Pool | null = null;
 let proxyLogBillingDetailsColumnAvailable: boolean | null = null;
+let proxyLogDownstreamApiKeyIdColumnAvailable: boolean | null = null;
 
 function resolveSqlitePath(): string {
   const raw = (config.dbUrl || '').trim();
@@ -137,6 +138,7 @@ function ensureTokenManagementSchema() {
       name text NOT NULL,
       token text NOT NULL,
       token_group text,
+      value_status text NOT NULL DEFAULT 'ready',
       source text DEFAULT 'manual',
       enabled integer DEFAULT true,
       is_default integer DEFAULT false,
@@ -151,6 +153,9 @@ function ensureTokenManagementSchema() {
 
   if (!tableColumnExists('account_tokens', 'token_group')) {
     execSqliteLegacyCompat('ALTER TABLE account_tokens ADD COLUMN token_group text;');
+  }
+  if (!tableColumnExists('account_tokens', 'value_status')) {
+    execSqliteLegacyCompat("ALTER TABLE account_tokens ADD COLUMN value_status text NOT NULL DEFAULT 'ready';");
   }
 
   execSqliteStatement(`
@@ -446,12 +451,6 @@ export async function ensureProxyFileCompatibilityColumns(): Promise<void> {
   await ensureProxyFileSchemaCompatibility(inspector);
 }
 
-export async function ensureSharedIndexCompatibility(): Promise<void> {
-  const inspector = createRuntimeSchemaInspector();
-  if (!inspector) return;
-  await ensureSharedIndexSchemaCompatibility(inspector);
-}
-
 function ensureRouteGroupingSchema() {
   if (!tableExists('token_routes') || !tableExists('route_channels')) {
     return;
@@ -463,6 +462,10 @@ function ensureRouteGroupingSchema() {
 
   if (!tableColumnExists('token_routes', 'display_icon')) {
     execSqliteLegacyCompat(`ALTER TABLE token_routes ADD COLUMN display_icon text;`);
+  }
+
+  if (!tableColumnExists('token_routes', 'route_mode')) {
+    execSqliteLegacyCompat(`ALTER TABLE token_routes ADD COLUMN route_mode text DEFAULT 'pattern';`);
   }
 
   if (!tableColumnExists('token_routes', 'decision_snapshot')) {
@@ -492,6 +495,22 @@ function ensureRouteGroupingSchema() {
   if (!tableColumnExists('route_channels', 'cooldown_level')) {
     execSqliteLegacyCompat(`ALTER TABLE route_channels ADD COLUMN cooldown_level integer NOT NULL DEFAULT 0;`);
   }
+
+  execSqliteLegacyCompat(`
+    CREATE TABLE IF NOT EXISTS route_group_sources (
+      id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      group_route_id integer NOT NULL REFERENCES token_routes(id) ON DELETE cascade,
+      source_route_id integer NOT NULL REFERENCES token_routes(id) ON DELETE cascade
+    );
+  `);
+  execSqliteLegacyCompat(`
+    CREATE UNIQUE INDEX IF NOT EXISTS route_group_sources_group_source_unique
+    ON route_group_sources(group_route_id, source_route_id);
+  `);
+  execSqliteLegacyCompat(`
+    CREATE INDEX IF NOT EXISTS route_group_sources_source_route_id_idx
+    ON route_group_sources(source_route_id);
+  `);
 }
 
 function ensureDownstreamApiKeySchema() {
@@ -501,6 +520,8 @@ function ensureDownstreamApiKeySchema() {
       name text NOT NULL,
       key text NOT NULL,
       description text,
+      group_name text,
+      tags text,
       enabled integer DEFAULT true,
       expires_at text,
       max_cost real,
@@ -532,6 +553,14 @@ function ensureDownstreamApiKeySchema() {
     CREATE INDEX IF NOT EXISTS downstream_api_keys_expires_at_idx
     ON downstream_api_keys(expires_at);
   `);
+
+  if (!tableColumnExists('downstream_api_keys', 'group_name')) {
+    execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN group_name text;');
+  }
+
+  if (!tableColumnExists('downstream_api_keys', 'tags')) {
+    execSqliteLegacyCompat('ALTER TABLE downstream_api_keys ADD COLUMN tags text;');
+  }
 }
 
 function ensureProxyLogBillingDetailsSchema() {
@@ -544,6 +573,18 @@ function ensureProxyLogBillingDetailsSchema() {
   }
 
   proxyLogBillingDetailsColumnAvailable = true;
+}
+
+function ensureProxyLogDownstreamApiKeyIdSchema() {
+  if (!tableExists('proxy_logs')) {
+    return;
+  }
+
+  if (!tableColumnExists('proxy_logs', 'downstream_api_key_id')) {
+    execSqliteLegacyCompat('ALTER TABLE proxy_logs ADD COLUMN downstream_api_key_id integer;');
+  }
+
+  proxyLogDownstreamApiKeyIdColumnAvailable = true;
 }
 
 function normalizeSchemaErrorMessage(error: unknown): string {
@@ -624,8 +665,75 @@ export async function ensureProxyLogBillingDetailsColumn(): Promise<boolean> {
   }
 }
 
+export async function hasProxyLogDownstreamApiKeyIdColumn(): Promise<boolean> {
+  if (proxyLogDownstreamApiKeyIdColumnAvailable !== null) {
+    return proxyLogDownstreamApiKeyIdColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'sqlite') {
+    proxyLogDownstreamApiKeyIdColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'downstream_api_key_id');
+    return proxyLogDownstreamApiKeyIdColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'mysql') {
+    if (!mysqlPool) return false;
+    const [rows] = await mysqlPool.query('SHOW COLUMNS FROM `proxy_logs` LIKE ?', ['downstream_api_key_id']);
+    proxyLogDownstreamApiKeyIdColumnAvailable = Array.isArray(rows) && rows.length > 0;
+    return proxyLogDownstreamApiKeyIdColumnAvailable;
+  }
+
+  if (!pgPool) return false;
+  const result = await pgPool.query(
+    'SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2 LIMIT 1',
+    ['proxy_logs', 'downstream_api_key_id'],
+  );
+  proxyLogDownstreamApiKeyIdColumnAvailable = Number(result.rowCount || 0) > 0;
+  return proxyLogDownstreamApiKeyIdColumnAvailable;
+}
+
+export async function ensureProxyLogDownstreamApiKeyIdColumn(): Promise<boolean> {
+  if (runtimeDbDialect === 'sqlite') {
+    ensureProxyLogDownstreamApiKeyIdSchema();
+    proxyLogDownstreamApiKeyIdColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'downstream_api_key_id');
+    return proxyLogDownstreamApiKeyIdColumnAvailable;
+  }
+
+  if (await hasProxyLogDownstreamApiKeyIdColumn()) {
+    return true;
+  }
+
+  try {
+    if (runtimeDbDialect === 'mysql') {
+      if (!mysqlPool) return false;
+      await executeLegacyCompat(
+        (statement) => mysqlPool!.query(statement).then(() => undefined),
+        'ALTER TABLE `proxy_logs` ADD COLUMN `downstream_api_key_id` INT NULL',
+      );
+    } else {
+      if (!pgPool) return false;
+      await executeLegacyCompat(
+        (statement) => pgPool!.query(statement).then(() => undefined),
+        'ALTER TABLE "proxy_logs" ADD COLUMN "downstream_api_key_id" INTEGER',
+      );
+    }
+    proxyLogDownstreamApiKeyIdColumnAvailable = true;
+    return true;
+  } catch (error) {
+    if (isDuplicateColumnError(error)) {
+      proxyLogDownstreamApiKeyIdColumnAvailable = true;
+      return true;
+    }
+    proxyLogDownstreamApiKeyIdColumnAvailable = false;
+    console.warn('[db] failed to ensure proxy_logs.downstream_api_key_id column', error);
+    return false;
+  }
+}
+
 function resetSchemaCapabilityCache() {
   proxyLogBillingDetailsColumnAvailable = null;
+  proxyLogDownstreamApiKeyIdColumnAvailable = null;
 }
 
 async function sqliteProxyQuery(sqlText: string, params: unknown[], method: SqlMethod) {

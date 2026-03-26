@@ -1,4 +1,4 @@
-﻿import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
 import { config } from '../config.js';
@@ -75,18 +75,18 @@ const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
 const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
 const SITE_RUNTIME_HEALTH_DECAY_HALF_LIFE_MS = 10 * 60 * 1000;
 const SITE_RUNTIME_MIN_MULTIPLIER = 0.08;
-const SITE_RUNTIME_LATENCY_BASELINE_MS = 2_500;
-const SITE_RUNTIME_LATENCY_WINDOW_MS = 30_000;
-const SITE_RUNTIME_MAX_LATENCY_PENALTY = 0.35;
+const SITE_RUNTIME_LATENCY_BASELINE_MS = 800;    // Penalize sites with latency above 800ms (was 2500)
+const SITE_RUNTIME_LATENCY_WINDOW_MS = 8_000;     // Full penalty applied at 8.8s latency (was 32.5s)
+const SITE_RUNTIME_MAX_LATENCY_PENALTY = 0.65;    // Max 65% penalty for slow runtime latency (was 35%)
 const SITE_RUNTIME_LATENCY_EMA_ALPHA = 0.3;
 const SITE_RUNTIME_BREAKER_STREAK_THRESHOLD = 3;
 const SITE_RUNTIME_BREAKER_LEVELS_MS = [0, 60_000, 5 * 60_000, 30 * 60 * 1000] as const;
 const SITE_TRANSIENT_STREAK_WINDOW_MS = 5 * 60 * 1000;
 const SITE_HISTORICAL_HEALTH_MIN_MULTIPLIER = 0.45;
 const SITE_HISTORICAL_HEALTH_MAX_SAMPLE = 24;
-const SITE_HISTORICAL_LATENCY_BASELINE_MS = 2_000;
-const SITE_HISTORICAL_LATENCY_WINDOW_MS = 20_000;
-const SITE_HISTORICAL_MAX_LATENCY_PENALTY = 0.18;
+const SITE_HISTORICAL_LATENCY_BASELINE_MS = 800;  // Penalize sites with historical avg above 800ms (was 2000)
+const SITE_HISTORICAL_LATENCY_WINDOW_MS = 8_000;  // Full penalty applied at 8.8s avg latency (was 22s)
+const SITE_HISTORICAL_MAX_LATENCY_PENALTY = 0.55; // Max 55% penalty for slow historical latency (was 18%)
 const SITE_RUNTIME_HEALTH_SETTING_KEY = 'token_router_site_runtime_health_v1';
 const SITE_RUNTIME_HEALTH_PERSIST_DEBOUNCE_MS = 500;
 const SITE_RUNTIME_HEALTH_PERSIST_STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;

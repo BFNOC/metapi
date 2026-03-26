@@ -753,6 +753,7 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       sortOrder: section.sites.length,
       globalWeight: 1,
       apiKey: null,
+      modelFilterMode: 'deny-list',
       createdAt: input.createdAt,
       updatedAt: input.updatedAt,
     });
@@ -996,6 +997,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         sortOrder: sites.length,
         globalWeight: 1,
         apiKey: null,
+        modelFilterMode: 'deny-list',
         createdAt: toIsoString(item.created_at),
         updatedAt: toIsoString(item.updated_at),
       });

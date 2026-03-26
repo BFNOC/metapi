@@ -15,6 +15,7 @@ export const sites = sqliteTable('sites', {
   sortOrder: integer('sort_order').default(0),
   globalWeight: real('global_weight').default(1),
   apiKey: text('api_key'),
+  modelFilterMode: text('model_filter_mode').default('deny-list'), // 'deny-list' | 'allow-list'
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
@@ -30,6 +31,16 @@ export const siteDisabledModels = sqliteTable('site_disabled_models', {
 }, (table) => ({
   siteModelUnique: uniqueIndex('site_disabled_models_site_model_unique').on(table.siteId, table.modelName),
   siteIdIdx: index('site_disabled_models_site_id_idx').on(table.siteId),
+}));
+
+export const siteAllowedModels = sqliteTable('site_allowed_models', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  modelName: text('model_name').notNull(),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteModelUnique: uniqueIndex('site_allowed_models_site_model_unique').on(table.siteId, table.modelName),
+  siteIdIdx: index('site_allowed_models_site_id_idx').on(table.siteId),
 }));
 
 export const accounts = sqliteTable('accounts', {
@@ -73,6 +84,8 @@ export const accountTokens = sqliteTable('account_tokens', {
   source: text('source').default('manual'), // 'manual' | 'sync' | 'legacy'
   enabled: integer('enabled', { mode: 'boolean' }).default(true),
   isDefault: integer('is_default', { mode: 'boolean' }).default(false),
+  modelFilterMode: text('model_filter_mode').default('none'), // 'none' | 'allow-list' | 'deny-list'
+  filteredModels: text('filtered_models'), // JSON array<string>
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({

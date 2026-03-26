@@ -7,12 +7,21 @@ import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
 import { getSub2ApiSubscriptionFromExtraConfig } from '../../services/accountExtraConfig.js';
+import { probeModels, type ProbeResult } from '../../services/modelProbeService.js';
 
 function normalizeSiteStatus(input: unknown): 'active' | 'disabled' | null {
   if (input === undefined || input === null) return null;
   if (typeof input !== 'string') return null;
   const status = input.trim().toLowerCase();
   if (status === 'active' || status === 'disabled') return status;
+  return null;
+}
+
+function normalizeModelFilterMode(input: unknown): 'deny-list' | 'allow-list' | null {
+  if (input === undefined || input === null) return null;
+  if (typeof input !== 'string') return null;
+  const mode = input.trim().toLowerCase();
+  if (mode === 'deny-list' || mode === 'allow-list') return mode;
   return null;
 }
 
@@ -386,6 +395,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     isPinned?: boolean;
     sortOrder?: number;
     globalWeight?: number;
+    modelFilterMode?: string;
   } }>('/api/sites/:id', async (request, reply) => {
     const id = parseInt(request.params.id);
     if (Number.isNaN(id)) {
@@ -431,6 +441,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
     }
+    const normalizedModelFilterMode = normalizeModelFilterMode(body.modelFilterMode);
+    if (body.modelFilterMode !== undefined && !normalizedModelFilterMode) {
+      return reply.code(400).send({ error: 'Invalid modelFilterMode. Expected deny-list or allow-list.' });
+    }
 
     const nextUrl = body.url !== undefined ? normalizeSiteUrl(body.url) : existingSite.url;
     const nextPlatform = body.platform !== undefined ? body.platform : existingSite.platform;
@@ -458,6 +472,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;
     if (body.sortOrder !== undefined) updates.sortOrder = normalizedSortOrder;
     if (body.globalWeight !== undefined) updates.globalWeight = normalizedGlobalWeight;
+    if (body.modelFilterMode !== undefined) updates.modelFilterMode = normalizedModelFilterMode;
     updates.updatedAt = new Date().toISOString();
     try {
       await db.update(schema.sites).set(updates).where(eq(schema.sites.id, id)).run();
@@ -633,6 +648,196 @@ export async function sitesRoutes(app: FastifyInstance) {
     ])).filter((m) => m.length > 0).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
     return { siteId: id, models };
+  });
+
+  // Get allowed models for a site (allow-list)
+  app.get<{ Params: { id: string } }>('/api/sites/:id/allowed-models', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const existingSite = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!existingSite) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+    const rows = await db.select({ modelName: schema.siteAllowedModels.modelName })
+      .from(schema.siteAllowedModels)
+      .where(eq(schema.siteAllowedModels.siteId, id))
+      .all();
+    return { siteId: id, models: rows.map((r) => r.modelName) };
+  });
+
+  // Update allowed models for a site (full replace, atomic with mode switch)
+  app.put<{ Params: { id: string }; Body: { models?: string[]; modelFilterMode?: string } }>('/api/sites/:id/allowed-models', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const existingSite = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!existingSite) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+    const rawModels = request.body?.models;
+    if (!Array.isArray(rawModels)) {
+      return reply.code(400).send({ error: 'models must be an array of strings' });
+    }
+    const models = rawModels
+      .filter((m): m is string => typeof m === 'string')
+      .map((m) => m.trim())
+      .filter((m) => m.length > 0);
+    const uniqueModels = Array.from(new Set(models));
+
+    // Optionally switch mode atomically with the list update
+    const normalizedMode = normalizeModelFilterMode(request.body?.modelFilterMode);
+    if (request.body?.modelFilterMode !== undefined && !normalizedMode) {
+      return reply.code(400).send({ error: 'Invalid modelFilterMode. Expected deny-list or allow-list.' });
+    }
+
+    await db.delete(schema.siteAllowedModels)
+      .where(eq(schema.siteAllowedModels.siteId, id))
+      .run();
+
+    if (uniqueModels.length > 0) {
+      await db.insert(schema.siteAllowedModels).values(
+        uniqueModels.map((modelName) => ({ siteId: id, modelName })),
+      ).run();
+    }
+
+    if (normalizedMode) {
+      await db.update(schema.sites)
+        .set({ modelFilterMode: normalizedMode, updatedAt: new Date().toISOString() })
+        .where(eq(schema.sites.id, id))
+        .run();
+    }
+
+    invalidateSiteCaches();
+    return { siteId: id, models: uniqueModels, modelFilterMode: normalizedMode || existingSite.modelFilterMode || 'deny-list' };
+  });
+
+  // Probe models for a site
+  app.post<{ Params: { id: string }; Body: {
+    modelNames?: string[];
+    prompt?: string;
+    concurrency?: number;
+    timeoutMs?: number;
+  } }>('/api/sites/:id/probe-models', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const existingSite = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!existingSite) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+
+    // Get API token: prefer site.apiKey, then fall back to first active account's apiToken or first accountToken
+    let apiToken: string | null = existingSite.apiKey || null;
+    if (!apiToken) {
+      const account = await db.select()
+        .from(schema.accounts)
+        .where(and(eq(schema.accounts.siteId, id), eq(schema.accounts.status, 'active')))
+        .get();
+      if (account) {
+        apiToken = account.apiToken || null;
+        if (!apiToken) {
+          const token = await db.select()
+            .from(schema.accountTokens)
+            .where(and(eq(schema.accountTokens.accountId, account.id), eq(schema.accountTokens.enabled, true)))
+            .get();
+          apiToken = token?.token || null;
+        }
+      }
+    }
+    if (!apiToken) {
+      return reply.code(400).send({ error: 'No API token available for this site. Add an account with an API token first.' });
+    }
+
+    // Determine which models to probe
+    let modelNames: string[] = [];
+    const requestedModels = request.body?.modelNames;
+    if (Array.isArray(requestedModels) && requestedModels.length > 0) {
+      modelNames = requestedModels.filter((m): m is string => typeof m === 'string').map((m) => m.trim()).filter((m) => m.length > 0);
+    } else {
+      // Probe all enabled models for this site
+      const filterMode = existingSite.modelFilterMode || 'deny-list';
+      if (filterMode === 'allow-list') {
+        const allowedRows = await db.select({ modelName: schema.siteAllowedModels.modelName })
+          .from(schema.siteAllowedModels)
+          .where(eq(schema.siteAllowedModels.siteId, id))
+          .all();
+        modelNames = allowedRows.map((r) => r.modelName);
+      } else {
+        // Get all available models minus disabled ones
+        const accountModels = await db.select({ modelName: schema.modelAvailability.modelName })
+          .from(schema.modelAvailability)
+          .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
+          .where(and(eq(schema.accounts.siteId, id), eq(schema.modelAvailability.available, true)))
+          .all();
+        const tokenModels = await db.select({ modelName: schema.tokenModelAvailability.modelName })
+          .from(schema.tokenModelAvailability)
+          .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
+          .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
+          .where(and(eq(schema.accounts.siteId, id), eq(schema.tokenModelAvailability.available, true)))
+          .all();
+        const disabledRows = await db.select({ modelName: schema.siteDisabledModels.modelName })
+          .from(schema.siteDisabledModels)
+          .where(eq(schema.siteDisabledModels.siteId, id))
+          .all();
+        const disabledSet = new Set(disabledRows.map((r) => r.modelName.toLowerCase()));
+        const allModels = new Set([
+          ...accountModels.map((r) => r.modelName.trim()),
+          ...tokenModels.map((r) => r.modelName.trim()),
+        ]);
+        modelNames = Array.from(allModels).filter((m) => m.length > 0 && !disabledSet.has(m.toLowerCase()));
+      }
+    }
+
+    if (modelNames.length === 0) {
+      return { siteId: id, results: [] };
+    }
+
+    // Hard cap on model count
+    if (modelNames.length > 50) {
+      modelNames = modelNames.slice(0, 50);
+    }
+
+    const streamMode = request.headers.accept?.includes('text/event-stream');
+
+    if (streamMode) {
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+
+      await probeModels({
+        siteUrl: existingSite.url,
+        apiToken,
+        modelNames,
+        prompt: request.body?.prompt || 'hi',
+        concurrency: request.body?.concurrency || 3,
+        timeoutMs: request.body?.timeoutMs || 15000,
+      }, {
+        onResult(r) {
+          reply.raw.write(`data: ${JSON.stringify(r)}\n\n`);
+        },
+      });
+
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+      return reply;
+    }
+
+    const results = await probeModels({
+      siteUrl: existingSite.url,
+      apiToken,
+      modelNames,
+      prompt: request.body?.prompt || 'hi',
+      concurrency: request.body?.concurrency || 3,
+      timeoutMs: request.body?.timeoutMs || 15000,
+    });
+
+    return { siteId: id, results };
   });
 
   // Detect platform for a URL

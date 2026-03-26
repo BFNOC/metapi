@@ -4,7 +4,6 @@ import CenteredModal from '../../components/CenteredModal.js';
 type AccountModelRow = {
   name: string;
   latencyMs: number | null;
-  disabled: boolean;
   isManual?: boolean;
 };
 
@@ -12,9 +11,7 @@ type AccountModelModalState = {
   open: boolean;
   account: any | null;
   models: AccountModelRow[];
-  pendingDisabled: Set<string>;
   loading: boolean;
-  saving: boolean;
   siteName: string;
   manualModelsInput: string;
   addingManualModels: boolean;
@@ -24,10 +21,7 @@ type AccountModelsModalProps = {
   modelModal: AccountModelModalState;
   inputStyle: React.CSSProperties;
   onClose: () => void;
-  onSave: () => void;
   onRefresh: () => Promise<void> | void;
-  onToggleModelDisabled: (modelName: string) => void;
-  onSetPendingDisabled: (pendingDisabled: Set<string>) => void;
   onManualInputChange: (value: string) => void;
   onAddManualModels: () => Promise<void> | void;
 };
@@ -36,10 +30,7 @@ export default function AccountModelsModal({
   modelModal,
   inputStyle,
   onClose,
-  onSave,
   onRefresh,
-  onToggleModelDisabled,
-  onSetPendingDisabled,
   onManualInputChange,
   onAddManualModels,
 }: AccountModelsModalProps) {
@@ -47,19 +38,10 @@ export default function AccountModelsModal({
     <CenteredModal
       open={modelModal.open}
       onClose={onClose}
-      title={modelModal.siteName ? `模型管理 · ${modelModal.siteName}` : '模型管理'}
-      maxWidth={600}
+      title={modelModal.siteName ? `模型缓存 · ${modelModal.siteName}` : '模型缓存'}
+      maxWidth={580}
       footer={(
-        <>
-          <button onClick={onClose} className="btn btn-ghost">取消</button>
-          <button
-            onClick={onSave}
-            disabled={modelModal.saving || modelModal.loading}
-            className="btn btn-primary"
-          >
-            {modelModal.saving ? <><span className="spinner spinner-sm" />保存中...</> : '保存'}
-          </button>
-        </>
+        <button onClick={onClose} className="btn btn-primary">关闭</button>
       )}
     >
       {modelModal.loading ? (
@@ -69,11 +51,24 @@ export default function AccountModelsModal({
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+          {/* Info banner */}
+          <div style={{
+            padding: '8px 12px',
+            background: 'color-mix(in srgb, var(--color-info, #3b82f6) 10%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--color-info, #3b82f6) 30%, transparent)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: 12,
+            color: 'var(--color-text-muted)',
+          }}>
+            此为该站点发现的所有模型缓存（只读），模型过滤（白名单/黑名单）请前往<strong>令牌级</strong>的「模型」管理。
+          </div>
+
           {modelModal.models.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '32px 0' }}>
               <div style={{ fontSize: 32, marginBottom: 8 }}>🤖</div>
               <div style={{ fontSize: 14, color: 'var(--color-text-muted)', marginBottom: 8 }}>暂无可用模型</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 16 }}>请先点击账号操作栏中的「刷新」或「模型」按钮获取模型</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 16 }}>请先点击「刷新」按钮获取模型列表</div>
               <button
                 onClick={() => void onRefresh()}
                 className="btn btn-soft-primary"
@@ -84,123 +79,64 @@ export default function AccountModelsModal({
           ) : (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
-                  <input
-                    type="checkbox"
-                    checked={modelModal.pendingDisabled.size === 0}
-                    ref={(el) => {
-                      if (el) {
-                        const total = modelModal.models.length;
-                        const disabled = modelModal.pendingDisabled.size;
-                        el.indeterminate = disabled > 0 && disabled < total;
-                      }
-                    }}
-                    onChange={() => {
-                      const allEnabled = modelModal.pendingDisabled.size === 0;
-                      onSetPendingDisabled(allEnabled ? new Set(modelModal.models.map((model) => model.name)) : new Set());
-                    }}
-                    style={{ accentColor: 'var(--color-primary)', width: 15, height: 15 }}
-                  />
-                  <span style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
-                    已启用 <strong style={{ color: 'var(--color-text-primary)' }}>{modelModal.models.length - modelModal.pendingDisabled.size}</strong> / {modelModal.models.length} 个模型
-                  </span>
-                </label>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button
-                    onClick={() => void onRefresh()}
-                    disabled={modelModal.saving}
-                    className="btn btn-ghost"
-                    style={{ fontSize: 12, padding: '4px 10px' }}
-                  >
-                    刷新模型
-                  </button>
-                  <button
-                    onClick={() => {
-                      const next = new Set<string>();
-                      for (const model of modelModal.models) {
-                        if (!modelModal.pendingDisabled.has(model.name)) next.add(model.name);
-                      }
-                      onSetPendingDisabled(next);
-                    }}
-                    className="btn btn-ghost"
-                    style={{ fontSize: 12, padding: '4px 10px' }}
-                  >
-                    反选
-                  </button>
-                  <button
-                    onClick={() => onSetPendingDisabled(new Set(modelModal.models.map((model) => model.name)))}
-                    className="btn btn-ghost"
-                    style={{ fontSize: 12, padding: '4px 10px' }}
-                  >
-                    全部禁用
-                  </button>
-                  <button
-                    onClick={() => onSetPendingDisabled(new Set())}
-                    className="btn btn-ghost"
-                    style={{ fontSize: 12, padding: '4px 10px' }}
-                  >
-                    全部启用
-                  </button>
-                </div>
+                <span style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
+                  共 <strong style={{ color: 'var(--color-text-primary)' }}>{modelModal.models.length}</strong> 个模型
+                </span>
+                <button
+                  onClick={() => void onRefresh()}
+                  disabled={modelModal.loading}
+                  className="btn btn-ghost"
+                  style={{ fontSize: 12, padding: '4px 10px' }}
+                >
+                  🔄 刷新模型
+                </button>
               </div>
 
               <div style={{
-                maxHeight: 280,
+                maxHeight: 320,
                 overflowY: 'auto',
                 border: '1px solid var(--color-border-light)',
                 borderRadius: 'var(--radius-sm)',
               }}>
-                {modelModal.models.map((model, idx) => {
-                  const isDisabled = modelModal.pendingDisabled.has(model.name);
-                  return (
-                    <label
-                      key={model.name}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 10,
-                        padding: '9px 14px',
-                        cursor: 'pointer',
-                        background: isDisabled ? 'var(--color-bg)' : undefined,
-                        borderBottom: idx < modelModal.models.length - 1 ? '1px solid var(--color-border-light)' : undefined,
-                        opacity: isDisabled ? 0.55 : 1,
-                        transition: 'opacity 0.15s, background 0.15s',
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!isDisabled}
-                        onChange={() => onToggleModelDisabled(model.name)}
-                        style={{ accentColor: 'var(--color-primary)', width: 15, height: 15, flexShrink: 0 }}
-                      />
-                      <span style={{ flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
-                        {model.name}
+                {modelModal.models.map((model, idx) => (
+                  <div
+                    key={model.name}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '8px 14px',
+                      borderBottom: idx < modelModal.models.length - 1 ? '1px solid var(--color-border-light)' : undefined,
+                    }}
+                  >
+                    <span style={{
+                      flex: 1,
+                      fontSize: 13,
+                      fontFamily: 'var(--font-mono)',
+                      wordBreak: 'break-all',
+                      color: 'var(--color-text-primary)',
+                    }}>
+                      {model.name}
+                    </span>
+                    {model.latencyMs != null ? (
+                      <span style={{ fontSize: 11, color: 'var(--color-text-muted)', flexShrink: 0, fontFamily: 'var(--font-mono)' }}>
+                        {model.latencyMs}ms
                       </span>
-                      {model.latencyMs != null ? (
-                        <span style={{ fontSize: 11, color: 'var(--color-text-muted)', flexShrink: 0 }}>
-                          {model.latencyMs}ms
-                        </span>
-                      ) : null}
-                      {model.isManual ? (
-                        <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0, padding: '0 4px' }}>手动</span>
-                      ) : null}
-                      {isDisabled ? (
-                        <span className="badge badge-error" style={{ fontSize: 10, flexShrink: 0 }}>禁用</span>
-                      ) : null}
-                    </label>
-                  );
-                })}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
-                💡 禁用的模型将对整个站点生效，该站点下所有连接都不会使用这些模型进行代理。
+                    ) : null}
+                    {model.isManual ? (
+                      <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0, padding: '0 4px' }}>手动</span>
+                    ) : null}
+                  </div>
+                ))}
               </div>
             </>
           )}
 
-          <div style={{ marginTop: 16, padding: '12px', background: 'var(--color-bg)', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)' }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--color-text-primary)' }}>手动添加可用模型</div>
+          {/* Manual add section — still useful to manually add models to the cache */}
+          <div style={{ marginTop: 12, padding: '12px', background: 'var(--color-bg)', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--color-text-primary)' }}>手动添加模型</div>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8 }}>
-              如果您的账号支持某些未在上方列表中显示的模型，可以在此手动添加（多个以英文逗号分隔）。
+              如果站点支持但未自动发现的模型，可在此手动添加到缓存（多个以英文逗号分隔）。
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <input

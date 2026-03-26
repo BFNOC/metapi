@@ -136,6 +136,49 @@ async function request(url: string, options: RequestOptions = {}) {
   return res.json();
 }
 
+/** Stream SSE probe results, calling onResult for each model as it completes. */
+async function streamProbeResults(
+  url: string,
+  data: Record<string, unknown>,
+  onResult: (result: unknown) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetchAuthenticatedResponse(url, {
+    method: 'POST',
+    body: JSON.stringify(data),
+    headers: { 'Accept': 'text/event-stream' },
+    timeoutMs: 300_000,
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error(await extractResponseErrorMessage(res));
+  }
+  const reader = res.body?.getReader();
+  if (!reader) return;
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        const payload = trimmed.slice(6);
+        if (payload === '[DONE]') return;
+        try {
+          onResult(JSON.parse(payload));
+        } catch { /* skip malformed */ }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function buildQueryString(params?: Record<string, string | number | boolean | null | undefined>) {
   if (!params) return '';
   const searchParams = new URLSearchParams();
@@ -452,6 +495,16 @@ export const api = {
   getSiteDisabledModels: (siteId: number) => request(`/api/sites/${siteId}/disabled-models`),
   updateSiteDisabledModels: (siteId: number, models: string[]) => request(`/api/sites/${siteId}/disabled-models`, { method: 'PUT', body: JSON.stringify({ models }) }),
   getSiteAvailableModels: (siteId: number) => request(`/api/sites/${siteId}/available-models`),
+  probeModels: (siteId: number, data: { modelNames?: string[]; prompt?: string; concurrency?: number; timeoutMs?: number }) =>
+    request(`/api/sites/${siteId}/probe-models`, { method: 'POST', body: JSON.stringify(data), timeoutMs: 120_000 }),
+  probeModelsStream: (siteId: number, data: Record<string, unknown>, onResult: (r: unknown) => void, signal?: AbortSignal) =>
+    streamProbeResults(`/api/sites/${siteId}/probe-models`, data, onResult, signal),
+  getSiteAllowedModels: (siteId: number) => request(`/api/sites/${siteId}/allowed-models`),
+  updateSiteAllowedModels: (siteId: number, models: string[], modelFilterMode?: string) =>
+    request(`/api/sites/${siteId}/allowed-models`, {
+      method: 'PUT',
+      body: JSON.stringify({ models, ...(modelFilterMode ? { modelFilterMode } : {}) }),
+    }),
 
   // Accounts
   getAccounts: () => request('/api/accounts'),
@@ -487,6 +540,14 @@ export const api = {
     body: JSON.stringify(wait ? { wait: true } : {}),
     timeoutMs: wait ? 150_000 : 30_000,
   }),
+  probeAccountTokenModels: (tokenId: number, data: { modelNames?: string[]; prompt?: string; concurrency?: number; timeoutMs?: number }) =>
+    request(`/api/account-tokens/${tokenId}/probe-models`, { method: 'POST', body: JSON.stringify(data), timeoutMs: 120_000 }),
+  probeAccountTokenModelsStream: (tokenId: number, data: Record<string, unknown>, onResult: (r: unknown) => void, signal?: AbortSignal) =>
+    streamProbeResults(`/api/account-tokens/${tokenId}/probe-models`, data, onResult, signal),
+  getTokenModels: (tokenId: number) => request(`/api/account-tokens/${tokenId}/models`),
+  getTokenModelFilter: (tokenId: number) => request(`/api/account-tokens/${tokenId}/model-filter`),
+  updateTokenModelFilter: (tokenId: number, data: { modelFilterMode: string; filteredModels: string[] }) =>
+    request(`/api/account-tokens/${tokenId}/model-filter`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Check-in
   triggerCheckinAll: () => request('/api/checkin/trigger', { method: 'POST' }),

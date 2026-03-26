@@ -12,6 +12,7 @@ import { useIsMobile } from '../components/useIsMobile.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import SiteBadgeLink from '../components/SiteBadgeLink.js';
 import AccountModelsModal from './accounts/AccountModelsModal.js';
+import ModelProbeModal from '../components/ModelProbeModal.js';
 import {
   buildAddAccountPrereqHint,
   buildVerifyFailureHint,
@@ -128,6 +129,9 @@ export default function Accounts() {
     siteName: string;
     manualModelsInput: string;
     addingManualModels: boolean;
+    filterMode: 'deny-list' | 'allow-list';
+    allowedModels: Set<string>;
+    filterModeSaving: boolean;
   }>({
     open: false,
     account: null,
@@ -138,7 +142,12 @@ export default function Accounts() {
     siteName: '',
     manualModelsInput: '',
     addingManualModels: false,
+    filterMode: 'deny-list',
+    allowedModels: new Set(),
+    filterModeSaving: false,
   });
+  const [probeTarget, setProbeTarget] = useState<{ id: number; name: string } | null>(null);
+  const [probeInitialModels, setProbeInitialModels] = useState<string[] | undefined>(undefined);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRebindTargetRef = useRef<any | null>(null);
@@ -440,15 +449,22 @@ export default function Accounts() {
       open: true,
       account,
       loading: true,
-      ...(options.resetBeforeLoad ? { models: [], pendingDisabled: new Set<string>(), siteName: '', manualModelsInput: '' } : {}),
+      ...(options.resetBeforeLoad ? { models: [], pendingDisabled: new Set<string>(), siteName: '', manualModelsInput: '', allowedModels: new Set<string>() } : {}),
     }));
     try {
       if (options.refreshUpstream) {
         await api.checkModels(account.id);
       }
-      const result = await api.getAccountModels(account.id);
+      const [modelResult, allowedResult, siteData] = await Promise.all([
+        api.getAccountModels(account.id),
+        api.getSiteAllowedModels(account.siteId).catch(() => ({ models: [] })),
+        Promise.resolve(sites.find((s: any) => s.id === account.siteId)),
+      ]);
       if (modelModalRequestSeqRef.current !== requestId) return;
-      applyLoadedModelModal(account, result);
+      applyLoadedModelModal(account, modelResult);
+      const filterMode = (siteData as any)?.modelFilterMode === 'allow-list' ? 'allow-list' as const : 'deny-list' as const;
+      const allowedSet = new Set<string>(Array.isArray(allowedResult?.models) ? allowedResult.models : []);
+      setModelModal(s => ({ ...s, filterMode, allowedModels: allowedSet }));
       if (options.successMessage) {
         toast.success(options.successMessage);
       }
@@ -474,6 +490,15 @@ export default function Accounts() {
   const closeModelModal = () => {
     modelModalRequestSeqRef.current += 1;
     setModelModal(s => ({ ...s, open: false, account: null, manualModelsInput: '', addingManualModels: false }));
+  };
+
+  const toggleAllowedModel = (modelName: string) => {
+    setModelModal(s => {
+      const next = new Set(s.allowedModels);
+      if (next.has(modelName)) next.delete(modelName);
+      else next.add(modelName);
+      return { ...s, allowedModels: next };
+    });
   };
 
   const toggleModelDisabled = (modelName: string) => {
@@ -503,6 +528,49 @@ export default function Accounts() {
     } finally {
       setModelModal(s => ({ ...s, saving: false }));
     }
+  };
+
+  const saveAllowedModels = async () => {
+    if (!modelModal.account) return;
+    const siteId = modelModal.account.siteId;
+    setModelModal(s => ({ ...s, saving: true }));
+    try {
+      await api.updateSiteAllowedModels(siteId, Array.from(modelModal.allowedModels), 'allow-list');
+      try {
+        await api.rebuildRoutes(false, false);
+        toast.success('允许模型列表已保存，路由已重建');
+      } catch {
+        toast.error('允许模型列表已保存，但路由重建失败，请手动刷新路由');
+      }
+      closeModelModal();
+    } catch (e: any) {
+      toast.error(e.message || '保存允许模型失败');
+    } finally {
+      setModelModal(s => ({ ...s, saving: false }));
+    }
+  };
+
+  const handleFilterModeChange = async (mode: 'deny-list' | 'allow-list') => {
+    if (!modelModal.account) return;
+    const siteId = modelModal.account.siteId;
+    setModelModal(s => ({ ...s, filterMode: mode, filterModeSaving: true }));
+    try {
+      await api.updateSite(siteId, { modelFilterMode: mode });
+      await api.rebuildRoutes(false, false);
+      toast.success(`已切换为${mode === 'allow-list' ? '允许列表' : '禁用列表'}模式`);
+    } catch (e: any) {
+      toast.error(e.message || '切换过滤模式失败');
+    } finally {
+      setModelModal(s => ({ ...s, filterModeSaving: false }));
+    }
+  };
+
+  const handleProbeModel = (modelName: string) => {
+    if (!modelModal.account) return;
+    const siteId = modelModal.account.siteId;
+    const siteName = modelModal.siteName || modelModal.account.site?.name || '站点';
+    setProbeTarget({ id: siteId, name: siteName });
+    setProbeInitialModels([modelName]);
   };
 
   const handleAddManualModels = async () => {
@@ -2017,7 +2085,6 @@ export default function Accounts() {
         modelModal={modelModal}
         inputStyle={inputStyle}
         onClose={closeModelModal}
-        onSave={saveModelDisabled}
         onRefresh={async () => {
           if (!modelModal.account) return;
           await loadModelModalModels(modelModal.account, {
@@ -2026,11 +2093,19 @@ export default function Accounts() {
             errorMessage: '刷新失败',
           });
         }}
-        onToggleModelDisabled={toggleModelDisabled}
-        onSetPendingDisabled={(pendingDisabled) => setModelModal((state) => ({ ...state, pendingDisabled }))}
         onManualInputChange={(value) => setModelModal((state) => ({ ...state, manualModelsInput: value }))}
         onAddManualModels={handleAddManualModels}
       />
+
+      {probeTarget && (
+        <ModelProbeModal
+          open={true}
+          onClose={() => { setProbeTarget(null); setProbeInitialModels(undefined); }}
+          siteId={probeTarget.id}
+          siteName={probeTarget.name}
+          initialModels={probeInitialModels}
+        />
+      )}
     </div>
   );
 }

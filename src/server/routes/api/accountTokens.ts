@@ -1,4 +1,4 @@
-﻿import { FastifyInstance } from 'fastify';
+import { FastifyInstance } from 'fastify';
 import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import {
@@ -17,11 +17,13 @@ import {
 import { getAdapter } from '../../services/platforms/index.js';
 import { getCredentialModeFromExtraConfig, getProxyUrlFromExtraConfig, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
+import { probeModels, type ProbeResult } from '../../services/modelProbeService.js';
 import { withAccountProxyOverride } from '../../services/siteProxy.js';
 import { type ModelRefreshResult } from '../../services/modelService.js';
 import {
   type CoverageBatchRebuildResult,
   convergeAccountMutation,
+  rebuildRoutesBestEffort,
   refreshAccountCoverageBatch,
 } from '../../services/accountMutationWorkflow.js';
 
@@ -29,6 +31,27 @@ type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
   sites: typeof schema.sites.$inferSelect;
 };
+
+function parseFilteredModels(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((m: unknown) => typeof m === 'string' && m.trim()) : [];
+  } catch {
+    return [];
+  }
+}
+
+function isModelFilteredByTokenConfig(mode: string, modelList: string[], modelName: string): boolean {
+  if (mode === 'none' || !mode) return false;
+  const lower = modelName.toLowerCase();
+  const inList = modelList.some((m) => m.toLowerCase() === lower);
+  if (mode === 'allow-list') return !inList; // not in allow-list → filtered out
+  if (mode === 'deny-list') return inList;   // in deny-list → filtered out
+  return false;
+}
+
+export { parseFilteredModels, isModelFilteredByTokenConfig };
 
 type SyncExecutionResult = {
   accountId: number;
@@ -935,6 +958,302 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         message: error?.message || '拉取分组失败',
       });
     }
+  });
+
+  // ─── Token model list: available models for this token ───
+  app.get<{ Params: { id: string } }>('/api/account-tokens/:id/models', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) {
+      return reply.code(400).send({ message: '令牌 ID 无效' });
+    }
+
+    const token = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.id, tokenId))
+      .get();
+    if (!token) {
+      return reply.code(404).send({ message: '令牌不存在' });
+    }
+
+    const rows = await db.select({
+      modelName: schema.tokenModelAvailability.modelName,
+      available: schema.tokenModelAvailability.available,
+      latencyMs: schema.tokenModelAvailability.latencyMs,
+      checkedAt: schema.tokenModelAvailability.checkedAt,
+    }).from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, tokenId))
+      .all();
+
+    const filteredModels = parseFilteredModels(token.filteredModels);
+    const filterMode = token.modelFilterMode || 'none';
+
+    const availableModels = rows
+      .filter((r) => r.available)
+      .map((r) => ({
+        name: r.modelName,
+        latencyMs: r.latencyMs,
+        checkedAt: r.checkedAt,
+        filtered: isModelFilteredByTokenConfig(filterMode, filteredModels, r.modelName),
+      }));
+
+    // Merge filteredModels entries that aren't in availability tables
+    // so manually-selected models always appear in the list
+    const knownNames = new Set(availableModels.map((m) => m.name));
+    for (const fm of filteredModels) {
+      if (!knownNames.has(fm)) {
+        availableModels.push({
+          name: fm,
+          latencyMs: null,
+          checkedAt: null,
+          filtered: isModelFilteredByTokenConfig(filterMode, filteredModels, fm),
+        });
+      }
+    }
+
+    const models = availableModels.sort((a, b) => a.name.localeCompare(b.name));
+
+    return {
+      tokenId,
+      tokenName: token.name,
+      modelFilterMode: filterMode,
+      filteredModels,
+      models,
+      totalCount: models.length,
+      filteredCount: models.filter((m) => m.filtered).length,
+    };
+  });
+
+  // ─── Token model filter: get current filter config ───
+  app.get<{ Params: { id: string } }>('/api/account-tokens/:id/model-filter', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) {
+      return reply.code(400).send({ message: '令牌 ID 无效' });
+    }
+
+    const token = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.id, tokenId))
+      .get();
+    if (!token) {
+      return reply.code(404).send({ message: '令牌不存在' });
+    }
+
+    return {
+      tokenId,
+      modelFilterMode: token.modelFilterMode || 'none',
+      filteredModels: parseFilteredModels(token.filteredModels),
+    };
+  });
+
+  // ─── Token model filter: update filter config ───
+  app.put<{
+    Params: { id: string };
+    Body: {
+      modelFilterMode?: string;
+      filteredModels?: string[];
+    };
+  }>('/api/account-tokens/:id/model-filter', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) {
+      return reply.code(400).send({ message: '令牌 ID 无效' });
+    }
+
+    const token = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.id, tokenId))
+      .get();
+    if (!token) {
+      return reply.code(404).send({ message: '令牌不存在' });
+    }
+
+    const { modelFilterMode, filteredModels } = request.body || {};
+    const validModes = ['none', 'allow-list', 'deny-list'];
+    const nextMode = validModes.includes(modelFilterMode || '') ? modelFilterMode! : (token.modelFilterMode || 'none');
+    const nextModels = Array.isArray(filteredModels)
+      ? Array.from(new Set(filteredModels.map((m) => String(m).trim()).filter(Boolean)))
+      : parseFilteredModels(token.filteredModels);
+
+    await db.update(schema.accountTokens).set({
+      modelFilterMode: nextMode,
+      filteredModels: JSON.stringify(nextModels),
+      updatedAt: new Date().toISOString(),
+    }).where(eq(schema.accountTokens.id, tokenId)).run();
+
+    await rebuildRoutesBestEffort();
+
+    return {
+      success: true,
+      tokenId,
+      modelFilterMode: nextMode,
+      filteredModels: nextModels,
+    };
+  });
+
+  // ─── Token-level probe: use THIS token's own key ───
+  app.post<{
+    Params: { id: string };
+    Body: {
+      modelNames?: string[];
+      prompt?: string;
+      concurrency?: number;
+      timeoutMs?: number;
+    };
+  }>('/api/account-tokens/:id/probe-models', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (Number.isNaN(tokenId)) {
+      return reply.code(400).send({ error: 'Invalid token id' });
+    }
+
+    const row = await db.select()
+      .from(schema.accountTokens)
+      .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(eq(schema.accountTokens.id, tokenId))
+      .get();
+    if (!row) {
+      return reply.code(404).send({ error: 'Token not found' });
+    }
+
+    const apiToken = (row.account_tokens.token || '').trim();
+    if (!apiToken || isMaskedTokenValue(apiToken)) {
+      return reply.code(400).send({ error: '该令牌值无效或待补全，无法用于探活' });
+    }
+
+    const siteUrl = row.sites.url;
+    if (!siteUrl) {
+      return reply.code(400).send({ error: '关联站点缺少 URL' });
+    }
+
+    let modelNames: string[] = [];
+    const requestedModels = request.body?.modelNames;
+    if (Array.isArray(requestedModels) && requestedModels.length > 0) {
+      modelNames = requestedModels.filter((m): m is string => typeof m === 'string').map((m) => m.trim()).filter((m) => m.length > 0);
+    }
+
+    // Auto-fetch available models when none specified
+    if (modelNames.length === 0) {
+      // Try token-level availability first
+      const tokenModels = await db.select({ modelName: schema.tokenModelAvailability.modelName })
+        .from(schema.tokenModelAvailability)
+        .where(
+          and(
+            eq(schema.tokenModelAvailability.tokenId, tokenId),
+            eq(schema.tokenModelAvailability.available, true),
+          ),
+        )
+        .all();
+      if (tokenModels.length > 0) {
+        modelNames = tokenModels.map((m) => m.modelName);
+      } else {
+        // Fallback to account-level availability
+        const accountModels = await db.select({ modelName: schema.modelAvailability.modelName })
+          .from(schema.modelAvailability)
+          .where(
+            and(
+              eq(schema.modelAvailability.accountId, row.account_tokens.accountId),
+              eq(schema.modelAvailability.available, true),
+            ),
+          )
+          .all();
+        modelNames = accountModels.map((m) => m.modelName);
+      }
+    }
+
+    if (modelNames.length === 0) {
+      return reply.code(400).send({ error: '该令牌没有可探活的模型。请先同步站点令牌或手动指定模型。' });
+    }
+
+    if (modelNames.length > 100) {
+      modelNames = modelNames.slice(0, 100);
+    }
+
+    const streamMode = request.headers.accept?.includes('text/event-stream');
+
+    if (streamMode) {
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+
+      const allResults: ProbeResult[] = [];
+      await probeModels({
+        siteUrl,
+        apiToken,
+        modelNames,
+        prompt: request.body?.prompt || 'hi',
+        concurrency: request.body?.concurrency || 3,
+        timeoutMs: request.body?.timeoutMs || 15000,
+      }, {
+        onResult(r) {
+          allResults.push(r);
+          reply.raw.write(`data: ${JSON.stringify(r)}\n\n`);
+        },
+      });
+
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+
+      // Write probe results back to token_model_availability
+      const now = new Date().toISOString();
+      for (const r of allResults) {
+        await db.insert(schema.tokenModelAvailability)
+          .values({
+            tokenId,
+            modelName: r.modelName,
+            available: r.status === 'ok',
+            latencyMs: r.ttftMs,
+            checkedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [schema.tokenModelAvailability.tokenId, schema.tokenModelAvailability.modelName],
+            set: {
+              available: r.status === 'ok',
+              latencyMs: r.ttftMs,
+              checkedAt: now,
+            },
+          })
+          .run();
+      }
+
+      return reply;
+    }
+
+    const results = await probeModels({
+      siteUrl,
+      apiToken,
+      modelNames,
+      prompt: request.body?.prompt || 'hi',
+      concurrency: request.body?.concurrency || 3,
+      timeoutMs: request.body?.timeoutMs || 15000,
+    });
+
+    // Write probe results back to token_model_availability
+    const now = new Date().toISOString();
+    for (const r of results) {
+      await db.insert(schema.tokenModelAvailability)
+        .values({
+          tokenId,
+          modelName: r.modelName,
+          available: r.status === 'ok',
+          latencyMs: r.ttftMs,
+          checkedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [schema.tokenModelAvailability.tokenId, schema.tokenModelAvailability.modelName],
+          set: {
+            available: r.status === 'ok',
+            latencyMs: r.ttftMs,
+            checkedAt: now,
+          },
+        })
+        .run();
+    }
+
+    return {
+      tokenId,
+      tokenName: row.account_tokens.name,
+      siteName: row.sites.name,
+      siteUrl,
+      results,
+    };
   });
 
   app.delete<{ Params: { id: string } }>('/api/account-tokens/:id', async (request, reply) => {

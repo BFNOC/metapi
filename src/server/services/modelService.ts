@@ -940,7 +940,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     )
     .all();
 
-  // Load site-level disabled models
+  // Load site-level disabled models (deny-list)
   const disabledModelRows = await db.select().from(schema.siteDisabledModels).all();
   const disabledModelsBySite = new Map<number, Set<string>>();
   for (const row of disabledModelRows) {
@@ -953,14 +953,70 @@ export async function rebuildTokenRoutesFromAvailability() {
     return !!disabled && disabled.has(modelName.toLowerCase());
   }
 
+  // Load site-level allowed models (allow-list) and filter modes
+  const siteFilterModeRows = await db.select({
+    id: schema.sites.id,
+    modelFilterMode: schema.sites.modelFilterMode,
+  }).from(schema.sites).all();
+  const siteFilterModes = new Map<number, string>();
+  for (const row of siteFilterModeRows) {
+    siteFilterModes.set(row.id, row.modelFilterMode || 'deny-list');
+  }
+
+  const allowedModelRows = await db.select().from(schema.siteAllowedModels).all();
+  const allowedModelsBySite = new Map<number, Set<string>>();
+  for (const row of allowedModelRows) {
+    if (!allowedModelsBySite.has(row.siteId)) allowedModelsBySite.set(row.siteId, new Set());
+    allowedModelsBySite.get(row.siteId)!.add(row.modelName.toLowerCase());
+  }
+
+  function isModelFilteredBySite(siteId: number, modelName: string): boolean {
+    const filterMode = siteFilterModes.get(siteId) || 'deny-list';
+    if (filterMode === 'allow-list') {
+      const allowed = allowedModelsBySite.get(siteId);
+      return !allowed || !allowed.has(modelName.toLowerCase());
+    }
+    return isModelDisabledForSite(siteId, modelName);
+  }
+
   // Load global brand filter
   const blockedBrandRules = getBlockedBrandRules(config.globalBlockedBrands);
+
+  // Load token-level model filter settings
+  const allTokenFilterRows = await db.select({
+    id: schema.accountTokens.id,
+    modelFilterMode: schema.accountTokens.modelFilterMode,
+    filteredModels: schema.accountTokens.filteredModels,
+  }).from(schema.accountTokens).all();
+  const tokenFilterMap = new Map<number, { mode: string; models: Set<string> }>();
+  for (const row of allTokenFilterRows) {
+    const mode = row.modelFilterMode || 'none';
+    if (mode === 'none') continue;
+    const rawList: string[] = (() => {
+      try { return JSON.parse(row.filteredModels || '[]'); } catch { return []; }
+    })();
+    tokenFilterMap.set(row.id, {
+      mode,
+      models: new Set(rawList.map((m: string) => m.toLowerCase())),
+    });
+  }
+
+  function isModelFilteredByToken(tokenId: number | null, modelName: string): boolean {
+    if (!tokenId) return false;
+    const filter = tokenFilterMap.get(tokenId);
+    if (!filter) return false;
+    const lower = modelName.toLowerCase();
+    if (filter.mode === 'allow-list') return !filter.models.has(lower);
+    if (filter.mode === 'deny-list') return filter.models.has(lower);
+    return false;
+  }
 
   const modelCandidates = new Map<string, Map<string, { accountId: number; tokenId: number | null }>>();
   const addModelCandidate = (modelNameRaw: string | null | undefined, accountId: number, tokenId: number | null, siteId: number) => {
     const modelName = (modelNameRaw || '').trim();
     if (!modelName) return;
-    if (isModelDisabledForSite(siteId, modelName)) return;
+    if (isModelFilteredBySite(siteId, modelName)) return;
+    if (isModelFilteredByToken(tokenId, modelName)) return;
     if (blockedBrandRules.length > 0 && isModelBlockedByBrand(modelName, blockedBrandRules)) return;
     if (!modelCandidates.has(modelName)) modelCandidates.set(modelName, new Map());
     const candidateKey = `${accountId}:${tokenId ?? 'account'}`;

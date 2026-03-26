@@ -19,6 +19,8 @@ import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import { clearFocusParams, readFocusTokenId } from './helpers/navigationFocus.js';
 import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
 import { tr } from '../i18n.js';
+import ModelProbeModal from '../components/ModelProbeModal.js';
+import TokenModelsModal from '../components/TokenModelsModal.js';
 
 type SyncStatus = 'success' | 'skipped' | 'failed';
 type TokensPanelProps = {
@@ -152,6 +154,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     tokenName?: string;
     count?: number;
   }>(null);
+  const [probeTarget, setProbeTarget] = useState<null | { tokenId: number; tokenName: string; siteId: number; siteName: string; models?: string[] }>(null);
+  const [modelFilterTarget, setModelFilterTarget] = useState<null | { tokenId: number; tokenName: string }>(null);
   const [form, setForm] = useState(initialCreateForm);
   const [editForm, setEditForm] = useState({
     name: '',
@@ -1275,6 +1279,30 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                               {rowLoading[`${loadingPrefix}-toggle`] ? <span className="spinner spinner-sm" /> : (token.enabled ? '禁用' : '启用')}
                             </button>
                           ) : null}
+                          {!isPending && (
+                            <button
+                              onClick={() => setModelFilterTarget({
+                                tokenId: token.id,
+                                tokenName: token.name || `token-${token.id}`,
+                              })}
+                              className="btn btn-link btn-link-info"
+                            >
+                              模型
+                            </button>
+                          )}
+                          {!isPending && (
+                            <button
+                              onClick={() => setProbeTarget({
+                                tokenId: token.id,
+                                tokenName: token.name || `token-${token.id}`,
+                                siteId: token.site?.id || 0,
+                                siteName: token.site?.name || 'unknown',
+                              })}
+                              className="btn btn-link btn-link-info"
+                            >
+                              探活
+                            </button>
+                          )}
                           <button
                             onClick={() => setDeleteConfirm({ mode: 'single', tokenId: token.id, tokenName: token.name || '' })}
                             disabled={!!rowLoading[`${loadingPrefix}-delete`]}
@@ -1400,6 +1428,30 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                         >
                           {isPending ? '编辑补全' : '编辑'}
                         </button>
+                        {!isPending && (
+                          <button
+                            onClick={() => setModelFilterTarget({
+                              tokenId: token.id,
+                              tokenName: token.name || `token-${token.id}`,
+                            })}
+                            className="btn btn-link btn-link-info token-table-action-btn"
+                          >
+                            模型
+                          </button>
+                        )}
+                        {!isPending && (
+                          <button
+                            onClick={() => setProbeTarget({
+                              tokenId: token.id,
+                              tokenName: token.name || `token-${token.id}`,
+                              siteId: token.site?.id || 0,
+                              siteName: token.site?.name || 'unknown',
+                            })}
+                            className="btn btn-link btn-link-info token-table-action-btn"
+                          >
+                            探活
+                          </button>
+                        )}
                         {!isPending ? (
                           <button
                             onClick={() => withRowLoading(`${loadingPrefix}-toggle`, async () => {
@@ -1436,6 +1488,22 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
           </div>
         )}
       </div>
+
+      <ModelProbeModal
+        open={Boolean(probeTarget)}
+        onClose={() => setProbeTarget(null)}
+        siteId={probeTarget?.siteId || 0}
+        siteName={`${probeTarget?.siteName || ''} / ${probeTarget?.tokenName || ''}`}
+        tokenId={probeTarget?.tokenId}
+        initialModels={probeTarget?.models}
+      />
+
+      <TokenModelsModal
+        open={Boolean(modelFilterTarget)}
+        onClose={() => setModelFilterTarget(null)}
+        tokenId={modelFilterTarget?.tokenId || 0}
+        tokenName={modelFilterTarget?.tokenName || ''}
+      />
     </div>
   );
 }

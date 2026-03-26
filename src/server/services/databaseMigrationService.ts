@@ -1,4 +1,4 @@
-﻿import Database from 'better-sqlite3';
+import Database from 'better-sqlite3';
 import { db, schema } from '../db/index.js';
 import {
   createRuntimeSchemaClient,
@@ -30,6 +30,7 @@ type BackupSnapshot = {
     sites: Array<Record<string, unknown>>;
     siteAnnouncements: Array<Record<string, unknown>>;
     siteDisabledModels: Array<Record<string, unknown>>;
+    siteAllowedModels: Array<Record<string, unknown>>;
     accounts: Array<Record<string, unknown>>;
     accountTokens: Array<Record<string, unknown>>;
     checkinLogs: Array<Record<string, unknown>>;
@@ -59,6 +60,7 @@ export interface DatabaseMigrationSummary {
     sites: number;
     siteAnnouncements: number;
     siteDisabledModels: number;
+    siteAllowedModels: number;
     accounts: number;
     accountTokens: number;
     tokenRoutes: number;
@@ -217,6 +219,7 @@ async function toBackupSnapshot(): Promise<BackupSnapshot> {
       sites: await db.select().from(schema.sites).all() as Array<Record<string, unknown>>,
       siteAnnouncements: await db.select().from(schema.siteAnnouncements).all() as Array<Record<string, unknown>>,
       siteDisabledModels: await db.select().from(schema.siteDisabledModels).all() as Array<Record<string, unknown>>,
+      siteAllowedModels: await db.select().from(schema.siteAllowedModels).all() as Array<Record<string, unknown>>,
       accounts: await db.select().from(schema.accounts).all() as Array<Record<string, unknown>>,
       accountTokens: await db.select().from(schema.accountTokens).all() as Array<Record<string, unknown>>,
       checkinLogs: await db.select().from(schema.checkinLogs).all() as Array<Record<string, unknown>>,
@@ -263,6 +266,7 @@ async function clearTargetData(client: SqlClient): Promise<void> {
     'accounts',
     'site_announcements',
     'site_disabled_models',
+    'site_allowed_models',
     'token_routes',
     'sites',
     'downstream_api_keys',
@@ -280,7 +284,7 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
   for (const row of snapshot.accounts.sites) {
     statements.push({
       table: 'sites',
-      columns: ['id', 'name', 'url', 'external_checkin_url', 'platform', 'proxy_url', 'use_system_proxy', 'custom_headers', 'status', 'is_pinned', 'sort_order', 'global_weight', 'api_key', 'created_at', 'updated_at'],
+      columns: ['id', 'name', 'url', 'external_checkin_url', 'platform', 'proxy_url', 'use_system_proxy', 'custom_headers', 'status', 'is_pinned', 'sort_order', 'global_weight', 'api_key', 'model_filter_mode', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNullableString(row.name),
@@ -295,6 +299,7 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
         asNumber(row.sortOrder, 0),
         asNumber(row.globalWeight, 1),
         asNullableString(row.apiKey),
+        asNullableString(row.modelFilterMode) ?? 'deny-list',
         asNullableString(row.createdAt),
         asNullableString(row.updatedAt),
       ],
@@ -304,6 +309,19 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
   for (const row of snapshot.accounts.siteDisabledModels) {
     statements.push({
       table: 'site_disabled_models',
+      columns: ['id', 'site_id', 'model_name', 'created_at'],
+      values: [
+        asNumber(row.id, 0),
+        asNumber(row.siteId, 0),
+        asNullableString(row.modelName),
+        asNullableString(row.createdAt),
+      ],
+    });
+  }
+
+  for (const row of (snapshot.accounts.siteAllowedModels || [])) {
+    statements.push({
+      table: 'site_allowed_models',
       columns: ['id', 'site_id', 'model_name', 'created_at'],
       values: [
         asNumber(row.id, 0),
@@ -671,6 +689,7 @@ async function syncPostgresSequences(client: SqlClient): Promise<void> {
     'sites',
     'site_announcements',
     'site_disabled_models',
+    'site_allowed_models',
     'accounts',
     'account_tokens',
     'checkin_logs',
@@ -739,6 +758,7 @@ export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Pro
       sites: snapshot.accounts.sites.length,
       siteAnnouncements: snapshot.accounts.siteAnnouncements.length,
       siteDisabledModels: snapshot.accounts.siteDisabledModels.length,
+      siteAllowedModels: (snapshot.accounts.siteAllowedModels || []).length,
       accounts: snapshot.accounts.accounts.length,
       accountTokens: snapshot.accounts.accountTokens.length,
       tokenRoutes: snapshot.accounts.tokenRoutes.length,

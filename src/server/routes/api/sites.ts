@@ -720,6 +720,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     prompt?: string;
     concurrency?: number;
     timeoutMs?: number;
+    delayMs?: number;
   } }>('/api/sites/:id/probe-models', async (request, reply) => {
     const id = parseInt(request.params.id);
     if (Number.isNaN(id)) {
@@ -817,6 +818,7 @@ export async function sitesRoutes(app: FastifyInstance) {
         prompt: request.body?.prompt || 'hi',
         concurrency: request.body?.concurrency || 3,
         timeoutMs: request.body?.timeoutMs || 15000,
+        delayMs: request.body?.delayMs || 0,
       }, {
         onResult(r) {
           reply.raw.write(`data: ${JSON.stringify(r)}\n\n`);
@@ -835,6 +837,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       prompt: request.body?.prompt || 'hi',
       concurrency: request.body?.concurrency || 3,
       timeoutMs: request.body?.timeoutMs || 15000,
+      delayMs: request.body?.delayMs || 0,
     });
 
     return { siteId: id, results };

@@ -1094,6 +1094,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       prompt?: string;
       concurrency?: number;
       timeoutMs?: number;
+      delayMs?: number;
     };
   }>('/api/account-tokens/:id/probe-models', async (request, reply) => {
     const tokenId = Number.parseInt(request.params.id, 10);
@@ -1181,6 +1182,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         prompt: request.body?.prompt || 'hi',
         concurrency: request.body?.concurrency || 3,
         timeoutMs: request.body?.timeoutMs || 15000,
+        delayMs: request.body?.delayMs || 0,
       }, {
         onResult(r) {
           allResults.push(r);
@@ -1223,6 +1225,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       prompt: request.body?.prompt || 'hi',
       concurrency: request.body?.concurrency || 3,
       timeoutMs: request.body?.timeoutMs || 15000,
+      delayMs: request.body?.delayMs || 0,
     });
 
     // Write probe results back to token_model_availability

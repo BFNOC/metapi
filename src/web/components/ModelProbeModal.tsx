@@ -3,14 +3,14 @@ import CenteredModal from '../components/CenteredModal.js';
 import { api } from '../api.js';
 
 const RANDOM_PROMPTS = [
-  'hi',
-  'hello',
-  'say 1',
-  'ping',
-  'hey',
-  '你好',
-  'test',
-  'ok',
+  '请用一句话解释什么是量子计算',
+  'JavaScript 的 Promise 和 async/await 有什么区别？',
+  '帮我写一个 Python 的 hello world',
+  '什么是 RESTful API？简单说明',
+  '计算 237 乘以 18 等于多少',
+  '请列举三种常见的排序算法',
+  'CSS 中 flex 和 grid 的区别是什么',
+  '简单介绍一下 TCP 三次握手',
 ];
 
 function pickRandomPrompt(): string {
@@ -23,6 +23,7 @@ type ProbeResult = {
   ttftMs: number | null;
   httpStatus: number | null;
   error: string | null;
+  responseText: string | null;
 };
 
 type ModelRow = {
@@ -31,6 +32,7 @@ type ModelRow = {
   ttftMs: number | null;
   httpStatus: number | null;
   error: string | null;
+  responseText: string | null;
 };
 
 type Props = {
@@ -48,6 +50,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
   const [prompt, setPrompt] = useState(pickRandomPrompt);
   const [concurrency, setConcurrency] = useState(3);
   const [timeoutMs, setTimeoutMs] = useState(15000);
+  const [delayMs, setDelayMs] = useState(0);
   const [customModels, setCustomModels] = useState('');
   const [rows, setRows] = useState<ModelRow[]>([]);
   const [probing, setProbing] = useState(false);
@@ -55,6 +58,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
   const [showSettings, setShowSettings] = useState(true);
   const [sortMode, setSortMode] = useState<SortMode>('latency');
   const [loadingModels, setLoadingModels] = useState(false);
+  const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -121,7 +125,9 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
       ttftMs: null,
       httpStatus: null,
       error: null,
+      responseText: null,
     }));
+    setExpandedModel(null);
     setRows(initialRows);
     setProbing(true);
     setError(null);
@@ -132,6 +138,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
       prompt: prompt.trim() || 'hi',
       concurrency: Math.max(1, Math.min(10, concurrency)),
       timeoutMs: Math.max(1000, Math.min(60000, timeoutMs)),
+      delayMs: Math.max(0, Math.min(10000, delayMs)),
     };
 
     // Mark the first batch as probing
@@ -147,7 +154,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
       setRows((prev) => {
         const next = prev.map((row) =>
           row.name === r.modelName
-            ? { ...row, status: r.status, ttftMs: r.ttftMs, httpStatus: r.httpStatus, error: r.error }
+            ? { ...row, status: r.status, ttftMs: r.ttftMs, httpStatus: r.httpStatus, error: r.error, responseText: r.responseText }
             : row,
         );
         // Mark the next batch of pending models as probing
@@ -329,7 +336,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
             flexDirection: 'column',
             gap: 10,
           }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div>
                 <label style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 3, display: 'block' }}>提示词</label>
                 <input style={inputStyle} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="随机" />
@@ -341,6 +348,10 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
               <div>
                 <label style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 3, display: 'block' }}>超时 (ms)</label>
                 <input style={inputStyle} type="number" min={1000} max={60000} step={1000} value={timeoutMs} onChange={(e) => setTimeoutMs(Number(e.target.value) || 15000)} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 3, display: 'block' }}>批次间隔 (ms)</label>
+                <input style={inputStyle} type="number" min={0} max={10000} step={100} value={delayMs} onChange={(e) => setDelayMs(Number(e.target.value) || 0)} placeholder="0" />
               </div>
             </div>
             <div>
@@ -397,125 +408,192 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
               border: '1px solid var(--color-border)',
             }}
           >
-            {sortedRows.map((r) => (
-              <div
-                key={r.name}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '22px minmax(120px, 260px) 1fr 60px auto',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '6px 12px',
-                  borderBottom: '1px solid var(--color-border)',
-                  fontSize: 12,
-                  opacity: r.status === 'pending' ? 0.45 : 1,
-                  transition: 'opacity 0.3s',
-                }}
-              >
-                {/* Status icon */}
-                <span style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: '50%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 10,
-                  fontWeight: 700,
-                  flexShrink: 0,
-                  color: r.status === 'probing' || r.status === 'pending' ? 'transparent' : '#fff',
-                  background: r.status === 'probing' ? 'transparent' : getStatusColor(r.status),
-                }}>
-                  {r.status === 'probing' ? (
-                    <span className="spinner spinner-sm" style={{ width: 16, height: 16 }} />
-                  ) : r.status === 'pending' ? (
+            {sortedRows.map((r) => {
+              const isFinished = r.status !== 'pending' && r.status !== 'probing';
+              const isExpanded = expandedModel === r.name;
+              return (
+                <div key={r.name}>
+                  <div
+                    onClick={isFinished ? () => setExpandedModel(isExpanded ? null : r.name) : undefined}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '22px minmax(120px, 260px) 1fr 60px auto 16px',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '6px 12px',
+                      borderBottom: isExpanded ? 'none' : '1px solid var(--color-border)',
+                      fontSize: 12,
+                      opacity: r.status === 'pending' ? 0.45 : 1,
+                      transition: 'opacity 0.3s, background 0.15s',
+                      cursor: isFinished ? 'pointer' : 'default',
+                      ...(isFinished ? { background: isExpanded ? 'var(--color-bg-secondary)' : undefined } : {}),
+                    }}
+                    onMouseEnter={(e) => { if (isFinished && !isExpanded) e.currentTarget.style.background = 'var(--color-bg-secondary)'; }}
+                    onMouseLeave={(e) => { if (isFinished && !isExpanded) e.currentTarget.style.background = ''; }}
+                  >
+                    {/* Status icon */}
                     <span style={{
                       width: 18,
                       height: 18,
                       borderRadius: '50%',
-                      border: '2px solid var(--color-border)',
-                      display: 'block',
-                    }} />
-                  ) : (
-                    getStatusIcon(r.status)
-                  )}
-                </span>
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 10,
+                      fontWeight: 700,
+                      flexShrink: 0,
+                      color: r.status === 'probing' || r.status === 'pending' ? 'transparent' : '#fff',
+                      background: r.status === 'probing' ? 'transparent' : getStatusColor(r.status),
+                    }}>
+                      {r.status === 'probing' ? (
+                        <span className="spinner spinner-sm" style={{ width: 16, height: 16 }} />
+                      ) : r.status === 'pending' ? (
+                        <span style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: '50%',
+                          border: '2px solid var(--color-border)',
+                          display: 'block',
+                        }} />
+                      ) : (
+                        getStatusIcon(r.status)
+                      )}
+                    </span>
 
-                {/* Model name */}
-                <span style={{
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  color: 'var(--color-text-primary)',
-                }}>
-                  {r.name}
-                </span>
+                    {/* Model name */}
+                    <span style={{
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      color: 'var(--color-text-primary)',
+                    }}>
+                      {r.name}
+                    </span>
 
-                {/* Latency bar */}
-                <div style={{
-                  height: 16,
-                  background: 'var(--color-bg-secondary)',
-                  borderRadius: 8,
-                  overflow: 'hidden',
-                  position: 'relative',
-                  minWidth: 60,
-                }}>
-                  {r.status === 'probing' && (
+                    {/* Latency bar */}
                     <div style={{
-                      height: '100%',
-                      width: '100%',
-                      background: 'linear-gradient(90deg, transparent 0%, var(--color-primary) 50%, transparent 100%)',
-                      backgroundSize: '200% 100%',
-                      animation: 'probe-shimmer 1.5s ease-in-out infinite',
+                      height: 16,
+                      background: 'var(--color-bg-secondary)',
                       borderRadius: 8,
-                      opacity: 0.3,
-                    }} />
-                  )}
-                  {r.ttftMs !== null && r.status !== 'probing' && (
+                      overflow: 'hidden',
+                      position: 'relative',
+                      minWidth: 60,
+                    }}>
+                      {r.status === 'probing' && (
+                        <div style={{
+                          height: '100%',
+                          width: '100%',
+                          background: 'linear-gradient(90deg, transparent 0%, var(--color-primary) 50%, transparent 100%)',
+                          backgroundSize: '200% 100%',
+                          animation: 'probe-shimmer 1.5s ease-in-out infinite',
+                          borderRadius: 8,
+                          opacity: 0.3,
+                        }} />
+                      )}
+                      {r.ttftMs !== null && r.status !== 'probing' && (
+                        <div style={{
+                          height: '100%',
+                          width: `${Math.min(100, Math.max(2, (r.ttftMs / maxBarLatency) * 100))}%`,
+                          background: r.status === 'ok'
+                            ? `linear-gradient(90deg, ${getLatencyColor(r.ttftMs)}, ${getLatencyColor(r.ttftMs)}cc)`
+                            : r.status === 'timeout' ? '#eab30866' : '#ef444466',
+                          borderRadius: 8,
+                          transition: 'width 0.4s ease',
+                        }} />
+                      )}
+                    </div>
+
+                    {/* Latency value */}
+                    <span style={{
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      textAlign: 'right',
+                      color: r.ttftMs !== null ? getLatencyColor(r.ttftMs) : 'var(--color-text-muted)',
+                    }}>
+                      {r.status === 'probing' ? '...' : r.status === 'pending' ? '--' : r.ttftMs !== null ? formatMs(r.ttftMs) : '--'}
+                    </span>
+
+                    {/* Error detail */}
+                    <span
+                      title={r.error || undefined}
+                      style={{
+                        fontSize: 10,
+                        color: 'var(--color-text-muted)',
+                        maxWidth: 80,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        minWidth: 0,
+                      }}
+                    >
+                      {r.error && r.status !== 'ok' && r.status !== 'probing' && r.status !== 'pending'
+                        ? (r.httpStatus ? `HTTP ${r.httpStatus}` : r.error)
+                        : ''}
+                    </span>
+
+                    {/* Expand/collapse chevron */}
+                    <span style={{
+                      fontSize: 10,
+                      color: 'var(--color-text-muted)',
+                      transition: 'transform 0.2s',
+                      transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                      visibility: isFinished ? 'visible' : 'hidden',
+                      userSelect: 'none',
+                    }}>
+                      ▾
+                    </span>
+                  </div>
+
+                  {/* Expandable detail panel */}
+                  {isExpanded && (
                     <div style={{
-                      height: '100%',
-                      width: `${Math.min(100, Math.max(2, (r.ttftMs / maxBarLatency) * 100))}%`,
-                      background: r.status === 'ok'
-                        ? `linear-gradient(90deg, ${getLatencyColor(r.ttftMs)}, ${getLatencyColor(r.ttftMs)}cc)`
-                        : r.status === 'timeout' ? '#eab30866' : '#ef444466',
-                      borderRadius: 8,
-                      transition: 'width 0.4s ease',
-                    }} />
+                      padding: '8px 12px 10px 42px',
+                      background: 'var(--color-bg-secondary)',
+                      borderBottom: '1px solid var(--color-border)',
+                      fontSize: 12,
+                      lineHeight: 1.6,
+                    }}>
+                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: (r.responseText || r.error) ? 6 : 0 }}>
+                        {r.httpStatus !== null && (
+                          <span style={{ color: 'var(--color-text-muted)' }}>
+                            HTTP <strong style={{ color: r.httpStatus >= 200 && r.httpStatus < 300 ? '#22c55e' : '#ef4444' }}>{r.httpStatus}</strong>
+                          </span>
+                        )}
+                        {r.ttftMs !== null && (
+                          <span style={{ color: 'var(--color-text-muted)' }}>
+                            TTFT <strong style={{ color: getLatencyColor(r.ttftMs), fontFamily: 'monospace' }}>{formatMs(r.ttftMs)}</strong>
+                          </span>
+                        )}
+                      </div>
+                      {(r.responseText || (r.error && r.status !== 'ok')) ? (
+                        <div style={{
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          padding: '6px 10px',
+                          background: r.status !== 'ok' ? '#ef44440a' : 'var(--color-bg)',
+                          border: `1px solid ${r.status !== 'ok' ? '#ef444433' : 'var(--color-border)'}`,
+                          borderRadius: 'var(--radius-sm)',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          color: r.status !== 'ok' ? '#ef4444' : 'var(--color-text-primary)',
+                          maxHeight: 120,
+                          overflow: 'auto',
+                        }}>
+                          {r.responseText || r.error}
+                        </div>
+                      ) : (
+                        r.status === 'ok' && (
+                          <span style={{ color: 'var(--color-text-muted)', fontSize: 11, fontStyle: 'italic' }}>（无回复内容）</span>
+                        )
+                      )}
+                    </div>
                   )}
                 </div>
-
-                {/* Latency value */}
-                <span style={{
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  textAlign: 'right',
-                  color: r.ttftMs !== null ? getLatencyColor(r.ttftMs) : 'var(--color-text-muted)',
-                }}>
-                  {r.status === 'probing' ? '...' : r.status === 'pending' ? '--' : r.ttftMs !== null ? formatMs(r.ttftMs) : '--'}
-                </span>
-
-                {/* Error detail */}
-                <span
-                  title={r.error || undefined}
-                  style={{
-                    fontSize: 10,
-                    color: 'var(--color-text-muted)',
-                    maxWidth: 80,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    minWidth: 0,
-                  }}
-                >
-                  {r.error && r.status !== 'ok' && r.status !== 'probing' && r.status !== 'pending'
-                    ? (r.httpStatus ? `HTTP ${r.httpStatus}` : r.error)
-                    : ''}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

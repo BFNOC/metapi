@@ -665,6 +665,8 @@ function pushDefaultImportedToken(
     source: 'legacy',
     enabled: true,
     isDefault: true,
+    modelFilterMode: null,
+    filteredModels: null,
     createdAt,
     updatedAt,
   });
@@ -1073,6 +1075,8 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         source: 'legacy',
         enabled: true,
         isDefault: true,
+        modelFilterMode: null,
+        filteredModels: null,
         createdAt,
         updatedAt,
       });

@@ -195,7 +195,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
           : row,
       ));
     }
-  }, [parseModelNames, prompt, concurrency, timeoutMs, tokenId, siteId]);
+  }, [parseModelNames, prompt, concurrency, timeoutMs, delayMs, tokenId, siteId]);
 
   const finishedRows = rows.filter((r) => r.status !== 'pending' && r.status !== 'probing');
   const okRows = finishedRows.filter((r) => r.status === 'ok');

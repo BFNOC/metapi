@@ -13,6 +13,7 @@ import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import SiteBadgeLink from '../components/SiteBadgeLink.js';
 import AccountModelsModal from './accounts/AccountModelsModal.js';
 import ModelProbeModal from '../components/ModelProbeModal.js';
+import SiteModelsModal from '../components/SiteModelsModal.js';
 import {
   buildAddAccountPrereqHint,
   buildVerifyFailureHint,
@@ -148,6 +149,7 @@ export default function Accounts() {
   });
   const [probeTarget, setProbeTarget] = useState<{ id: number; name: string } | null>(null);
   const [probeInitialModels, setProbeInitialModels] = useState<string[] | undefined>(undefined);
+  const [modelFilterTarget, setModelFilterTarget] = useState<{ siteId: number; siteName: string; modelFilterMode?: string | null } | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRebindTargetRef = useRef<any | null>(null);
@@ -1736,6 +1738,14 @@ export default function Accounts() {
                             >
                               模型
                             </button>
+                            {connectionMode === 'apikey' && (
+                              <button
+                                onClick={() => setModelFilterTarget({ siteId: a.siteId, siteName: a.site?.name || resolveAccountDisplayName(a), modelFilterMode: a.site?.modelFilterMode })}
+                                className="btn btn-link btn-link-primary"
+                              >
+                                模型过滤
+                              </button>
+                            )}
                           </>
                         )}
                       >
@@ -2039,6 +2049,14 @@ export default function Accounts() {
                             >
                               模型
                             </button>
+                            {connectionMode === 'apikey' && (
+                              <button
+                                onClick={() => setModelFilterTarget({ siteId: a.siteId, siteName: a.site?.name || resolveAccountDisplayName(a), modelFilterMode: a.site?.modelFilterMode })}
+                                className="btn btn-link btn-link-primary"
+                              >
+                                模型过滤
+                              </button>
+                            )}
                             {capabilities.canCheckin && (
                               <button onClick={() => withLoading(`checkin-${a.id}`, () => api.triggerCheckin(a.id), '签到完成')} disabled={actionLoading[`checkin-${a.id}`]} className="btn btn-link btn-link-warning">
                                 {actionLoading[`checkin-${a.id}`] ? <span className="spinner spinner-sm" /> : '签到'}
@@ -2106,6 +2124,14 @@ export default function Accounts() {
           initialModels={probeInitialModels}
         />
       )}
+
+      <SiteModelsModal
+        open={!!modelFilterTarget}
+        onClose={() => { setModelFilterTarget(null); void load(); }}
+        siteId={modelFilterTarget?.siteId || 0}
+        siteName={modelFilterTarget?.siteName || ''}
+        currentFilterMode={modelFilterTarget?.modelFilterMode}
+      />
     </div>
   );
 }

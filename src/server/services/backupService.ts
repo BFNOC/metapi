@@ -43,6 +43,7 @@ type TokenRouteRow = typeof schema.tokenRoutes.$inferSelect;
 type RouteChannelRow = typeof schema.routeChannels.$inferSelect;
 type RouteGroupSourceRow = typeof schema.routeGroupSources.$inferSelect;
 type SiteDisabledModelRow = typeof schema.siteDisabledModels.$inferSelect;
+type SiteAllowedModelRow = typeof schema.siteAllowedModels.$inferSelect;
 type ModelAvailabilityRow = typeof schema.modelAvailability.$inferSelect;
 type TokenModelAvailabilityRow = typeof schema.tokenModelAvailability.$inferSelect;
 type ProxyLogRow = typeof schema.proxyLogs.$inferSelect;
@@ -78,6 +79,7 @@ type BackupRouteChannelRow = Omit<RouteChannelRow,
 >>;
 
 type BackupSiteDisabledModelRow = Pick<SiteDisabledModelRow, 'siteId' | 'modelName'>;
+type BackupSiteAllowedModelRow = Pick<SiteAllowedModelRow, 'siteId' | 'modelName'>;
 type BackupManualModelRow = {
   accountId: number;
   modelName: string;
@@ -105,6 +107,7 @@ interface AccountsBackupSection {
   routeChannels: BackupRouteChannelRow[];
   routeGroupSources: RouteGroupSourceRow[];
   siteDisabledModels?: BackupSiteDisabledModelRow[];
+  siteAllowedModels?: BackupSiteAllowedModelRow[];
   manualModels?: BackupManualModelRow[];
   downstreamApiKeys?: BackupDownstreamApiKeyRow[];
 }
@@ -756,6 +759,7 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       globalWeight: 1,
       apiKey: null,
       modelFilterMode: 'deny-list',
+      probeDisabled: false,
       createdAt: input.createdAt,
       updatedAt: input.updatedAt,
     });
@@ -1000,6 +1004,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         globalWeight: 1,
         apiKey: null,
         modelFilterMode: 'deny-list',
+        probeDisabled: false,
         createdAt: toIsoString(item.created_at),
         updatedAt: toIsoString(item.updated_at),
       });
@@ -1293,6 +1298,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     routeChannels,
     routeGroupSources,
     siteDisabledModels,
+    siteAllowedModels,
     manualModels,
     downstreamApiKeys,
   ] = await Promise.all([
@@ -1304,6 +1310,9 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     db.select().from(schema.routeGroupSources).orderBy(asc(schema.routeGroupSources.id)).all(),
     db.select().from(schema.siteDisabledModels)
       .orderBy(asc(schema.siteDisabledModels.siteId), asc(schema.siteDisabledModels.modelName))
+      .all(),
+    db.select().from(schema.siteAllowedModels)
+      .orderBy(asc(schema.siteAllowedModels.siteId), asc(schema.siteAllowedModels.modelName))
       .all(),
     db.select().from(schema.modelAvailability)
       .where(eq(schema.modelAvailability.isManual, true))
@@ -1332,6 +1341,10 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     }) => row),
     routeGroupSources,
     siteDisabledModels: siteDisabledModels.map((row) => ({
+      siteId: row.siteId,
+      modelName: row.modelName,
+    })),
+    siteAllowedModels: siteAllowedModels.map((row) => ({
       siteId: row.siteId,
       modelName: row.modelName,
     })),
@@ -1404,6 +1417,9 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   const siteDisabledModels = Array.isArray(input.siteDisabledModels)
     ? input.siteDisabledModels as BackupSiteDisabledModelRow[]
     : undefined;
+  const siteAllowedModels = Array.isArray(input.siteAllowedModels)
+    ? input.siteAllowedModels as BackupSiteAllowedModelRow[]
+    : undefined;
   const manualModels = Array.isArray(input.manualModels)
     ? input.manualModels as BackupManualModelRow[]
     : undefined;
@@ -1421,6 +1437,7 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
     routeChannels,
     routeGroupSources,
     siteDisabledModels,
+    siteAllowedModels,
     manualModels,
     downstreamApiKeys,
   };
@@ -1534,6 +1551,8 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         sortOrder: row.sortOrder ?? 0,
         globalWeight: row.globalWeight ?? 1,
         apiKey: row.apiKey,
+        modelFilterMode: row.modelFilterMode ?? 'deny-list',
+        probeDisabled: row.probeDisabled ?? false,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();
@@ -1639,6 +1658,15 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     if (shouldReplaceSiteDisabledModels) {
       for (const row of section.siteDisabledModels || []) {
         await tx.insert(schema.siteDisabledModels).values({
+          siteId: row.siteId,
+          modelName: row.modelName,
+        }).run();
+      }
+    }
+
+    if (Array.isArray(section.siteAllowedModels)) {
+      for (const row of section.siteAllowedModels) {
+        await tx.insert(schema.siteAllowedModels).values({
           siteId: row.siteId,
           modelName: row.modelName,
         }).run();

@@ -12,6 +12,7 @@ export type SiteForm = {
   useSystemProxy: boolean;
   customHeaders: SiteCustomHeaderField[];
   globalWeight: string;
+  probeDisabled: boolean;
 };
 
 export type SiteEditorState =
@@ -27,6 +28,7 @@ export type SiteSavePayload = {
   useSystemProxy: boolean;
   customHeaders: string;
   globalWeight: number;
+  probeDisabled: boolean;
 };
 
 type SiteSaveAction =
@@ -51,6 +53,7 @@ export function emptySiteForm(): SiteForm {
     useSystemProxy: false,
     customHeaders: [emptySiteCustomHeader()],
     globalWeight: '1',
+    probeDisabled: false,
   };
 }
 
@@ -85,6 +88,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'customHeaders' | 
   useSystemProxy?: boolean | null;
   customHeaders?: string | null;
   globalWeight?: number | string | null;
+  probeDisabled?: boolean | null;
 }): SiteForm {
   const globalWeightRaw = Number(site.globalWeight);
   const globalWeight = Number.isFinite(globalWeightRaw) && globalWeightRaw > 0 ? String(globalWeightRaw) : '1';
@@ -97,6 +101,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'customHeaders' | 
     useSystemProxy: !!site.useSystemProxy,
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
     globalWeight,
+    probeDisabled: !!site.probeDisabled,
   };
 }
 

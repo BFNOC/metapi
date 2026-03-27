@@ -396,6 +396,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     sortOrder?: number;
     globalWeight?: number;
     modelFilterMode?: string;
+    probeDisabled?: boolean;
   } }>('/api/sites/:id', async (request, reply) => {
     const id = parseInt(request.params.id);
     if (Number.isNaN(id)) {
@@ -473,6 +474,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.sortOrder !== undefined) updates.sortOrder = normalizedSortOrder;
     if (body.globalWeight !== undefined) updates.globalWeight = normalizedGlobalWeight;
     if (body.modelFilterMode !== undefined) updates.modelFilterMode = normalizedModelFilterMode;
+    if (body.probeDisabled !== undefined) updates.probeDisabled = !!body.probeDisabled;
     updates.updatedAt = new Date().toISOString();
     try {
       await db.update(schema.sites).set(updates).where(eq(schema.sites.id, id)).run();
@@ -716,6 +718,61 @@ export async function sitesRoutes(app: FastifyInstance) {
     return { siteId: id, models: uniqueModels, modelFilterMode: normalizedMode || existingSite.modelFilterMode || 'deny-list' };
   });
 
+  // Unified atomic model-filter API: save mode + model list in one transaction
+  app.put<{ Params: { id: string }; Body: {
+    modelFilterMode: string;
+    models: string[];
+  } }>('/api/sites/:id/model-filter', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const existingSite = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!existingSite) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+    const normalizedMode = normalizeModelFilterMode(request.body?.modelFilterMode);
+    if (!normalizedMode) {
+      return reply.code(400).send({ error: 'Invalid modelFilterMode. Expected deny-list or allow-list.' });
+    }
+    const rawModels = request.body?.models;
+    if (!Array.isArray(rawModels)) {
+      return reply.code(400).send({ error: 'models must be an array of strings' });
+    }
+    const uniqueModels = Array.from(new Set(
+      rawModels.filter((m): m is string => typeof m === 'string').map((m) => m.trim()).filter((m) => m.length > 0),
+    ));
+
+    await db.transaction(async (tx) => {
+      // Update mode
+      await tx.update(schema.sites)
+        .set({ modelFilterMode: normalizedMode, updatedAt: new Date().toISOString() })
+        .where(eq(schema.sites.id, id))
+        .run();
+
+      if (normalizedMode === 'deny-list') {
+        // Replace deny-list
+        await tx.delete(schema.siteDisabledModels).where(eq(schema.siteDisabledModels.siteId, id)).run();
+        if (uniqueModels.length > 0) {
+          await tx.insert(schema.siteDisabledModels).values(
+            uniqueModels.map((modelName) => ({ siteId: id, modelName })),
+          ).run();
+        }
+      } else {
+        // Replace allow-list
+        await tx.delete(schema.siteAllowedModels).where(eq(schema.siteAllowedModels.siteId, id)).run();
+        if (uniqueModels.length > 0) {
+          await tx.insert(schema.siteAllowedModels).values(
+            uniqueModels.map((modelName) => ({ siteId: id, modelName })),
+          ).run();
+        }
+      }
+    });
+
+    invalidateSiteCaches();
+    return { siteId: id, modelFilterMode: normalizedMode, models: uniqueModels };
+  });
+
   // Probe models for a site
   app.post<{ Params: { id: string }; Body: {
     modelNames?: string[];
@@ -731,6 +788,11 @@ export async function sitesRoutes(app: FastifyInstance) {
     const existingSite = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
     if (!existingSite) {
       return reply.code(404).send({ error: 'Site not found' });
+    }
+
+    // Guard: block probing if site has probe disabled
+    if (existingSite.probeDisabled) {
+      return reply.code(423).send({ error: '该站点已禁用模型探测功能，请在站点设置中关闭此选项后重试' });
     }
 
     // Get API token: prefer site.apiKey, then fall back to first active account's apiToken or first accountToken

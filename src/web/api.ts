@@ -505,6 +505,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ models, ...(modelFilterMode ? { modelFilterMode } : {}) }),
     }),
+  updateSiteModelFilter: (siteId: number, data: { modelFilterMode: string; models: string[] }) =>
+    request(`/api/sites/${siteId}/model-filter`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
 
   // Accounts
   getAccounts: () => request('/api/accounts'),

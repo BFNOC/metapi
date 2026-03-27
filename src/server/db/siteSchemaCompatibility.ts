@@ -83,6 +83,19 @@ export const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
       postgres: "UPDATE \"sites\" SET \"model_filter_mode\" = 'deny-list' WHERE \"model_filter_mode\" IS NULL",
     },
   },
+  {
+    column: 'probe_disabled',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN probe_disabled integer DEFAULT 0;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `probe_disabled` BOOLEAN DEFAULT FALSE',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "probe_disabled" BOOLEAN DEFAULT FALSE',
+    },
+    normalizeSql: {
+      sqlite: 'UPDATE sites SET probe_disabled = 0 WHERE probe_disabled IS NULL;',
+      mysql: 'UPDATE `sites` SET `probe_disabled` = FALSE WHERE `probe_disabled` IS NULL',
+      postgres: 'UPDATE "sites" SET "probe_disabled" = FALSE WHERE "probe_disabled" IS NULL',
+    },
+  },
 ];
 
 export const SITE_TABLE_COMPATIBILITY_SPECS: SiteTableCompatibilitySpec[] = [

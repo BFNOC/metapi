@@ -52,6 +52,8 @@ type SiteRow = {
   sortOrder?: number;
   totalBalance?: number;
   subscriptionSummary?: SiteSubscriptionSummary | null;
+  probeDisabled?: boolean;
+  modelFilterMode?: string | null;
   createdAt?: string;
 };
 
@@ -446,6 +448,7 @@ export default function Sites() {
       useSystemProxy: !!form.useSystemProxy,
       customHeaders: serializedCustomHeaders.customHeaders,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
+      probeDisabled: !!form.probeDisabled,
     };
     if (!payload.name || !payload.url) {
       toast.error('请填写站点名称和 URL');
@@ -943,7 +946,30 @@ export default function Sites() {
             </div>
             {isEditing && (
               <div style={{ marginTop: 16, padding: '14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>禁用模型管理</div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>探测控制</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={form.probeDisabled}
+                      onChange={(e) => setForm((prev) => ({ ...prev, probeDisabled: e.target.checked }))}
+                    />
+                    <span style={{ fontSize: 13, fontWeight: 500, color: form.probeDisabled ? 'var(--color-danger)' : 'var(--color-text-primary)' }}>
+                      禁止一切模型探测
+                    </span>
+                  </label>
+                  {form.probeDisabled && (
+                    <span style={{
+                      fontSize: 11,
+                      color: 'var(--color-danger)',
+                      background: 'color-mix(in srgb, var(--color-danger) 8%, var(--color-bg))',
+                      padding: '2px 8px',
+                      borderRadius: 'var(--radius-sm)',
+                    }}>
+                      将阻止手动探活、令牌探活和自动模型发现
+                    </span>
+                  )}
+                </div>
                 <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
                   在此站点禁用指定模型后，路由重建时将不为该站点的这些模型创建通道。勾选表示禁用该模型。
                 </div>
@@ -1511,6 +1537,7 @@ export default function Sites() {
           </div>
         )}
       </div>
+
     </div>
   );
 }

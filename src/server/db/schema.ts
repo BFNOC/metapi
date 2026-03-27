@@ -16,6 +16,7 @@ export const sites = sqliteTable('sites', {
   globalWeight: real('global_weight').default(1),
   apiKey: text('api_key'),
   modelFilterMode: text('model_filter_mode').default('deny-list'), // 'deny-list' | 'allow-list'
+  probeDisabled: integer('probe_disabled', { mode: 'boolean' }).default(false),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({

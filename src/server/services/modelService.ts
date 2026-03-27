@@ -50,7 +50,7 @@ let inFlightRefreshModelsAndRebuildRoutes: Promise<{
 }> | null = null;
 
 type ModelRefreshErrorCode = 'timeout' | 'unauthorized' | 'empty_models' | 'unknown';
-type ModelRefreshSkipCode = 'site_disabled' | 'adapter_or_status';
+type ModelRefreshSkipCode = 'site_disabled' | 'adapter_or_status' | 'probe_disabled';
 
 export type ModelRefreshAccountNotFoundResult = {
   accountId: number;
@@ -366,6 +366,10 @@ export async function refreshModelsForAccount(
 
   if (isSiteDisabled(site.status)) {
     return buildSkippedRefreshResult(accountId, 'site_disabled', '站点已禁用');
+  }
+
+  if (site.probeDisabled) {
+    return buildSkippedRefreshResult(accountId, 'probe_disabled', '站点已禁用模型探测');
   }
 
   if (account.status !== 'active' && !options?.allowInactive) {

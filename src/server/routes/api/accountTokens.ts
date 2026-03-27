@@ -1122,6 +1122,11 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: '关联站点缺少 URL' });
     }
 
+    // Guard: block probing if the associated site has probe disabled
+    if (row.sites.probeDisabled) {
+      return reply.code(423).send({ error: '该站点已禁用模型探测功能，请在站点设置中关闭此选项后重试' });
+    }
+
     let modelNames: string[] = [];
     const requestedModels = request.body?.modelNames;
     if (Array.isArray(requestedModels) && requestedModels.length > 0) {

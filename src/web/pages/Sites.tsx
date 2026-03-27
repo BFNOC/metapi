@@ -832,7 +832,7 @@ export default function Sites() {
             </>
           )}
         >
-          <ResponsiveFormGrid>
+          <ResponsiveFormGrid columns={1}>
             <input
               placeholder="站点名称"
               value={form.name}
@@ -1083,7 +1083,7 @@ export default function Sites() {
               </div>
             )}
           </div>
-          <ResponsiveFormGrid>
+          <ResponsiveFormGrid columns={1}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <input
                 placeholder="站点代理（可选，如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080）"

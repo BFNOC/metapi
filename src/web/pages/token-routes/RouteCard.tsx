@@ -448,7 +448,8 @@ function RouteCardInner({
                 ))}
               </div>
             )}
-            {missingTokenGroupItems.length > 0 && (
+            {/* [CUSTOM] 隐藏缺少分组提示 — 手动审核模式下不需要；上游合并时保留此块即可 */}
+            {false && missingTokenGroupItems.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{tr('缺少分组')}:</span>
                 {missingTokenGroupItems.map((item) => (

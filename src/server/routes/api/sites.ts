@@ -693,22 +693,24 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'Invalid modelFilterMode. Expected deny-list or allow-list.' });
     }
 
-    await db.delete(schema.siteAllowedModels)
-      .where(eq(schema.siteAllowedModels.siteId, id))
-      .run();
-
-    if (uniqueModels.length > 0) {
-      await db.insert(schema.siteAllowedModels).values(
-        uniqueModels.map((modelName) => ({ siteId: id, modelName })),
-      ).run();
-    }
-
-    if (normalizedMode) {
-      await db.update(schema.sites)
-        .set({ modelFilterMode: normalizedMode, updatedAt: new Date().toISOString() })
-        .where(eq(schema.sites.id, id))
+    await db.transaction(async (tx) => {
+      await tx.delete(schema.siteAllowedModels)
+        .where(eq(schema.siteAllowedModels.siteId, id))
         .run();
-    }
+
+      if (uniqueModels.length > 0) {
+        await tx.insert(schema.siteAllowedModels).values(
+          uniqueModels.map((modelName) => ({ siteId: id, modelName })),
+        ).run();
+      }
+
+      if (normalizedMode) {
+        await tx.update(schema.sites)
+          .set({ modelFilterMode: normalizedMode, updatedAt: new Date().toISOString() })
+          .where(eq(schema.sites.id, id))
+          .run();
+      }
+    });
 
     invalidateSiteCaches();
     return { siteId: id, models: uniqueModels, modelFilterMode: normalizedMode || existingSite.modelFilterMode || 'deny-list' };

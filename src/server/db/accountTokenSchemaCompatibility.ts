@@ -32,6 +32,24 @@ export const ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS: AccountTokenColumnCompati
       postgres: "ALTER TABLE \"account_tokens\" ADD COLUMN \"value_status\" TEXT NOT NULL DEFAULT 'ready'",
     },
   },
+  {
+    table: 'account_tokens',
+    column: 'model_filter_mode',
+    addSql: {
+      sqlite: "ALTER TABLE account_tokens ADD COLUMN model_filter_mode text DEFAULT 'none';",
+      mysql: "ALTER TABLE `account_tokens` ADD COLUMN `model_filter_mode` VARCHAR(20) DEFAULT 'none'",
+      postgres: "ALTER TABLE \"account_tokens\" ADD COLUMN \"model_filter_mode\" TEXT DEFAULT 'none'",
+    },
+  },
+  {
+    table: 'account_tokens',
+    column: 'filtered_models',
+    addSql: {
+      sqlite: 'ALTER TABLE account_tokens ADD COLUMN filtered_models text;',
+      mysql: 'ALTER TABLE `account_tokens` ADD COLUMN `filtered_models` TEXT NULL',
+      postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "filtered_models" TEXT',
+    },
+  },
 ];
 
 function normalizeSchemaErrorMessage(error: unknown): string {

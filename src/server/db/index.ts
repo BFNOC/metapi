@@ -195,6 +195,12 @@ function ensureTokenManagementSchema() {
   if (!tableColumnExists('account_tokens', 'value_status')) {
     execSqliteLegacyCompat("ALTER TABLE account_tokens ADD COLUMN value_status text NOT NULL DEFAULT 'ready';");
   }
+  if (!tableColumnExists('account_tokens', 'model_filter_mode')) {
+    execSqliteLegacyCompat("ALTER TABLE account_tokens ADD COLUMN model_filter_mode text DEFAULT 'none';");
+  }
+  if (!tableColumnExists('account_tokens', 'filtered_models')) {
+    execSqliteLegacyCompat('ALTER TABLE account_tokens ADD COLUMN filtered_models text;');
+  }
 
   execSqliteStatement(`
     INSERT INTO account_tokens (account_id, name, token, source, enabled, is_default, created_at, updated_at)

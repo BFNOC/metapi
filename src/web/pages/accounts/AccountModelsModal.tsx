@@ -88,7 +88,7 @@ export default function AccountModelsModal({
                   className="btn btn-ghost"
                   style={{ fontSize: 12, padding: '4px 10px' }}
                 >
-                  🔄 刷新模型
+                  刷新模型
                 </button>
               </div>
 

@@ -50,7 +50,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
   const [prompt, setPrompt] = useState(pickRandomPrompt);
   const [concurrency, setConcurrency] = useState(3);
   const [timeoutMs, setTimeoutMs] = useState(15000);
-  const [delayMs, setDelayMs] = useState(0);
+  const [delayMs, setDelayMs] = useState(1500);
   const [customModels, setCustomModels] = useState('');
   const [rows, setRows] = useState<ModelRow[]>([]);
   const [probing, setProbing] = useState(false);

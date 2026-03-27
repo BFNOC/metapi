@@ -3550,11 +3550,6 @@ textarea {
 }
 
 .modern-select-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  z-index: 160;
   background: var(--color-bg-card);
   border: 1px solid var(--color-border);
   border-radius: calc(var(--radius-sm) + 2px);
@@ -3567,7 +3562,7 @@ textarea {
   transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.modern-select.is-open .modern-select-panel {
+.modern-select-panel.is-portal-open {
   opacity: 1;
   transform: translateY(0) scale(1);
   pointer-events: auto;

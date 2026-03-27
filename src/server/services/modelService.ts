@@ -928,6 +928,8 @@ export async function rebuildTokenRoutesFromAvailability() {
     && requiresManagedAccountTokens(row.accounts)
   ));
 
+
+
   const accountRows = await db.select().from(schema.modelAvailability)
     .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))

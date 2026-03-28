@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import CenteredModal from '../components/CenteredModal.js';
 import { api } from '../api.js';
 
@@ -35,6 +35,10 @@ type ModelRow = {
   responseText: string | null;
 };
 
+type AvailableModel = {
+  name: string;
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -42,16 +46,16 @@ type Props = {
   siteName: string;
   initialModels?: string[];
   tokenId?: number;
+  accountId?: number;
 };
 
 type SortMode = 'latency' | 'name' | 'status';
 
-export default function ModelProbeModal({ open, onClose, siteId, siteName, initialModels, tokenId }: Props) {
+export default function ModelProbeModal({ open, onClose, siteId, siteName, initialModels, tokenId, accountId }: Props) {
   const [prompt, setPrompt] = useState(pickRandomPrompt);
   const [concurrency, setConcurrency] = useState(3);
   const [timeoutMs, setTimeoutMs] = useState(15000);
   const [delayMs, setDelayMs] = useState(1500);
-  const [customModels, setCustomModels] = useState('');
   const [rows, setRows] = useState<ModelRow[]>([]);
   const [probing, setProbing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,38 +63,81 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
   const [sortMode, setSortMode] = useState<SortMode>('latency');
   const [loadingModels, setLoadingModels] = useState(false);
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
+
+  // Multi-select model state
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
+  const [modelSearch, setModelSearch] = useState('');
+  const [manualInput, setManualInput] = useState('');
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // On open: randomize prompt + pre-load enabled models
+  // On open: randomize prompt + pre-load models
   useEffect(() => {
     if (!open) return;
 
     setPrompt(pickRandomPrompt());
     setRows([]);
     setError(null);
+    setModelSearch('');
+    setManualInput('');
 
+    // If caller provided explicit initialModels, use them
     if (initialModels && initialModels.length > 0) {
-      setCustomModels(initialModels.join(', '));
+      setAvailableModels(initialModels.map((name) => ({ name })));
+      setSelectedModels(new Set(initialModels));
       return;
     }
 
+    // Load models for the token (or account)
+    setLoadingModels(true);
     if (tokenId) {
-      setLoadingModels(true);
-      (api as any).getTokenModelFilter(tokenId)
+      // Load token's discovered models + white-list filter
+      Promise.all([
+        api.getTokenModels(tokenId),
+        (api as any).getTokenModelFilter(tokenId),
+      ]).then(([modelsRes, filterRes]: [any, any]) => {
+        const modelList: AvailableModel[] = Array.isArray(modelsRes?.models)
+          ? modelsRes.models.map((m: any) => ({ name: String(m.name || m) }))
+          : [];
+        setAvailableModels(modelList);
+
+        // Pre-select allow-list models if configured
+        const mode = filterRes?.modelFilterMode || 'none';
+        const filtered: string[] = Array.isArray(filterRes?.filteredModels) ? filterRes.filteredModels : [];
+        if (mode === 'allow-list' && filtered.length > 0) {
+          setSelectedModels(new Set(filtered));
+        } else {
+          // Default: select all discovered models
+          setSelectedModels(new Set(modelList.map((m) => m.name)));
+        }
+      }).catch(() => {
+        setAvailableModels([]);
+        setSelectedModels(new Set());
+      }).finally(() => setLoadingModels(false));
+    } else if (accountId) {
+      // API Key connection probe: load account's discovered models
+      api.getAccountModels(accountId)
         .then((res: any) => {
-          const mode = res?.modelFilterMode || 'none';
-          const models: string[] = res?.filteredModels || [];
-          if (mode === 'allow-list' && models.length > 0) {
-            setCustomModels(models.join('\n'));
-          } else {
-            setCustomModels('');
-          }
+          const modelList: AvailableModel[] = Array.isArray(res?.models)
+            ? res.models.map((m: any) => ({ name: String(m.name || m) }))
+            : [];
+          setAvailableModels(modelList);
+          setSelectedModels(new Set(modelList.map((m) => m.name)));
         })
-        .catch(() => { /* ignore */ })
+        .catch(() => {
+          setAvailableModels([]);
+          setSelectedModels(new Set());
+        })
         .finally(() => setLoadingModels(false));
+    } else {
+      // Site-level probe without specific account: no pre-loaded model list
+      setAvailableModels([]);
+      setSelectedModels(new Set());
+      setLoadingModels(false);
     }
-  }, [open, initialModels, tokenId]);
+  }, [open, initialModels, tokenId, accountId, siteId]);
 
   // Clean up abort on unmount / close
   useEffect(() => {
@@ -100,16 +147,52 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
     }
   }, [open]);
 
-  const parseModelNames = useCallback(() => {
-    return customModels.trim()
-      ? customModels.split(/[,\n]+/).map((m) => m.trim()).filter((m) => m.length > 0)
+  // Compute the final list of model names to probe (selected + manual)
+  const resolveProbeModels = useCallback((): string[] => {
+    const fromCheckboxes = Array.from(selectedModels);
+    const fromManual = manualInput.trim()
+      ? manualInput.split(/[,\n]+/).map((m) => m.trim()).filter((m) => m.length > 0)
       : [];
-  }, [customModels]);
+    // Merge, deduplicate
+    const merged = new Set([...fromCheckboxes, ...fromManual]);
+    return Array.from(merged);
+  }, [selectedModels, manualInput]);
+
+  const filteredAvailableModels = useMemo(() => {
+    if (!modelSearch.trim()) return availableModels;
+    const q = modelSearch.trim().toLowerCase();
+    return availableModels.filter((m) => m.name.toLowerCase().includes(q));
+  }, [availableModels, modelSearch]);
+
+  const toggleModel = (name: string) => {
+    setSelectedModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelectedModels((prev) => {
+      const next = new Set(prev);
+      for (const m of filteredAvailableModels) next.add(m.name);
+      return next;
+    });
+  };
+
+  const deselectAllVisible = () => {
+    setSelectedModels((prev) => {
+      const next = new Set(prev);
+      for (const m of filteredAvailableModels) next.delete(m.name);
+      return next;
+    });
+  };
 
   const runProbe = useCallback(async () => {
-    const models = parseModelNames();
+    const models = resolveProbeModels();
     if (models.length === 0) {
-      setError('请先在模型列表中输入要探活的模型，或在令牌的「模型」中设置白名单。');
+      setError('请先在模型列表中勾选要探活的模型，或在下方手动输入模型名称。');
       return;
     }
 
@@ -195,7 +278,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
           : row,
       ));
     }
-  }, [parseModelNames, prompt, concurrency, timeoutMs, delayMs, tokenId, siteId]);
+  }, [resolveProbeModels, prompt, concurrency, timeoutMs, delayMs, tokenId, siteId]);
 
   const finishedRows = rows.filter((r) => r.status !== 'pending' && r.status !== 'probing');
   const okRows = finishedRows.filter((r) => r.status === 'ok');
@@ -269,11 +352,13 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
     outline: 'none',
   } as const;
 
+  const probeModelCount = resolveProbeModels().length;
+
   return (
     <CenteredModal
       open={open}
       onClose={onClose}
-      title={`探活 \u00b7 ${siteName}`}
+      title={`探活 · ${siteName}`}
       maxWidth={720}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 0' }}>
@@ -286,7 +371,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
             className="btn btn-primary"
             style={{ minWidth: 100, fontSize: 13 }}
           >
-            {probing ? <><span className="spinner spinner-sm" /> 探活中...</> : '开始探活'}
+            {probing ? <><span className="spinner spinner-sm" /> 探活中...</> : `开始探活${probeModelCount > 0 ? ` (${probeModelCount})` : ''}`}
           </button>
           <button
             onClick={() => setShowSettings(!showSettings)}
@@ -336,6 +421,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
             flexDirection: 'column',
             gap: 10,
           }}>
+            {/* Basic settings grid */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div>
                 <label style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 3, display: 'block' }}>提示词</label>
@@ -354,16 +440,108 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
                 <input style={inputStyle} type="number" min={0} max={10000} step={100} value={delayMs} onChange={(e) => setDelayMs(Number(e.target.value) || 0)} placeholder="0" />
               </div>
             </div>
+
+            {/* Model selection: checkbox list */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <label style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                  {loadingModels
+                    ? '正在加载可用模型...'
+                    : availableModels.length > 0
+                      ? `探活模型（已选 ${selectedModels.size} / ${availableModels.length} 个）`
+                      : '探活模型选择'}
+                </label>
+                {availableModels.length > 0 && !loadingModels && (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" onClick={selectAllVisible} className="btn btn-link btn-link-primary" style={{ fontSize: 11, padding: 0 }}>
+                      全选{modelSearch.trim() ? '结果' : ''}
+                    </button>
+                    <button type="button" onClick={deselectAllVisible} className="btn btn-link" style={{ fontSize: 11, padding: 0 }}>
+                      取消{modelSearch.trim() ? '结果' : '全选'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {loadingModels ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  <span className="spinner spinner-sm" /> 正在加载模型列表...
+                </div>
+              ) : availableModels.length > 0 ? (
+                <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', overflow: 'hidden' }}>
+                  {/* Search bar */}
+                  <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--color-border-light)', background: 'var(--color-bg-secondary)' }}>
+                    <input
+                      type="text"
+                      placeholder={`搜索模型... (共 ${availableModels.length} 个)`}
+                      value={modelSearch}
+                      onChange={(e) => setModelSearch(e.target.value)}
+                      style={{ ...inputStyle, width: '100%', padding: '4px 8px', fontSize: 11 }}
+                    />
+                  </div>
+                  {/* Checkbox list */}
+                  <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+                    {filteredAvailableModels.length === 0 ? (
+                      <div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                        没有匹配「{modelSearch}」的模型
+                      </div>
+                    ) : (
+                      filteredAvailableModels.map((model, i) => {
+                        const isChecked = selectedModels.has(model.name);
+                        return (
+                          <label
+                            key={model.name}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '6px 12px',
+                              cursor: 'pointer',
+                              borderBottom: i < filteredAvailableModels.length - 1 ? '1px solid var(--color-border-light)' : undefined,
+                              background: isChecked ? 'color-mix(in srgb, var(--color-primary) 8%, var(--color-bg))' : undefined,
+                              transition: 'background 0.12s',
+                            }}
+                            onMouseEnter={(e) => { if (!isChecked) (e.currentTarget as HTMLElement).style.background = 'var(--color-bg-secondary)'; }}
+                            onMouseLeave={(e) => { if (!isChecked) (e.currentTarget as HTMLElement).style.background = ''; }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleModel(model.name)}
+                              style={{ flexShrink: 0 }}
+                            />
+                            <span style={{
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              color: 'var(--color-text-primary)',
+                              wordBreak: 'break-all',
+                              flex: 1,
+                            }}>
+                              {model.name}
+                            </span>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', fontSize: 12, color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                  暂无已发现模型，请前往令牌「模型」先刷新模型列表，或在下方手动输入。
+                </div>
+              )}
+            </div>
+
+            {/* Manual input (supplement) */}
             <div>
               <label style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 3, display: 'block' }}>
-                探活模型（已自动加载白名单模型，可手动编辑，逗号或换行分隔）
+                手动补充模型（逗号或换行分隔，将与上方勾选合并）
               </label>
               <textarea
-                style={{ ...inputStyle, minHeight: 60, resize: 'vertical', fontFamily: 'monospace' }}
-                value={customModels}
-                onChange={(e) => setCustomModels(e.target.value)}
-                placeholder={loadingModels ? '正在加载已启用的模型...' : '输入模型名称，逗号或换行分隔'}
-                disabled={loadingModels}
+                style={{ ...inputStyle, minHeight: 48, resize: 'vertical', fontFamily: 'monospace' }}
+                value={manualInput}
+                onChange={(e) => setManualInput(e.target.value)}
+                placeholder="输入模型名称，逗号或换行分隔（可选）"
               />
             </div>
           </div>
@@ -607,9 +785,9 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
           }}>
             {loadingModels
               ? <><span className="spinner spinner-sm" style={{ marginRight: 6 }} />正在加载已启用的模型...</>
-              : customModels.trim()
-                ? `已加载 ${parseModelNames().length} 个模型，点击「开始探活」开始检测`
-                : '展开设置指定模型列表，然后点击「开始探活」'}
+              : probeModelCount > 0
+                ? `已选 ${probeModelCount} 个模型，点击「开始探活」开始检测`
+                : '请在设置中勾选要探活的模型，然后点击「开始探活」'}
           </div>
         )}
 

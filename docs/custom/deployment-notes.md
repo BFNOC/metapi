@@ -150,6 +150,35 @@ ALTER TABLE account_tokens ADD COLUMN filtered_models text;
 |------|------|
 | `src/server/services/modelService.ts` | `refreshModelsForAccount()` 中 `if (!usesManagedTokens)` 包裹账号级发现 |
 
+## API Key 连接探活
+
+自定义镜像在 **API Key 管理** 页面为每个 API Key 连接新增了「探活」按钮，与令牌管理页面的探活功能对齐。
+
+| 页面 | 探活支持 | 探活方式 |
+|------|----------|----------|
+| API Key 管理 | ✅ 新增 | 站点级探活，自动加载该账号的已发现模型 |
+| 账号令牌管理 | ✅ 已有 | 令牌级探活，自动加载令牌白名单模型 |
+
+### 探活模型选择方式改进
+
+原有的探活模型选择为 **纯文本 textarea**（逗号或换行分隔），已改造为 **带搜索框的多选框列表**：
+
+| 改进项 | 说明 |
+|--------|------|
+| 多选框列表 | 从后端已发现模型自动加载，逐个勾选/取消 |
+| 搜索过滤 | 模型数量多时可快速搜索定位 |
+| 全选/取消全选 | 一键操作按钮 |
+| 智能预选 | 令牌有白名单时预选白名单模型；API Key 连接默认全选已发现模型 |
+| 手动补充 | 保留 textarea 作为备选，可手动输入未发现的模型名称，与勾选合并去重 |
+| 计数显示 | 按钮显示「开始探活 (N)」，快速确认即将探测的模型数量 |
+
+### 涉及文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/web/components/ModelProbeModal.tsx` | textarea 重构为多选框列表 + 新增 `accountId` prop |
+| `src/web/pages/Accounts.tsx` | API Key 行操作新增「探活」按钮（桌面 + 移动端） |
+
 ## 探测禁用行为 (probeDisabled)
 
 `probeDisabled` 开关的行为已细化：

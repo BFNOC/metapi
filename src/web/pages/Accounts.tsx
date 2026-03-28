@@ -147,7 +147,7 @@ export default function Accounts() {
     allowedModels: new Set(),
     filterModeSaving: false,
   });
-  const [probeTarget, setProbeTarget] = useState<{ id: number; name: string } | null>(null);
+  const [probeTarget, setProbeTarget] = useState<{ id: number; name: string; accountId?: number; accountName?: string } | null>(null);
   const [probeInitialModels, setProbeInitialModels] = useState<string[] | undefined>(undefined);
   const [modelFilterTarget, setModelFilterTarget] = useState<{ siteId: number; siteName: string; modelFilterMode?: string | null } | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
@@ -1746,6 +1746,14 @@ export default function Accounts() {
                                 模型过滤
                               </button>
                             )}
+                            {connectionMode === 'apikey' && (
+                              <button
+                                onClick={() => setProbeTarget({ id: a.siteId, name: a.site?.name || resolveAccountDisplayName(a), accountId: a.id, accountName: resolveAccountDisplayName(a) })}
+                                className="btn btn-link btn-link-info"
+                              >
+                                探活
+                              </button>
+                            )}
                           </>
                         )}
                       >
@@ -2057,6 +2065,14 @@ export default function Accounts() {
                                 模型过滤
                               </button>
                             )}
+                            {connectionMode === 'apikey' && (
+                              <button
+                                onClick={() => setProbeTarget({ id: a.siteId, name: a.site?.name || resolveAccountDisplayName(a), accountId: a.id, accountName: resolveAccountDisplayName(a) })}
+                                className="btn btn-link btn-link-info"
+                              >
+                                探活
+                              </button>
+                            )}
                             {capabilities.canCheckin && (
                               <button onClick={() => withLoading(`checkin-${a.id}`, () => api.triggerCheckin(a.id), '签到完成')} disabled={actionLoading[`checkin-${a.id}`]} className="btn btn-link btn-link-warning">
                                 {actionLoading[`checkin-${a.id}`] ? <span className="spinner spinner-sm" /> : '签到'}
@@ -2120,8 +2136,9 @@ export default function Accounts() {
           open={true}
           onClose={() => { setProbeTarget(null); setProbeInitialModels(undefined); }}
           siteId={probeTarget.id}
-          siteName={probeTarget.name}
+          siteName={probeTarget.accountName ? `${probeTarget.name} / ${probeTarget.accountName}` : probeTarget.name}
           initialModels={probeInitialModels}
+          accountId={probeTarget.accountId}
         />
       )}
 

@@ -48,7 +48,7 @@ describe('RouteCard', () => {
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
+
         updatingChannel={{}}
         savingPriority={false}
         onSaveSettings={vi.fn()}

@@ -35,9 +35,6 @@ export function ChannelSettingsPanel({
   const [draftPriority, setDraftPriority] = useState<number>(channel.priority ?? 0);
   const [draftWeight, setDraftWeight] = useState<number>(channel.weight ?? 10);
 
-  // --- Dirty tracking ---
-  const [dirtyFields, setDirtyFields] = useState<Set<string>>(new Set());
-
   // --- Baseline refs (to detect external prop changes vs user edits) ---
   const baselineRef = useRef({ tokenId: activeTokenId || 0, priority: channel.priority ?? 0, weight: channel.weight ?? 10 });
 
@@ -51,17 +48,14 @@ export function ChannelSettingsPanel({
     let changed = false;
     if (prev.priority !== nextPriority) {
       setDraftPriority(nextPriority);
-      setDirtyFields((d) => { const n = new Set(d); n.delete('priority'); return n; });
       changed = true;
     }
     if (prev.weight !== nextWeight) {
       setDraftWeight(nextWeight);
-      setDirtyFields((d) => { const n = new Set(d); n.delete('weight'); return n; });
       changed = true;
     }
     if (prev.tokenId !== nextTokenId) {
       setDraftTokenId(nextTokenId);
-      setDirtyFields((d) => { const n = new Set(d); n.delete('tokenId'); return n; });
       changed = true;
     }
     if (changed) {
@@ -69,39 +63,39 @@ export function ChannelSettingsPanel({
     }
   }, [channel.priority, channel.weight, activeTokenId]);
 
+  // --- Dirty computed from draft vs baseline (auto-clears when user changes back to original) ---
+  const dirtyTokenId = draftTokenId !== baselineRef.current.tokenId;
+  const dirtyPriority = draftPriority !== baselineRef.current.priority;
+  const dirtyWeight = draftWeight !== baselineRef.current.weight;
+  const hasDirty = dirtyTokenId || dirtyPriority || dirtyWeight;
+
   // --- Handlers ---
   const handleTokenChange = (nextValue: string) => {
-    const val = Number.parseInt(nextValue, 10) || 0;
-    setDraftTokenId(val);
-    setDirtyFields((d) => new Set(d).add('tokenId'));
+    setDraftTokenId(Number.parseInt(nextValue, 10) || 0);
   };
 
   const handlePriorityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = Number(e.target.value);
-    const clamped = Number.isFinite(raw) ? Math.max(0, Math.trunc(raw)) : 0;
-    setDraftPriority(clamped);
-    setDirtyFields((d) => new Set(d).add('priority'));
+    setDraftPriority(Number.isFinite(raw) ? Math.max(0, Math.trunc(raw)) : 0);
   };
 
   const handleWeightChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = Number(e.target.value);
-    const clamped = Number.isFinite(raw) ? Math.max(0, Math.min(1000, Math.trunc(raw))) : 0;
-    setDraftWeight(clamped);
-    setDirtyFields((d) => new Set(d).add('weight'));
+    setDraftWeight(Number.isFinite(raw) ? Math.max(0, Math.min(1000, Math.trunc(raw))) : 0);
   };
 
   const handleSave = () => {
-    if (dirtyFields.size === 0) return; // No changes — skip
+    if (!hasDirty) return;
 
     const updates: { tokenId?: number | null; priority?: number; weight?: number } = {};
-    if (dirtyFields.has('tokenId')) {
+    if (dirtyTokenId) {
       // 0 means "follow account default" → send null to backend
       updates.tokenId = draftTokenId > 0 ? draftTokenId : null;
     }
-    if (dirtyFields.has('priority')) {
+    if (dirtyPriority) {
       updates.priority = draftPriority;
     }
-    if (dirtyFields.has('weight')) {
+    if (dirtyWeight) {
       updates.weight = draftWeight;
     }
     onSave(channel.id, updates);
@@ -119,7 +113,6 @@ export function ChannelSettingsPanel({
   );
 
   const inputDisabled = isUpdatingToken || disabled;
-  const hasDirty = dirtyFields.size > 0;
 
   if (compact) {
     // Mobile: stacked layout
@@ -161,6 +154,7 @@ export function ChannelSettingsPanel({
               min={0}
               step={1}
               title="优先级 (Priority)：数字越小优先级越高，相同优先级的通道之间按权重随机"
+              aria-label="优先级"
               placeholder="0"
             />
             <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.3, whiteSpace: 'nowrap' }}>优先级</div>
@@ -177,6 +171,7 @@ export function ChannelSettingsPanel({
               max={1000}
               step={1}
               title="权重 (Weight)：同优先级内权重越大被选中概率越高，默认 10"
+              aria-label="权重"
               placeholder="10"
             />
             <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.3, whiteSpace: 'nowrap' }}>权重</div>
@@ -236,6 +231,7 @@ export function ChannelSettingsPanel({
             min={0}
             step={1}
             title="优先级 (Priority)：数字越小优先级越高，相同优先级的通道之间按权重随机"
+            aria-label="优先级"
             placeholder="0"
           />
           <div style={{ marginTop: 2, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.3, whiteSpace: 'nowrap' }}>优先级</div>
@@ -244,7 +240,7 @@ export function ChannelSettingsPanel({
           <input
             type="number"
             className="input input-sm"
-            style={{ width: 48, padding: '0 4px', textAlign: 'center', height: 28, minHeight: 28, fontSize: 13 }}
+            style={{ width: 56, padding: '0 4px', textAlign: 'center', height: 28, minHeight: 28, fontSize: 13 }}
             value={draftWeight}
             onChange={handleWeightChange}
             disabled={inputDisabled}
@@ -252,6 +248,7 @@ export function ChannelSettingsPanel({
             max={1000}
             step={1}
             title="权重 (Weight)：同优先级内权重越大被选中概率越高，默认 10"
+            aria-label="权重"
             placeholder="10"
           />
           <div style={{ marginTop: 2, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.3, whiteSpace: 'nowrap' }}>权重</div>

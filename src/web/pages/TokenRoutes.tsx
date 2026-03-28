@@ -129,7 +129,7 @@ export default function TokenRoutes() {
   const [saving, setSaving] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
 
-  const [channelTokenDraft, setChannelTokenDraft] = useState<Record<number, number>>({});
+
   const [updatingChannel, setUpdatingChannel] = useState<Record<number, boolean>>({});
   const [savingPriorityByRoute, setSavingPriorityByRoute] = useState<Record<number, boolean>>({});
   const [updatingRoutingStrategyByRoute, setUpdatingRoutingStrategyByRoute] = useState<Record<number, boolean>>({});
@@ -914,6 +914,7 @@ export default function TokenRoutes() {
   };
 
   const handleChannelSettingsSave = async (routeId: number, channelId: number, accountId: number, updates: { tokenId?: number | null; priority?: number; weight?: number }) => {
+    if (updatingChannel[channelId]) return; // Concurrent protection
     const { tokenId, priority, weight } = updates;
 
     // Validate tokenId if it was changed to a specific token
@@ -1500,7 +1501,7 @@ export default function TokenRoutes() {
                     routeDecision={decisionByRoute[route.id] || null}
                     loadingDecision={loadingDecision}
                     candidateView={getRouteCandidateView(route.id)}
-                    channelTokenDraft={channelTokenDraft}
+
                     updatingChannel={updatingChannel}
                     savingPriority={!!savingPriorityByRoute[route.id]}
                     onSaveSettings={stableChannelSettingsSave}
@@ -1537,7 +1538,6 @@ export default function TokenRoutes() {
               routeDecision={decisionByRoute[route.id] || null}
               loadingDecision={loadingDecision}
               candidateView={getRouteCandidateView(route.id)}
-              channelTokenDraft={channelTokenDraft}
               updatingChannel={updatingChannel}
               savingPriority={!!savingPriorityByRoute[route.id]}
               onSaveSettings={stableChannelSettingsSave}

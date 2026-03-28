@@ -1126,9 +1126,11 @@ export async function tokensRoutes(app: FastifyInstance) {
     const sourceModel = typeof body.sourceModel === 'string'
       ? body.sourceModel.trim()
       : (isExactModelPattern(route.modelPattern) ? route.modelPattern.trim() : '');
-    const effectiveTokenId = body.tokenId ?? await getDefaultTokenId(body.accountId);
+    // Normalize tokenId: 0 and falsy → null ("follow account default")
+    const normalizedTokenId = (typeof body.tokenId === 'number' && body.tokenId > 0) ? body.tokenId : null;
+    const effectiveTokenId = normalizedTokenId ?? await getDefaultTokenId(body.accountId);
 
-    if (body.tokenId && !await checkTokenBelongsToAccount(body.tokenId, body.accountId)) {
+    if (normalizedTokenId !== null && !await checkTokenBelongsToAccount(normalizedTokenId, body.accountId)) {
       return reply.code(400).send({ success: false, message: '令牌不存在或不属于当前账号' });
     }
 
@@ -1151,7 +1153,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     const insertedChannel = await db.insert(schema.routeChannels).values({
       routeId,
       accountId: body.accountId,
-      tokenId: body.tokenId,
+      tokenId: normalizedTokenId,
       sourceModel: sourceModel || null,
       priority: typeof body.priority === 'number' && Number.isFinite(body.priority) ? Math.max(0, Math.trunc(body.priority)) : 0,
       weight: typeof body.weight === 'number' && Number.isFinite(body.weight) ? Math.max(0, Math.min(1000, Math.trunc(body.weight))) : 10,
@@ -1254,7 +1256,10 @@ export async function tokensRoutes(app: FastifyInstance) {
       updates.weight = Math.max(0, Math.min(1000, Math.trunc(body.weight)));
     }
     if (body.enabled !== undefined) updates.enabled = body.enabled;
-    if (body.tokenId !== undefined) updates.tokenId = body.tokenId;
+    if (body.tokenId !== undefined) {
+      // Normalize: null = follow default, positive int = specific token, 0/falsy → null
+      updates.tokenId = (typeof body.tokenId === 'number' && body.tokenId > 0) ? body.tokenId : null;
+    }
 
     await db.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, channelId)).run();
     await clearRouteDecisionSnapshot(channel.routeId);

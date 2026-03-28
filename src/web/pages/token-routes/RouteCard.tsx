@@ -59,7 +59,7 @@ type RouteCardProps = {
   loadingDecision: boolean;
   // Channel interaction
   candidateView: RouteCandidateView;
-  channelTokenDraft: Record<number, number>;
+
   updatingChannel: Record<number, boolean>;
   savingPriority: boolean;
   onSaveSettings: (routeId: number, channelId: number, accountId: number, updates: { tokenId?: number | null; priority?: number; weight?: number }) => void;
@@ -107,7 +107,7 @@ function RouteCardInner({
   routeDecision,
   loadingDecision,
   candidateView,
-  channelTokenDraft,
+
   updatingChannel,
   savingPriority,
   onSaveSettings,
@@ -541,7 +541,7 @@ function RouteCardInner({
                         <SortableContext items={group.channels.map((c) => c.id)} strategy={verticalListSortingStrategy}>
                           {group.channels.map((channel) => {
                             const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
-                            const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
+                            const activeTokenId = channel.tokenId ?? 0;
                             return (
                               <SortableChannelRow
                                 key={channel.id}
@@ -566,7 +566,7 @@ function RouteCardInner({
                         <SortableContext items={group.channels.map((c) => c.id)} strategy={verticalListSortingStrategy}>
                           {group.channels.map((channel) => {
                             const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
-                            const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
+                            const activeTokenId = channel.tokenId ?? 0;
                             return (
                               <SortableChannelRow
                                 key={channel.id}

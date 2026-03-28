@@ -27,28 +27,36 @@ const defaultTokenOptions: RouteTokenOption[] = [
 ];
 
 describe('ChannelSettingsPanel', () => {
-  it('converts tokenId 0 to null on save (follow account default)', () => {
+  it('submits only dirty fields in onSave payload (priority only)', () => {
     const onSave = vi.fn();
     const root = create(
       <ChannelSettingsPanel
-        channel={buildChannel({ tokenId: 1 })}
+        channel={buildChannel({ priority: 0, weight: 10 })}
         tokenOptions={defaultTokenOptions}
-        activeTokenId={1}
+        activeTokenId={0}
         isUpdatingToken={false}
         onSave={onSave}
       />,
     );
 
-    // Change token selection to "follow default" (value 0)
-    const selects = root.root.findAllByType('select' as any);
-    // The ChannelSettingsPanel uses ModernSelect which renders a custom dropdown.
-    // For this test, we simulate via the save button after setting state.
-    // Since we cannot easily simulate ModernSelect changes in test-renderer,
-    // we verify the component renders without error and the save button exists.
-    const buttons = root.root.findAll(
+    // Change only priority
+    const priorityInput = root.root.findAll(
+      (node) => node.type === 'input' && node.props.type === 'number',
+    )[0];
+    act(() => {
+      priorityInput.props.onChange({ target: { value: '2' } });
+    });
+
+    // Click save
+    const saveButton = root.root.findAll(
       (node) => node.type === 'button' && node.children?.some?.((c) => typeof c === 'string' && c === '保存'),
-    );
-    expect(buttons.length).toBeGreaterThan(0);
+    )[0];
+    act(() => {
+      saveButton.props.onClick();
+    });
+
+    // Should only contain priority (not tokenId or weight)
+    expect(onSave).toHaveBeenCalledWith(1, { priority: 2 });
   });
 
   it('disables save button when no fields are dirty', () => {
@@ -68,6 +76,45 @@ describe('ChannelSettingsPanel', () => {
     )[0];
 
     expect(saveButton).toBeDefined();
+    expect(saveButton.props.disabled).toBe(true);
+  });
+
+  it('auto-clears dirty when user changes value back to baseline', () => {
+    const onSave = vi.fn();
+    const root = create(
+      <ChannelSettingsPanel
+        channel={buildChannel({ priority: 5 })}
+        tokenOptions={defaultTokenOptions}
+        activeTokenId={0}
+        isUpdatingToken={false}
+        onSave={onSave}
+      />,
+    );
+
+    const priorityInput = root.root.findAll(
+      (node) => node.type === 'input' && node.props.type === 'number',
+    )[0];
+
+    // Change priority away from baseline
+    act(() => {
+      priorityInput.props.onChange({ target: { value: '3' } });
+    });
+
+    // Save button should be enabled
+    let saveButton = root.root.findAll(
+      (node) => node.type === 'button' && node.children?.some?.((c) => typeof c === 'string' && c === '保存'),
+    )[0];
+    expect(saveButton.props.disabled).toBe(false);
+
+    // Change back to baseline value
+    act(() => {
+      priorityInput.props.onChange({ target: { value: '5' } });
+    });
+
+    // Save button should be disabled again
+    saveButton = root.root.findAll(
+      (node) => node.type === 'button' && node.children?.some?.((c) => typeof c === 'string' && c === '保存'),
+    )[0];
     expect(saveButton.props.disabled).toBe(true);
   });
 
@@ -111,7 +158,6 @@ describe('ChannelSettingsPanel', () => {
       priorityInput.props.onChange({ target: { value: '-5' } });
     });
 
-    // After clamping, value should be 0
     const updatedInput = root.root.findAll(
       (node) => node.type === 'input' && node.props.type === 'number',
     )[0];
@@ -156,7 +202,6 @@ describe('ChannelSettingsPanel', () => {
       />,
     );
 
-    // Simulate prop change (e.g. after drag-and-drop reloads channels)
     const updatedChannel = buildChannel({ priority: 3, weight: 20 });
     act(() => {
       root.update(
@@ -173,7 +218,7 @@ describe('ChannelSettingsPanel', () => {
     const numberInputs = root.root.findAll(
       (node) => node.type === 'input' && node.props.type === 'number',
     );
-    expect(numberInputs[0].props.value).toBe(3); // priority synced
-    expect(numberInputs[1].props.value).toBe(20); // weight synced
+    expect(numberInputs[0].props.value).toBe(3);
+    expect(numberInputs[1].props.value).toBe(20);
   });
 });

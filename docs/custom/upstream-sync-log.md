@@ -58,3 +58,4 @@
 | `6d42355` | docs: 新增自定义修改文档 (schema变更/功能说明/部署指南/同步记录) |
 | `365c13e` | feat: 站点探测禁用 + API Key 连接模型过滤 |
 | *(pending)* | fix: 通道更新 tokenId 校验 + 登录会话延长至30天 + 剥离上游IP泄漏头 |
+| *(pending)* | feat: 通道优先级与权重手动配置 — 路由 UI 新增 Priority/Weight 编辑 + 后端校验统一 |

@@ -1,15 +1,13 @@
 import { useState, type CSSProperties } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import ModernSelect from '../../components/ModernSelect.js';
 import type { SortableChannelRowProps } from './types.js';
 import {
-  buildFixedTokenOptionDescription,
-  buildFixedTokenOptionLabel,
   describeTokenBinding,
   resolveTokenBindingConnectionMode,
 } from './tokenBindingPresentation.js';
 import { getChannelDecisionState, getPriorityTagStyle, getProbabilityColor } from './utils.js';
+import { ChannelSettingsPanel } from './ChannelSettingsPanel.js';
 
 export function SortableChannelRow({
   channel,
@@ -22,8 +20,7 @@ export function SortableChannelRow({
   tokenOptions,
   activeTokenId,
   isUpdatingToken,
-  onTokenDraftChange,
-  onSaveToken,
+  onSaveSettings,
   onDeleteChannel,
   onToggleEnabled,
   onSiteBlockModel,
@@ -70,6 +67,36 @@ export function SortableChannelRow({
   );
 
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
+
+  // Shared action buttons rendered inside ChannelSettingsPanel
+  const actionButtons = (
+    <>
+      <button
+        onClick={() => onToggleEnabled(channel.enabled === false)}
+        className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
+        data-tooltip={channel.enabled === false ? '启用此通道' : '禁用此通道'}
+      >
+        {channel.enabled === false ? '启用' : '禁用'}
+      </button>
+
+      {onSiteBlockModel && channel.site?.id ? (
+        <button
+          onClick={onSiteBlockModel}
+          className="btn btn-link btn-link-warning"
+          data-tooltip={`将此模型加入站点「${channel.site?.name || '未知'}」的禁用列表，rebuild 后该站点的此模型通道将不再生成`}
+        >
+          站点屏蔽
+        </button>
+      ) : null}
+
+      <button
+        onClick={onDeleteChannel}
+        className="btn btn-link btn-link-danger"
+      >
+        移除
+      </button>
+    </>
+  );
 
   if (mobile) {
     return (
@@ -231,64 +258,16 @@ export function SortableChannelRow({
             </div>
 
             {!readOnly && mobileDetailsOpen && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8, borderTop: '1px solid var(--color-border-light)' }}>
-                <div style={{ width: '100%' }}>
-                  <ModernSelect
-                    size="sm"
-                    value={String(activeTokenId || 0)}
-                    onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
-                    disabled={isUpdatingToken}
-                    options={[
-                      {
-                        value: '0',
-                        label: tokenBinding.followOptionLabel,
-                        description: tokenBinding.followOptionDescription,
-                      },
-                      ...tokenOptions.map((token) => ({
-                        value: String(token.id),
-                        label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
-                        description: buildFixedTokenOptionDescription(token),
-                      })),
-                    ]}
-                    placeholder="选择令牌绑定方式"
-                  />
-                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
-                    {tokenBinding.helperText}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
-                  <button
-                    onClick={onSaveToken}
-                    disabled={isUpdatingToken}
-                    className="btn btn-link btn-link-info"
-                  >
-                    {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
-                  </button>
-
-                  <button
-                    onClick={() => onToggleEnabled(channel.enabled === false)}
-                    className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
-                  >
-                    {channel.enabled === false ? '启用' : '禁用'}
-                  </button>
-
-                  {onSiteBlockModel && channel.site?.id ? (
-                    <button
-                      onClick={onSiteBlockModel}
-                      className="btn btn-link btn-link-warning"
-                    >
-                      站点屏蔽
-                    </button>
-                  ) : null}
-
-                  <button
-                    onClick={onDeleteChannel}
-                    className="btn btn-link btn-link-danger"
-                  >
-                    移除
-                  </button>
-                </div>
+              <div style={{ paddingTop: 8, borderTop: '1px solid var(--color-border-light)' }}>
+                <ChannelSettingsPanel
+                  channel={channel}
+                  tokenOptions={tokenOptions}
+                  activeTokenId={activeTokenId}
+                  isUpdatingToken={isUpdatingToken}
+                  compact
+                  onSave={onSaveSettings}
+                  actions={actionButtons}
+                />
               </div>
             )}
           </div>
@@ -445,129 +424,15 @@ export function SortableChannelRow({
       </div>
 
       {!readOnly ? (
-        mobile ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
-            <div style={{ width: '100%' }}>
-              <ModernSelect
-                size="sm"
-                value={String(activeTokenId || 0)}
-                onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
-                disabled={isUpdatingToken}
-                options={[
-                  {
-                    value: '0',
-                    label: tokenBinding.followOptionLabel,
-                    description: tokenBinding.followOptionDescription,
-                  },
-                  ...tokenOptions.map((token) => ({
-                    value: String(token.id),
-                    label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
-                    description: buildFixedTokenOptionDescription(token),
-                  })),
-                ]}
-                placeholder="选择令牌绑定方式"
-              />
-              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
-                {tokenBinding.helperText}
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
-              <button
-                onClick={onSaveToken}
-                disabled={isUpdatingToken}
-                className="btn btn-link btn-link-info"
-              >
-                {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
-              </button>
-
-              <button
-                onClick={() => onToggleEnabled(channel.enabled === false)}
-                className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
-              >
-                {channel.enabled === false ? '启用' : '禁用'}
-              </button>
-
-              {onSiteBlockModel && channel.site?.id ? (
-                <button
-                  onClick={onSiteBlockModel}
-                  className="btn btn-link btn-link-warning"
-                >
-                  站点屏蔽
-                </button>
-              ) : null}
-
-              <button
-                onClick={onDeleteChannel}
-                className="btn btn-link btn-link-danger"
-              >
-                移除
-              </button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ minWidth: 220, flex: 1 }}>
-                <ModernSelect
-                  size="sm"
-                  value={String(activeTokenId || 0)}
-                  onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
-                  disabled={isUpdatingToken}
-                  options={[
-                    {
-                      value: '0',
-                      label: tokenBinding.followOptionLabel,
-                      description: tokenBinding.followOptionDescription,
-                    },
-                    ...tokenOptions.map((token) => ({
-                      value: String(token.id),
-                      label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
-                      description: buildFixedTokenOptionDescription(token),
-                    })),
-                  ]}
-                  placeholder="选择令牌绑定方式"
-                />
-                <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
-                  {tokenBinding.helperText}
-                </div>
-              </div>
-              <button
-                onClick={onSaveToken}
-                disabled={isUpdatingToken}
-                className="btn btn-link btn-link-info"
-              >
-                {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
-              </button>
-            </div>
-
-            <button
-              onClick={() => onToggleEnabled(channel.enabled === false)}
-              className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
-              data-tooltip={channel.enabled === false ? '启用此通道' : '禁用此通道'}
-            >
-              {channel.enabled === false ? '启用' : '禁用'}
-            </button>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              {onSiteBlockModel && channel.site?.id ? (
-                <button
-                  onClick={onSiteBlockModel}
-                  className="btn btn-link btn-link-warning"
-                  data-tooltip={`将此模型加入站点「${channel.site?.name || '未知'}」的禁用列表，rebuild 后该站点的此模型通道将不再生成`}
-                >
-                  站点屏蔽
-                </button>
-              ) : null}
-
-              <button
-                onClick={onDeleteChannel}
-                className="btn btn-link btn-link-danger"
-              >
-                移除
-              </button>
-            </div>
-          </>
-        )
+        <ChannelSettingsPanel
+          channel={channel}
+          tokenOptions={tokenOptions}
+          activeTokenId={activeTokenId}
+          isUpdatingToken={isUpdatingToken}
+          compact={mobile}
+          onSave={onSaveSettings}
+          actions={actionButtons}
+        />
       ) : null}
     </div>
   );

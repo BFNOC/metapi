@@ -1153,8 +1153,8 @@ export async function tokensRoutes(app: FastifyInstance) {
       accountId: body.accountId,
       tokenId: body.tokenId,
       sourceModel: sourceModel || null,
-      priority: body.priority ?? 0,
-      weight: body.weight ?? 10,
+      priority: typeof body.priority === 'number' && Number.isFinite(body.priority) ? Math.max(0, Math.trunc(body.priority)) : 0,
+      weight: typeof body.weight === 'number' && Number.isFinite(body.weight) ? Math.max(0, Math.min(1000, Math.trunc(body.weight))) : 10,
     }).run();
     const channelId = Number(insertedChannel.lastInsertRowid || 0);
     if (channelId <= 0) {
@@ -1241,9 +1241,20 @@ export async function tokensRoutes(app: FastifyInstance) {
       else updates.sourceModel = String(body.sourceModel).trim() || null;
     }
 
-    for (const key of ['priority', 'weight', 'enabled', 'tokenId']) {
-      if (body[key] !== undefined) updates[key] = body[key];
+    if (body.priority !== undefined) {
+      if (typeof body.priority !== 'number' || !Number.isFinite(body.priority)) {
+        return reply.code(400).send({ success: false, message: 'priority 必须是有限数字' });
+      }
+      updates.priority = Math.max(0, Math.trunc(body.priority));
     }
+    if (body.weight !== undefined) {
+      if (typeof body.weight !== 'number' || !Number.isFinite(body.weight)) {
+        return reply.code(400).send({ success: false, message: 'weight 必须是有限数字' });
+      }
+      updates.weight = Math.max(0, Math.min(1000, Math.trunc(body.weight)));
+    }
+    if (body.enabled !== undefined) updates.enabled = body.enabled;
+    if (body.tokenId !== undefined) updates.tokenId = body.tokenId;
 
     await db.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, channelId)).run();
     await clearRouteDecisionSnapshot(channel.routeId);

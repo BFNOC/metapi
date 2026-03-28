@@ -93,3 +93,40 @@ ALTER TABLE account_tokens ADD COLUMN filtered_models text;
 `x-forwarded-for`、`x-forwarded-proto`、`x-forwarded-host`、`x-forwarded-port`、`x-real-ip`、`cf-connecting-ip`、`cf-ipcountry`、`cf-ray`、`cf-visitor`、`true-client-ip`、`x-client-ip`、`x-cluster-client-ip`、`forwarded`、`via`
 
 > **注意**：`upstreamEndpoint.ts` 中的 `BLOCKED_PASSTHROUGH_HEADERS` 集合控制此行为。
+
+## 通道优先级与权重手动配置
+
+自定义镜像支持在路由管理 UI 中手动编辑通道的 **优先级 (Priority)** 和 **权重 (Weight)**：
+
+| 字段 | 范围 | 说明 |
+|------|------|------|
+| 优先级 | 0 ~ ∞（非负整数） | 数字越小优先级越高；P0 > P1 > P2；相同优先级的通道间按权重随机 |
+| 权重 | 0 ~ 1000（非负整数） | 同优先级内权重越大，被选中概率越高；默认 10 |
+
+### 典型用法
+
+- **多站点均衡负载**：所有通道设为同一优先级（如 P0），权重按比例分配
+- **公开 Key 优先消耗**：公开 Key 通道 → P0，私有 Key 通道 → P1；P0 全部进入冷却后自动降级到 P1
+- **拖拽后修正**：拖拽排序会自动分配递增优先级（P0/P1/P2），可手动改回同一优先级恢复权重随机
+
+### 后端校验
+
+三个通道写入接口统一校验规则：
+
+| 接口 | 校验 |
+|------|------|
+| `PUT /api/channels/:channelId` | priority/weight 类型检查 + 整数截断 + 范围钳位 |
+| `PUT /api/channels/batch` | priority 整数截断（仅处理 priority） |
+| `POST /api/routes/:id/channels` | priority/weight 类型安全默认 + 范围钳位 |
+
+### 涉及文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/server/routes/api/tokens.ts` | 后端校验统一 |
+| `src/web/pages/token-routes/ChannelSettingsPanel.tsx` | **新增** 共享配置面板（脏字段跟踪 + prop 同步 + tokenId 0→null 转换） |
+| `src/web/pages/token-routes/SortableChannelRow.tsx` | 瘦化重构，改用 ChannelSettingsPanel |
+| `src/web/pages/token-routes/types.ts` | Props 类型：`onSaveSettings` 替代 `onTokenDraftChange + onSaveToken` |
+| `src/web/pages/token-routes/RouteCard.tsx` | Prop 中转更新 |
+| `src/web/pages/TokenRoutes.tsx` | 顶层 `handleChannelSettingsSave` 逻辑 |
+

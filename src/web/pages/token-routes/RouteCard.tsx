@@ -62,8 +62,7 @@ type RouteCardProps = {
   channelTokenDraft: Record<number, number>;
   updatingChannel: Record<number, boolean>;
   savingPriority: boolean;
-  onTokenDraftChange: (channelId: number, tokenId: number) => void;
-  onSaveToken: (routeId: number, channelId: number, accountId: number) => void;
+  onSaveSettings: (routeId: number, channelId: number, accountId: number, updates: { tokenId?: number | null; priority?: number; weight?: number }) => void;
   onDeleteChannel: (channelId: number, routeId: number) => void;
   onToggleChannelEnabled: (channelId: number, routeId: number, enabled: boolean) => void;
   onChannelDragEnd: (routeId: number, event: DragEndEvent) => void;
@@ -111,8 +110,7 @@ function RouteCardInner({
   channelTokenDraft,
   updatingChannel,
   savingPriority,
-  onTokenDraftChange,
-  onSaveToken,
+  onSaveSettings,
   onDeleteChannel,
   onToggleChannelEnabled,
   onChannelDragEnd,
@@ -557,8 +555,7 @@ function RouteCardInner({
                                 tokenOptions={tokenOptions}
                                 activeTokenId={activeTokenId}
                                 isUpdatingToken={!!updatingChannel[channel.id]}
-                                onTokenDraftChange={onTokenDraftChange}
-                                onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
+                                onSaveSettings={(channelId, updates) => onSaveSettings(route.id, channelId, channel.accountId, updates)}
                                 onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
                                 onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
                               />
@@ -582,8 +579,7 @@ function RouteCardInner({
                                 tokenOptions={tokenOptions}
                                 activeTokenId={activeTokenId}
                                 isUpdatingToken={!!updatingChannel[channel.id]}
-                                onTokenDraftChange={onTokenDraftChange}
-                                onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
+                                onSaveSettings={(channelId, updates) => onSaveSettings(route.id, channelId, channel.accountId, updates)}
                                 onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
                                 onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
                                 onSiteBlockModel={() => onSiteBlockModel(channel.id, route.id)}

@@ -165,7 +165,7 @@ export async function monitorRoutes(app: FastifyInstance) {
     // HttpOnly cookie for iframe proxy auth within current origin.
     reply.header(
       'Set-Cookie',
-      `${MONITOR_AUTH_COOKIE}=${config.authToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=7200`,
+      `${MONITOR_AUTH_COOKIE}=${config.authToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`,
     );
     return { success: true };
   });

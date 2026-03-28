@@ -68,3 +68,28 @@ ALTER TABLE account_tokens ADD COLUMN filtered_models text;
 **原因**：新增的列未注册到白名单。
 
 **解决**：确保 `accountTokenSchemaCompatibility.ts` 的 `ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS` 包含对应的列定义。
+
+### 禁用通道返回「该令牌不支持当前模型」(400)
+
+**原因**：`PUT /api/channels/:channelId` 在每次更新时都会执行 `tokenSupportsModel()` 检查，而服务器上 Token 可能缺少模型探测数据（`token_model_availability` 表为空）。本地环境因为做过探测所以不受影响。
+
+**解决**：已修复（2026-03-27）。`tokenSupportsModel` 检查现在仅在 `tokenId` 被修改时才执行，禁用/启用等操作不再触发此验证。
+
+---
+
+## 登录会话配置
+
+自定义镜像的登录会话时长已从默认的 **12 小时** 延长至 **30 天**：
+
+| 配置项 | 文件 | 默认值 | 自定义值 |
+|--------|------|--------|----------|
+| Web 会话时长 | `src/web/authSession.ts` | 12h | 30 天 |
+| Monitor Cookie Max-Age | `src/server/routes/api/monitor.ts` | 2h (7200s) | 30 天 (2592000s) |
+
+## 上游请求头安全
+
+自定义镜像会**自动剥离**以下可能泄漏客户端真实 IP 的请求头，确保上游仅看到代理的 TCP 源 IP：
+
+`x-forwarded-for`、`x-forwarded-proto`、`x-forwarded-host`、`x-forwarded-port`、`x-real-ip`、`cf-connecting-ip`、`cf-ipcountry`、`cf-ray`、`cf-visitor`、`true-client-ip`、`x-client-ip`、`x-cluster-client-ip`、`forwarded`、`via`
+
+> **注意**：`upstreamEndpoint.ts` 中的 `BLOCKED_PASSTHROUGH_HEADERS` 集合控制此行为。

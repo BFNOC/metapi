@@ -1,4 +1,4 @@
-﻿import { FastifyInstance } from 'fastify';
+import { FastifyInstance } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
@@ -1229,7 +1229,9 @@ export async function tokensRoutes(app: FastifyInstance) {
       ? (channel.tokenId ?? await getDefaultTokenId(channel.accountId))
       : (body.tokenId === null ? await getDefaultTokenId(channel.accountId) : Number(body.tokenId));
 
-    if (isExactModelPattern(route.modelPattern) && nextTokenId && !await tokenSupportsModel(nextTokenId, route.modelPattern)) {
+    // Only validate model support when the token is actually being changed
+    const tokenChanged = body.tokenId !== undefined && Number(body.tokenId) !== channel.tokenId;
+    if (tokenChanged && isExactModelPattern(route.modelPattern) && nextTokenId && !await tokenSupportsModel(nextTokenId, route.modelPattern)) {
       return reply.code(400).send({ success: false, message: '该令牌不支持当前模型' });
     }
 

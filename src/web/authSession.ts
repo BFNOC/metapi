@@ -1,6 +1,6 @@
 const AUTH_TOKEN_STORAGE_KEY = 'auth_token';
 const AUTH_TOKEN_EXPIRES_AT_STORAGE_KEY = 'auth_token_expires_at';
-export const AUTH_SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
+export const AUTH_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 
 type StorageLike = {
   getItem: (key: string) => string | null;

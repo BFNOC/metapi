@@ -158,6 +158,24 @@ const BLOCKED_PASSTHROUGH_HEADERS = new Set([
   'sec-websocket-key',
   'sec-websocket-version',
   'sec-websocket-extensions',
+  // IP-leaking / reverse-proxy headers — must not be forwarded to upstream
+  // so the upstream sees the proxy's TCP source IP, not the downstream client.
+  'x-forwarded-for',
+  'x-forwarded-proto',
+  'x-forwarded-host',
+  'x-forwarded-port',
+  'x-real-ip',
+  'cf-connecting-ip',
+  'cf-ipcountry',
+  'cf-ray',
+  'cf-visitor',
+  'cf-ew-via',
+  'cf-pseudo-ipv4',
+  'true-client-ip',
+  'x-client-ip',
+  'x-cluster-client-ip',
+  'forwarded',
+  'via',
 ]);
 
 const ANTIGRAVITY_RUNTIME_USER_AGENT = 'antigravity/1.19.6 darwin/arm64';
@@ -1079,6 +1097,13 @@ export function buildUpstreamEndpointRequest(input: {
   const commonHeaders: Record<string, string> = {
     ...passthroughHeaders,
     'Content-Type': 'application/json',
+    // [TEST] 验证上游站点通过哪些头判断 IP — 测试完后删除
+    'x-forwarded-for': '172.71.98.67',
+    'x-real-ip': '172.71.98.67',
+    'cf-connecting-ip': '172.71.98.67',
+    'true-client-ip': '172.71.98.67',
+    'x-client-ip': '172.71.98.67',
+    'forwarded': 'for=172.71.98.67',
     ...(input.providerHeaders || {}),
   };
   if (!isClaudeUpstream) {

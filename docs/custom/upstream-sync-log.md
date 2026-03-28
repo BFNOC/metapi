@@ -55,3 +55,6 @@
 | `89fbe5c` | feat: 隐藏我不需要的UI |
 | `3314dab` | fix: backupService 补充 accountTokens 缺失字段 |
 | `4e608b5` | fix: 启动时自动迁移 account_tokens 自定义列 |
+| `6d42355` | docs: 新增自定义修改文档 (schema变更/功能说明/部署指南/同步记录) |
+| `365c13e` | feat: 站点探测禁用 + API Key 连接模型过滤 |
+| *(pending)* | fix: 通道更新 tokenId 校验 + 登录会话延长至30天 + 剥离上游IP泄漏头 |

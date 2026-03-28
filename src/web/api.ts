@@ -550,6 +550,8 @@ export const api = {
   probeAccountTokenModelsStream: (tokenId: number, data: Record<string, unknown>, onResult: (r: unknown) => void, signal?: AbortSignal) =>
     streamProbeResults(`/api/account-tokens/${tokenId}/probe-models`, data, onResult, signal),
   getTokenModels: (tokenId: number) => request(`/api/account-tokens/${tokenId}/models`),
+  refreshTokenModels: (tokenId: number) =>
+    request(`/api/account-tokens/${tokenId}/refresh-models`, { method: 'POST', timeoutMs: 30_000 }),
   getTokenModelFilter: (tokenId: number) => request(`/api/account-tokens/${tokenId}/model-filter`),
   updateTokenModelFilter: (tokenId: number, data: { modelFilterMode: string; filteredModels: string[] }) =>
     request(`/api/account-tokens/${tokenId}/model-filter`, { method: 'PUT', body: JSON.stringify(data) }),

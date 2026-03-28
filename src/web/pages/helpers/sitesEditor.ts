@@ -144,3 +144,71 @@ export function buildSiteSaveAction(editor: SiteEditorState, form: SiteSavePaylo
   }
   return { kind: 'add', payload: form };
 }
+
+export function parseBulkCustomHeaders(text: string): {
+  valid: boolean;
+  headers: SiteCustomHeaderField[];
+  error?: string;
+} {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return { valid: false, headers: [], error: '内容不能为空' };
+  }
+
+  // Try JSON object first: {"key": "value", ...}
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { valid: false, headers: [], error: 'JSON 格式无效，需要对象格式 {"key": "value"}' };
+      }
+      const headers: SiteCustomHeaderField[] = Object.entries(parsed as Record<string, unknown>).map(([key, value]) => ({
+        key: key.trim(),
+        value: typeof value === 'string' ? value : String(value ?? ''),
+      }));
+      if (headers.length === 0) {
+        return { valid: false, headers: [], error: 'JSON 对象为空' };
+      }
+      return { valid: true, headers };
+    } catch {
+      return { valid: false, headers: [], error: 'JSON 解析失败，请检查格式' };
+    }
+  }
+
+  // Line-based: "Key: Value" or "Key=Value" per line
+  // Also strips curl -H '...' / -H "..." wrappers
+  const lines = trimmed.split('\n').map((l) => l.trim()).filter(Boolean);
+  const headers: SiteCustomHeaderField[] = [];
+  for (const rawLine of lines) {
+    let line = rawLine;
+    // Strip curl -H prefix: -H 'Header: Value' or -H "Header: Value"
+    const curlMatch = line.match(/^-H\s+['"](.+?)['"]$/);
+    if (curlMatch) {
+      line = curlMatch[1];
+    }
+    // Try "Key: Value" (colon separator, standard HTTP header format)
+    const colonIndex = line.indexOf(':');
+    if (colonIndex > 0) {
+      headers.push({
+        key: line.slice(0, colonIndex).trim(),
+        value: line.slice(colonIndex + 1).trim(),
+      });
+      continue;
+    }
+    // Try "Key=Value"
+    const eqIndex = line.indexOf('=');
+    if (eqIndex > 0) {
+      headers.push({
+        key: line.slice(0, eqIndex).trim(),
+        value: line.slice(eqIndex + 1).trim(),
+      });
+      continue;
+    }
+    return { valid: false, headers: [], error: `无法解析: "${line.slice(0, 60)}"。支持格式: Key: Value 或 Key=Value 或 JSON 对象` };
+  }
+
+  if (headers.length === 0) {
+    return { valid: false, headers: [], error: '未解析出任何请求头' };
+  }
+  return { valid: true, headers };
+}

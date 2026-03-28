@@ -21,6 +21,7 @@ export default function TokenModelsModal({ open, onClose, tokenId, tokenName }: 
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [filterMode, setFilterMode] = useState<FilterMode>('none');
   const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
@@ -106,6 +107,20 @@ export default function TokenModelsModal({ open, onClose, tokenId, tokenName }: 
 
   const clearAll = () => setSelectedModels(new Set());
 
+  const handleRefreshModels = async () => {
+    setRefreshing(true);
+    try {
+      const res = await api.refreshTokenModels(tokenId);
+      const count = res?.totalCount ?? 0;
+      toast.success(res?.message || `已发现 ${count} 个模型`);
+      await loadData();
+    } catch (e: any) {
+      toast.error(e.message || '刷新模型失败');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -158,6 +173,31 @@ export default function TokenModelsModal({ open, onClose, tokenId, tokenName }: 
         </div>
       ) : (
         <>
+          {/* Refresh models button */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            padding: '8px 12px',
+            background: 'color-mix(in srgb, var(--color-info) 8%, var(--color-bg))',
+            border: '1px solid color-mix(in srgb, var(--color-info) 20%, transparent)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: 12,
+            color: 'var(--color-text-secondary)',
+          }}>
+            <span>从上游发现该令牌可用的模型列表，发现后可设置过滤规则。</span>
+            <button
+              type="button"
+              onClick={handleRefreshModels}
+              disabled={refreshing}
+              className="btn btn-primary"
+              style={{ fontSize: 12, padding: '5px 14px', whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              {refreshing ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 刷新中...</> : '刷新模型'}
+            </button>
+          </div>
+
           {/* Filter mode selector */}
           <div style={{
             display: 'flex',

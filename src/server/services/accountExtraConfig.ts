@@ -171,6 +171,16 @@ export function supportsDirectAccountRoutingConnection(account: DirectAccountRou
   return hasCredentialValue(account.apiToken);
 }
 
+/**
+ * Returns true for platforms that use managed tokens (session-based connections
+ * like new-api, one-api, sub2api). For these platforms, model discovery is done
+ * at the token level — not the account level — because each token belongs to a
+ * specific upstream group with its own pricing and model availability.
+ *
+ * This function also gates account-level credential model discovery in
+ * `refreshModelsForAccount()`: when it returns true, account-level discovery
+ * is skipped so only token-level discoveries populate model_availability.
+ */
 export function requiresManagedAccountTokens(account: DirectAccountRoutingInput): boolean {
   const credentialMode = getCredentialModeFromExtraConfig(account.extraConfig);
   if (hasOauthProvider(account.extraConfig)) return false;

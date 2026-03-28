@@ -1097,13 +1097,6 @@ export function buildUpstreamEndpointRequest(input: {
   const commonHeaders: Record<string, string> = {
     ...passthroughHeaders,
     'Content-Type': 'application/json',
-    // [TEST] 验证上游站点通过哪些头判断 IP — 测试完后删除
-    'x-forwarded-for': '172.71.98.67',
-    'x-real-ip': '172.71.98.67',
-    'cf-connecting-ip': '172.71.98.67',
-    'true-client-ip': '172.71.98.67',
-    'x-client-ip': '172.71.98.67',
-    'forwarded': 'for=172.71.98.67',
     ...(input.providerHeaders || {}),
   };
   if (!isClaudeUpstream) {

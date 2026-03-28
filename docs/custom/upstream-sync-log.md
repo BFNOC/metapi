@@ -57,5 +57,7 @@
 | `4e608b5` | fix: 启动时自动迁移 account_tokens 自定义列 |
 | `6d42355` | docs: 新增自定义修改文档 (schema变更/功能说明/部署指南/同步记录) |
 | `365c13e` | feat: 站点探测禁用 + API Key 连接模型过滤 |
-| *(pending)* | fix: 通道更新 tokenId 校验 + 登录会话延长至30天 + 剥离上游IP泄漏头 |
-| *(pending)* | feat: 通道优先级与权重手动配置 — 路由 UI 新增 Priority/Weight 编辑 + 后端校验统一 |
+| `025cf91` | fix: 通道 tokenId 校验优化 + 登录会话延长至30天 + 剥离上游IP泄漏请求头 |
+| `2156154` | feat: 通道优先级与权重手动配置 — 路由 UI 新增 Priority/Weight 编辑 + 后端校验统一 |
+| `2cb16c0` | fix: 修复 Codex 审查发现的 7 项问题 |
+| *(pending)* | refactor: 精简模型发现 — Session 连接跳过账号级发现 + probeDisabled 手动刷新放行 |

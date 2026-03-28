@@ -275,7 +275,7 @@ function shouldRetryModelDiscoveryWithOauthRefresh(error: unknown): boolean {
 
 export async function refreshModelsForAccount(
   accountId: number,
-  options?: { allowInactive?: boolean },
+  options?: { allowInactive?: boolean; ignoreProbeDisabled?: boolean },
 ): Promise<ModelRefreshResult> {
   const row = await db.select().from(schema.accounts)
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
@@ -368,7 +368,7 @@ export async function refreshModelsForAccount(
     return buildSkippedRefreshResult(accountId, 'site_disabled', '站点已禁用');
   }
 
-  if (site.probeDisabled) {
+  if (site.probeDisabled && !options?.ignoreProbeDisabled) {
     return buildSkippedRefreshResult(accountId, 'probe_disabled', '站点已禁用模型探测');
   }
 
@@ -803,10 +803,14 @@ export async function refreshModelsForAccount(
     mergeDiscoveredModels(models, latencyMs);
   };
 
-  // Prefer account-level credential discovery so model availability does not rely on managed tokens.
-  await discoverModelsWithCredential(account.apiToken);
-  await discoverModelsWithCredential(discoveredApiToken);
-  await discoverModelsWithCredential(account.accessToken);
+  // Account-level credential discovery: skip for managed-token platforms where
+  // only token-level models are meaningful (each token maps to a specific group
+  // with different pricing and model availability on the upstream site).
+  if (!usesManagedTokens) {
+    await discoverModelsWithCredential(account.apiToken);
+    await discoverModelsWithCredential(discoveredApiToken);
+    await discoverModelsWithCredential(account.accessToken);
+  }
 
   for (const token of enabledTokens) {
     const startedAt = Date.now();

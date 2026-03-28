@@ -1264,6 +1264,120 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     };
   });
 
+  // ─── Refresh models for a single token: discover from upstream ───
+  app.post<{ Params: { id: string } }>('/api/account-tokens/:id/refresh-models', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) {
+      return reply.code(400).send({ success: false, message: '令牌 ID 无效' });
+    }
+
+    const row = await db.select()
+      .from(schema.accountTokens)
+      .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(eq(schema.accountTokens.id, tokenId))
+      .get();
+    if (!row) {
+      return reply.code(404).send({ success: false, message: '令牌不存在' });
+    }
+
+    const apiToken = (row.account_tokens.token || '').trim();
+    if (!apiToken || isMaskedTokenValue(apiToken)) {
+      return reply.code(400).send({ success: false, message: '该令牌值无效或待补全，无法用于模型发现' });
+    }
+
+    const siteUrl = row.sites.url;
+    if (!siteUrl) {
+      return reply.code(400).send({ success: false, message: '关联站点缺少 URL' });
+    }
+
+    const adapter = getAdapter(row.sites.platform);
+    if (!adapter) {
+      return reply.code(400).send({ success: false, message: `不支持的平台: ${row.sites.platform}` });
+    }
+
+    const platformUserId = resolvePlatformUserId(row.accounts.extraConfig, row.accounts.username);
+    const accountProxyUrl = getProxyUrlFromExtraConfig(row.accounts.extraConfig);
+
+    let models: string[];
+    try {
+      models = await withTimeout(
+        () => withAccountProxyOverride(accountProxyUrl,
+          () => adapter.getModels(siteUrl, apiToken, platformUserId)),
+        20_000,
+        '模型发现超时（20s）',
+      );
+    } catch (err: any) {
+      return reply.code(502).send({
+        success: false,
+        message: err?.message || '上游模型发现失败',
+      });
+    }
+
+    // Normalize and dedup
+    const normalizedModels = Array.from(new Set(
+      models.map((m) => (typeof m === 'string' ? m.trim() : '')).filter((m) => m.length > 0),
+    ));
+
+    if (normalizedModels.length === 0) {
+      return reply.code(200).send({
+        success: true,
+        message: '上游未返回任何模型',
+        models: [],
+        totalCount: 0,
+      });
+    }
+
+    // Clear old records, write new ones
+    const checkedAt = new Date().toISOString();
+    await db.delete(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, tokenId))
+      .run();
+
+    await db.insert(schema.tokenModelAvailability).values(
+      normalizedModels.map((modelName) => ({
+        tokenId,
+        modelName,
+        available: true,
+        latencyMs: null,
+        checkedAt,
+      })),
+    ).run();
+
+    // Also merge into account-level model_availability so AccountModelsModal is consistent
+    const accountId = row.accounts.id;
+    for (const modelName of normalizedModels) {
+      const existing = await db.select()
+        .from(schema.modelAvailability)
+        .where(and(
+          eq(schema.modelAvailability.accountId, accountId),
+          eq(schema.modelAvailability.modelName, modelName),
+        ))
+        .get();
+      if (!existing) {
+        await db.insert(schema.modelAvailability).values({
+          accountId,
+          modelName,
+          available: true,
+          latencyMs: null,
+          checkedAt,
+        }).run();
+      }
+    }
+
+    // Trigger route rebuild best-effort
+    try {
+      await rebuildRoutesBestEffort();
+    } catch {}
+
+    return {
+      success: true,
+      message: `已发现 ${normalizedModels.length} 个模型`,
+      models: normalizedModels.sort((a, b) => a.localeCompare(b)),
+      totalCount: normalizedModels.length,
+    };
+  });
+
   app.delete<{ Params: { id: string } }>('/api/account-tokens/:id', async (request, reply) => {
     const tokenId = Number.parseInt(request.params.id, 10);
     if (Number.isNaN(tokenId)) {

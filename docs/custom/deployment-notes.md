@@ -130,3 +130,43 @@ ALTER TABLE account_tokens ADD COLUMN filtered_models text;
 | `src/web/pages/token-routes/RouteCard.tsx` | Prop 中转更新 |
 | `src/web/pages/TokenRoutes.tsx` | 顶层 `handleChannelSettingsSave` 逻辑 |
 
+## 模型发现优化
+
+自定义镜像对 **Session 连接**（new-api / one-api / sub2api 等 managed-token 平台）的模型发现行为进行了精简：
+
+| 行为 | 官方 | 自定义 |
+|------|------|--------|
+| 账号级全量模型发现 | ✅ 始终执行（用 session token 查站点所有模型） | ❌ 跳过（这些模型不代表实际可用性） |
+| 令牌级模型发现 | ✅ 逐令牌扫描 | ✅ 逐令牌扫描（唯一的发现方式） |
+| AccountModelsModal 显示内容 | 站点全量模型列表 | 各令牌实际可用模型的联合 |
+
+**原因**：Session 连接的每个令牌属于不同的分组（group），分组有各自的模型列表和倍率。站点全量模型列表不反映某个令牌实际能用哪些模型，也不反映价格是否合理。
+
+> **注意**：API Key 直连和 OAuth 连接的发现行为不受影响。
+
+### 涉及文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/server/services/modelService.ts` | `refreshModelsForAccount()` 中 `if (!usesManagedTokens)` 包裹账号级发现 |
+
+## 探测禁用行为 (probeDisabled)
+
+`probeDisabled` 开关的行为已细化：
+
+| 操作 | 是否被 probeDisabled 阻止 |
+|------|--------------------------|
+| 自动定时模型发现 | ✅ 阻止 |
+| 站点探活 (`/api/sites/:id/probe-models`) | ✅ 阻止 |
+| 令牌探活 (`/api/account-tokens/:id/probe-models`) | ✅ 阻止 |
+| **手动刷新模型列表** (`/api/models/check/:accountId`) | ❌ **放行** |
+
+**设计理由**：`probeDisabled` 的初衷是防止自动任务的高频请求触发上游防火墙封 IP。手动刷新模型列表是低频用户操作，且用户明确期望获取结果，不应被阻止。
+
+### 涉及文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/server/services/modelService.ts` | `refreshModelsForAccount()` 新增 `ignoreProbeDisabled` 选项 |
+| `src/server/routes/api/stats.ts` | 手动刷新 API 传入 `{ ignoreProbeDisabled: true }` |
+| `src/web/pages/Sites.tsx` | 提示文案更新为准确描述新行为 |

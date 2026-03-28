@@ -21,6 +21,7 @@ import {
   buildSiteSaveAction,
   emptySiteCustomHeader,
   emptySiteForm,
+  parseBulkCustomHeaders,
   serializeSiteCustomHeaders,
   siteFormFromSite,
   type SiteEditorState,
@@ -522,6 +523,37 @@ export default function Sites() {
     });
   };
 
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [bulkImportText, setBulkImportText] = useState('');
+  const handleBulkImport = () => {
+    const result = parseBulkCustomHeaders(bulkImportText);
+    if (!result.valid) {
+      toast.error(result.error || '解析失败');
+      return;
+    }
+    setForm((prev) => {
+      // Merge: keep existing non-empty headers, append new ones (dedup by key)
+      const existing = prev.customHeaders.filter((h) => h.key.trim().length > 0);
+      const existingKeys = new Set(existing.map((h) => h.key.trim().toLowerCase()));
+      const merged = [...existing];
+      for (const h of result.headers) {
+        const normalizedKey = h.key.trim().toLowerCase();
+        if (existingKeys.has(normalizedKey)) {
+          // Overwrite existing
+          const idx = merged.findIndex((m) => m.key.trim().toLowerCase() === normalizedKey);
+          if (idx >= 0) merged[idx] = h;
+        } else {
+          merged.push(h);
+          existingKeys.add(normalizedKey);
+        }
+      }
+      return { ...prev, customHeaders: merged.length > 0 ? merged : [emptySiteCustomHeader()] };
+    });
+    toast.success(`已导入 ${result.headers.length} 条请求头`);
+    setBulkImportText('');
+    setBulkImportOpen(false);
+  };
+
   const handleDetect = async () => {
     if (!form.url.trim()) {
       toast.error('请先输入 URL');
@@ -900,15 +932,46 @@ export default function Sites() {
               <div style={{ fontSize: 13, fontWeight: 600 }}>
                 站点自定义请求头
               </div>
-              <button
-                type="button"
-                onClick={addCustomHeaderRow}
-                className="btn btn-ghost"
-                style={{ border: '1px solid var(--color-border)' }}
-              >
-                + 添加请求头
-              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setBulkImportOpen((v) => !v)}
+                  className="btn btn-ghost"
+                  style={{ border: '1px solid var(--color-border)' }}
+                >
+                  {bulkImportOpen ? '取消导入' : '批量导入'}
+                </button>
+                <button
+                  type="button"
+                  onClick={addCustomHeaderRow}
+                  className="btn btn-ghost"
+                  style={{ border: '1px solid var(--color-border)' }}
+                >
+                  + 添加
+                </button>
+              </div>
             </div>
+            {bulkImportOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 10, border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>
+                <textarea
+                  placeholder={'支持以下格式粘贴:\n\nKey: Value（每行一条）\n-H \'Key: Value\'（curl 格式）\n{"key": "value"}（JSON 对象）'}
+                  value={bulkImportText}
+                  onChange={(e) => setBulkImportText(e.target.value)}
+                  rows={5}
+                  style={{ ...formInputStyle, fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical', minHeight: 80 }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={handleBulkImport}
+                    className="btn btn-primary"
+                    disabled={!bulkImportText.trim()}
+                  >
+                    解析并导入
+                  </button>
+                </div>
+              </div>
+            )}
             {form.customHeaders.map((header, index) => (
               <div
                 key={`custom-header-${index}`}
@@ -942,7 +1005,7 @@ export default function Sites() {
               </div>
             ))}
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
-              按 key/value 逐条填写。整行留空会自动忽略；同名请求头不允许重复；请求本身显式传入的请求头优先级更高。
+              按 key/value 逐条填写，或点击「批量导入」粘贴多条。整行留空会自动忽略；同名请求头会被覆盖。
             </div>
             {isEditing && (
               <div style={{ marginTop: 16, padding: '14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>
@@ -966,7 +1029,7 @@ export default function Sites() {
                       padding: '2px 8px',
                       borderRadius: 'var(--radius-sm)',
                     }}>
-                      将阻止手动探活、令牌探活和自动模型发现
+                      将阻止自动模型发现和手动/令牌探活，但手动刷新模型列表不受影响
                     </span>
                   )}
                 </div>

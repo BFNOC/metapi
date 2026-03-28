@@ -104,11 +104,31 @@ POST /api/sites/:siteId/probe-models
 
 ## 路由影响
 
-Token 级模型过滤在 `TokenRouter.selectChannel()` 阶段生效：
+Token 级模型过滤在 `rebuildTokenRoutesFromAvailability()` 阶段生效：
 
-1. 路由器筛选匹配 model 的 channel
-2. 对每个 channel，检查其 Token 的 `modelFilterMode`
-3. 根据 allow-list / deny-list 过滤不符合的 channel
-4. 从剩余 channel 中按权重/延迟选择最优
+1. 重建路由时，从 `token_model_availability` 提取可用模型候选
+2. 对每个候选模型，检查站点级过滤 → Token 级过滤 → 全局品牌过滤
+3. 通过所有过滤的模型才会生成路由通道
+4. 最终路由选择时按优先级 → 权重加权随机
 
-这保证了只有明确允许的模型才会被路由到对应的 Token。
+## 模型发现优化
+
+Session 连接（managed-token 平台）的模型发现已精简：**只做令牌级发现，跳过账号级全量发现**。
+
+原因：Session 连接的令牌分属不同分组（group），每个分组有独立的模型列表和倍率。站点级全量模型列表不代表某个令牌实际可用的模型。
+
+| 连接类型 | 模型发现方式 |
+|----------|-------------|
+| Session 连接 | 仅令牌级发现 |
+| API Key 直连 | 账号级发现（不变） |
+| OAuth 连接 | 各 Provider 自己的发现逻辑（不变） |
+
+## probeDisabled 与手动操作
+
+`probeDisabled` 开关的设计目的是防止自动任务触发上游防火墙封 IP。手动操作的行为如下：
+
+| 操作 | probeDisabled=true 时 |
+|------|----------------------|
+| 自动定时模型发现 | ❌ 阻止 |
+| 手动探活（站点/令牌） | ❌ 阻止 |
+| **手动刷新模型列表** | ✅ **放行** |

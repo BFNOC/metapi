@@ -1,4 +1,4 @@
-﻿import { FastifyInstance } from 'fastify';
+import { FastifyInstance } from 'fastify';
 import { db, schema } from '../../db/index.js';
 import { and, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import { refreshModelsForAccount } from '../../services/modelService.js';
@@ -1386,7 +1386,7 @@ export async function statsRoutes(app: FastifyInstance) {
       return { success: false, error: 'Invalid account id' };
     }
 
-    const refresh = await refreshModelsForAccount(accountId);
+    const refresh = await refreshModelsForAccount(accountId, { ignoreProbeDisabled: true });
     const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();
     return { success: true, refresh, rebuild };
   });

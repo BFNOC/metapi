@@ -38,7 +38,7 @@ export default function AccountModelsModal({
     <CenteredModal
       open={modelModal.open}
       onClose={onClose}
-      title={modelModal.siteName ? `模型缓存 · ${modelModal.siteName}` : '模型缓存'}
+      title={modelModal.siteName ? `已发现模型 · ${modelModal.siteName}` : '已发现模型'}
       maxWidth={580}
       footer={(
         <button onClick={onClose} className="btn btn-primary">关闭</button>
@@ -61,7 +61,7 @@ export default function AccountModelsModal({
             fontSize: 12,
             color: 'var(--color-text-muted)',
           }}>
-            此为该站点发现的所有模型缓存（只读），模型过滤（白名单/黑名单）请前往<strong>令牌级</strong>的「模型」管理。
+            此为该连接已发现的模型缓存（只读）。Session 连接仅展示各令牌实际可用的模型合集。模型过滤（白名单/黑名单）请前往<strong>令牌管理</strong>页面操作。
           </div>
 
           {modelModal.models.length === 0 ? (
@@ -136,7 +136,7 @@ export default function AccountModelsModal({
           <div style={{ marginTop: 12, padding: '12px', background: 'var(--color-bg)', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)' }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--color-text-primary)' }}>手动添加模型</div>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8 }}>
-              如果站点支持但未自动发现的模型，可在此手动添加到缓存（多个以英文逗号分隔）。
+              如果上游支持但未自动发现的模型，可在此手动添加（多个以英文逗号分隔）。
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <input

@@ -40,6 +40,35 @@
 
 ---
 
+## 2026-03-29 同步
+
+**上游已审阅到**：`03ca115`（origin/main HEAD）
+
+### Cherry-pick 的 Commit
+
+| Commit | 说明 | 冲突 |
+|--------|------|------|
+| `3bf3cd1` | feat: 新增路由批量禁用/启用功能 (#295) | ⚠️ `tokens.ts` 3处冲突，保留本地增强（tokenId归一化、priority/weight范围校验） |
+
+### 跳过的 Commit（已审阅，不需要）
+
+| Commit | 说明 | 跳过原因 |
+|--------|------|----------|
+| `5ae452a` | [codex] inherit site proxy settings for oauth (#296) | 不需要 OAuth 代理功能 |
+| `4d4684a` | [codex] add proxy debug tracing (#299) | 不需要代理调试追踪，且体量大(+6669行)、migration序号冲突 |
+| `785ee93` | fix gemini oauth validation site proxy (#298) | 依赖 #296，不需要 |
+| `03ca115` | Add OAuth account proxy controls (#307) | 不需要 OAuth 代理功能 |
+
+### 已在之前同步过的（重复）
+
+| 上游 Commit | 本地等价 Commit | 说明 |
+|-------------|----------------|------|
+| `b3387df` | `8959f1a` | #283 JSON 边界修复 |
+| `8ebfc39` | `130be0e` | #284 harness 工程护栏 |
+| `40b8edd` | `4990479` | 清理调试文件 |
+
+---
+
 ## 本地独有 Commit
 
 以下为自定义功能 commit，不在上游中：

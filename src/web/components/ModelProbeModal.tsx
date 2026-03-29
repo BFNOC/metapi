@@ -53,9 +53,9 @@ type SortMode = 'latency' | 'name' | 'status';
 
 export default function ModelProbeModal({ open, onClose, siteId, siteName, initialModels, tokenId, accountId }: Props) {
   const [prompt, setPrompt] = useState(pickRandomPrompt);
-  const [concurrency, setConcurrency] = useState(3);
+  const [concurrency, setConcurrency] = useState(1);
   const [timeoutMs, setTimeoutMs] = useState(15000);
-  const [delayMs, setDelayMs] = useState(1500);
+  const [delayMs, setDelayMs] = useState(2000);
   const [rows, setRows] = useState<ModelRow[]>([]);
   const [probing, setProbing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +93,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
     // Load models for the token (or account)
     setLoadingModels(true);
     if (tokenId) {
-      // Load token's discovered models + white-list filter
+      // Load token's discovered models + filter config
       Promise.all([
         api.getTokenModels(tokenId),
         (api as any).getTokenModelFilter(tokenId),
@@ -103,11 +103,16 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
           : [];
         setAvailableModels(modelList);
 
-        // Pre-select allow-list models if configured
+        // Pre-select based on filter mode
         const mode = filterRes?.modelFilterMode || 'none';
         const filtered: string[] = Array.isArray(filterRes?.filteredModels) ? filterRes.filteredModels : [];
         if (mode === 'allow-list' && filtered.length > 0) {
+          // Whitelist: only select the allowed models
           setSelectedModels(new Set(filtered));
+        } else if (mode === 'deny-list' && filtered.length > 0) {
+          // Blacklist: select all models EXCEPT the denied ones
+          const deniedSet = new Set(filtered.map((m) => m.toLowerCase()));
+          setSelectedModels(new Set(modelList.filter((m) => !deniedSet.has(m.name.toLowerCase())).map((m) => m.name)));
         } else {
           // Default: select all discovered models
           setSelectedModels(new Set(modelList.map((m) => m.name)));
@@ -117,14 +122,36 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
         setSelectedModels(new Set());
       }).finally(() => setLoadingModels(false));
     } else if (accountId) {
-      // API Key connection probe: load account's discovered models
-      api.getAccountModels(accountId)
-        .then((res: any) => {
-          const modelList: AvailableModel[] = Array.isArray(res?.models)
-            ? res.models.map((m: any) => ({ name: String(m.name || m) }))
+      // API Key connection probe: load account's discovered models + site filter
+      Promise.all([
+        api.getAccountModels(accountId),
+        api.getSiteAllowedModels(siteId).catch(() => ({ models: [] })),
+        api.getSiteDisabledModels(siteId).catch(() => ({ models: [] })),
+        api.getSites().catch(() => []),
+      ]).then(([modelsRes, allowedRes, disabledRes, sitesRes]: [any, any, any, any]) => {
+          const modelList: AvailableModel[] = Array.isArray(modelsRes?.models)
+            ? modelsRes.models.map((m: any) => ({ name: String(m.name || m) }))
             : [];
           setAvailableModels(modelList);
-          setSelectedModels(new Set(modelList.map((m) => m.name)));
+
+          // Determine filter mode from site data
+          const site = Array.isArray(sitesRes) ? sitesRes.find((s: any) => s.id === siteId) : null;
+          const filterMode = site?.modelFilterMode || 'deny-list';
+          const allowedModels: string[] = Array.isArray(allowedRes?.models) ? allowedRes.models : [];
+          const disabledModels: string[] = Array.isArray(disabledRes?.models) ? disabledRes.models : [];
+
+          if (filterMode === 'allow-list' && allowedModels.length > 0) {
+            // Whitelist: only select allowed models
+            const allowedSet = new Set(allowedModels.map((m) => m.toLowerCase()));
+            setSelectedModels(new Set(modelList.filter((m) => allowedSet.has(m.name.toLowerCase())).map((m) => m.name)));
+          } else if (filterMode === 'deny-list' && disabledModels.length > 0) {
+            // Blacklist: select all except disabled models
+            const disabledSet = new Set(disabledModels.map((m) => m.toLowerCase()));
+            setSelectedModels(new Set(modelList.filter((m) => !disabledSet.has(m.name.toLowerCase())).map((m) => m.name)));
+          } else {
+            // No filter or empty list: select all
+            setSelectedModels(new Set(modelList.map((m) => m.name)));
+          }
         })
         .catch(() => {
           setAvailableModels([]);

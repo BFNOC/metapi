@@ -1226,6 +1226,38 @@ export async function accountTokensRoutes(app: FastifyInstance) {
           .run();
       }
 
+      // Merge successful models into account-level model_availability so routes can be auto-created
+      const accountId = row.accounts.id;
+      const successfulModels = allResults.filter((r) => r.status === 'ok');
+      for (const r of successfulModels) {
+        const existing = await db.select()
+          .from(schema.modelAvailability)
+          .where(and(
+            eq(schema.modelAvailability.accountId, accountId),
+            eq(schema.modelAvailability.modelName, r.modelName),
+          ))
+          .get();
+        if (!existing) {
+          await db.insert(schema.modelAvailability).values({
+            accountId,
+            modelName: r.modelName,
+            available: true,
+            latencyMs: r.ttftMs,
+            checkedAt: now,
+          }).run();
+        } else if (!existing.available) {
+          await db.update(schema.modelAvailability)
+            .set({ available: true, latencyMs: r.ttftMs, checkedAt: now })
+            .where(eq(schema.modelAvailability.id, existing.id))
+            .run();
+        }
+      }
+
+      // Trigger route rebuild so newly-discovered models get channels automatically
+      if (successfulModels.length > 0) {
+        try { await rebuildRoutesBestEffort(); } catch {}
+      }
+
       return reply;
     }
 
@@ -1259,6 +1291,38 @@ export async function accountTokensRoutes(app: FastifyInstance) {
           },
         })
         .run();
+    }
+
+    // Merge successful models into account-level model_availability so routes can be auto-created
+    const accountId = row.accounts.id;
+    const successfulModels = results.filter((r) => r.status === 'ok');
+    for (const r of successfulModels) {
+      const existing = await db.select()
+        .from(schema.modelAvailability)
+        .where(and(
+          eq(schema.modelAvailability.accountId, accountId),
+          eq(schema.modelAvailability.modelName, r.modelName),
+        ))
+        .get();
+      if (!existing) {
+        await db.insert(schema.modelAvailability).values({
+          accountId,
+          modelName: r.modelName,
+          available: true,
+          latencyMs: r.ttftMs,
+          checkedAt: now,
+        }).run();
+      } else if (!existing.available) {
+        await db.update(schema.modelAvailability)
+          .set({ available: true, latencyMs: r.ttftMs, checkedAt: now })
+          .where(eq(schema.modelAvailability.id, existing.id))
+          .run();
+      }
+    }
+
+    // Trigger route rebuild so newly-discovered models get channels automatically
+    if (successfulModels.length > 0) {
+      try { await rebuildRoutesBestEffort(); } catch {}
     }
 
     return {

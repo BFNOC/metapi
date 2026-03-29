@@ -1240,6 +1240,59 @@ export async function statsRoutes(app: FastifyInstance) {
       });
     }
 
+    // Include allow-list models as candidates even when not in token_model_availability.
+    // This ensures the AddChannelModal shows user-curated models.
+    {
+      const tokenFilterContextRows = await db.select({
+        id: schema.accountTokens.id,
+        tokenName: schema.accountTokens.name,
+        isDefault: schema.accountTokens.isDefault,
+        modelFilterMode: schema.accountTokens.modelFilterMode,
+        filteredModels: schema.accountTokens.filteredModels,
+        accountId: schema.accounts.id,
+        username: schema.accounts.username,
+        siteId: schema.sites.id,
+        siteName: schema.sites.name,
+      }).from(schema.accountTokens)
+        .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
+        .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+        .where(
+          and(
+            eq(schema.accountTokens.enabled, true),
+            eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
+            eq(schema.accounts.status, 'active'),
+            eq(schema.sites.status, 'active'),
+          ),
+        )
+        .all();
+
+      for (const filterRow of tokenFilterContextRows) {
+        const mode = (filterRow.modelFilterMode || 'none').trim();
+        if (mode !== 'allow-list') continue;
+        let allowModels: string[];
+        try { allowModels = JSON.parse(filterRow.filteredModels || '[]'); } catch { allowModels = []; }
+
+        for (const rawModel of allowModels) {
+          const modelName = String(rawModel || '').trim();
+          if (!modelName) continue;
+          const accountModelKey = `${filterRow.accountId}::${modelName.toLowerCase()}`;
+          coveredAccountModelSet.add(accountModelKey);
+
+          if (!result[modelName]) result[modelName] = [];
+          if (result[modelName].some((item) => item.tokenId === filterRow.id)) continue;
+          result[modelName].push({
+            accountId: filterRow.accountId,
+            tokenId: filterRow.id,
+            tokenName: filterRow.tokenName,
+            isDefault: !!filterRow.isDefault,
+            username: filterRow.username,
+            siteId: filterRow.siteId,
+            siteName: filterRow.siteName,
+          });
+        }
+      }
+    }
+
     for (const row of availableModelRows) {
       if (!requiresManagedAccountTokens(row)) continue;
       const modelName = (row.modelName || '').trim();

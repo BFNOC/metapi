@@ -999,18 +999,25 @@ export async function rebuildTokenRoutesFromAvailability() {
     modelFilterMode: schema.accountTokens.modelFilterMode,
     filteredModels: schema.accountTokens.filteredModels,
   }).from(schema.accountTokens).all();
-  const tokenFilterMap = new Map<number, { mode: string; models: Set<string> }>();
+  const tokenFilterMap = new Map<number, { mode: string; models: Set<string>; originalModels: string[] }>();
   for (const row of allTokenFilterRows) {
     const mode = row.modelFilterMode || 'none';
     if (mode === 'none') continue;
     const rawList: string[] = (() => {
       try { return JSON.parse(row.filteredModels || '[]'); } catch { return []; }
     })();
+    const deduped = new Map<string, string>();
+    for (const m of rawList) {
+      const lower = m.toLowerCase();
+      if (!deduped.has(lower)) deduped.set(lower, m);
+    }
     tokenFilterMap.set(row.id, {
       mode,
-      models: new Set(rawList.map((m: string) => m.toLowerCase())),
+      models: new Set(deduped.keys()),
+      originalModels: Array.from(deduped.values()),
     });
   }
+
 
   function isModelFilteredByToken(tokenId: number | null, modelName: string): boolean {
     if (!tokenId) return false;
@@ -1048,10 +1055,10 @@ export async function rebuildTokenRoutesFromAvailability() {
   }
 
   const modelCandidates = new Map<string, Map<string, { accountId: number; tokenId: number | null; sourceModel: string | null }>>();
-  const addModelCandidate = (modelNameRaw: string | null | undefined, accountId: number, tokenId: number | null, siteId: number) => {
+  const addModelCandidate = (modelNameRaw: string | null | undefined, accountId: number, tokenId: number | null, siteId: number, skipSiteFilter = false) => {
     const originalModel = (modelNameRaw || '').trim();
     if (!originalModel) return;
-    if (isModelFilteredBySite(siteId, originalModel)) return;
+    if (!skipSiteFilter && isModelFilteredBySite(siteId, originalModel)) return;
     if (isModelFilteredByToken(tokenId, originalModel)) return;
     if (blockedBrandRules.length > 0 && isModelBlockedByBrand(originalModel, blockedBrandRules)) return;
 
@@ -1074,6 +1081,60 @@ export async function rebuildTokenRoutesFromAvailability() {
   for (const row of accountRows) {
     if (!supportsDirectAccountRoutingConnection(row.accounts)) continue;
     addModelCandidate(row.model_availability.modelName, row.accounts.id, null, row.accounts.siteId);
+  }
+
+  // Third source: allow-list models are treated as direct candidates.
+  // When a token has an allow-list, those models represent the user's curated
+  // selection and should produce route channels regardless of whether upstream
+  // probing has discovered them in token_model_availability.
+  {
+    // Build lookup of usable token → account/site context from already-loaded rows
+    const usableTokenContext = new Map<number, { accountId: number; siteId: number }>();
+    for (const row of usableTokenRows) {
+      if (!usableTokenContext.has(row.account_tokens.id)) {
+        usableTokenContext.set(row.account_tokens.id, {
+          accountId: row.accounts.id,
+          siteId: row.accounts.siteId,
+        });
+      }
+    }
+
+    // For allow-list tokens that have NO entries in token_model_availability
+    // (never probed), we still need their account/site context.
+    // Query enabled tokens with active accounts/sites that use managed tokens.
+    const allEnabledTokenRows = await db.select({
+      tokenId: schema.accountTokens.id,
+      accountId: schema.accounts.id,
+      siteId: schema.accounts.siteId,
+    }).from(schema.accountTokens)
+      .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(
+        and(
+          eq(schema.accountTokens.enabled, true),
+          eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
+          eq(schema.accounts.status, 'active'),
+          eq(schema.sites.status, 'active'),
+        ),
+      )
+      .all();
+    for (const row of allEnabledTokenRows) {
+      if (!usableTokenContext.has(row.tokenId)) {
+        usableTokenContext.set(row.tokenId, {
+          accountId: row.accountId,
+          siteId: row.siteId,
+        });
+      }
+    }
+
+    for (const [tokenId, filter] of tokenFilterMap.entries()) {
+      if (filter.mode !== 'allow-list') continue;
+      const ctx = usableTokenContext.get(tokenId);
+      if (!ctx) continue; // token disabled, account/site inactive, etc.
+      for (const modelName of filter.originalModels) {
+        addModelCandidate(modelName, ctx.accountId, tokenId, ctx.siteId, true);
+      }
+    }
   }
 
   const routes = await db.select().from(schema.tokenRoutes).all();

@@ -150,6 +150,28 @@ ALTER TABLE account_tokens ADD COLUMN filtered_models text;
 |------|------|
 | `src/server/services/modelService.ts` | `refreshModelsForAccount()` 中 `if (!usesManagedTokens)` 包裹账号级发现 |
 
+## 白名单模型自动路由
+
+令牌白名单（`allow-list`）中的模型现在会**直接参与路由重建**，无需依赖上游探测结果（`token_model_availability` 表）。
+
+| 行为 | 官方 | 自定义 |
+|------|------|--------|
+| 路由通道数据源 | 仅 `token_model_availability`（探测结果） | 探测结果 + 白名单模型 |
+| 白名单模型未探测时 | 路由存在但通道为空，需手动添加 | 自动创建通道 |
+| 保存白名单后 | 仅过滤现有通道 | 自动重建路由，增减通道 |
+| 模型映射保存后 | 触发重建但不含白名单模型 | 白名单模型也参与映射和重建 |
+
+**工作流**：探测获取模型 → 配置白名单精选 → 保存后自动创建路由和通道。
+
+> **注意**：黑名单（`deny-list`）和不过滤（`none`）模式行为不变——仍然依赖探测结果，配合过滤器工作。
+
+### 涉及文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/server/services/modelService.ts` | `rebuildTokenRoutesFromAvailability()` 新增白名单作为第三候选数据源 |
+| `src/server/routes/api/stats.ts` | `/api/models/token-candidates` 新增白名单模型到候选列表 |
+
 ## API Key 连接探活
 
 自定义镜像在 **API Key 管理** 页面为每个 API Key 连接新增了「探活」按钮，与令牌管理页面的探活功能对齐。

@@ -345,3 +345,18 @@ export function getAutoReloginConfig(extraConfig?: ExtraConfigInput): {
 
   return { username, passwordCipher };
 }
+
+export function getModelMappingFromExtraConfig(
+  extraConfig?: ExtraConfigInput,
+): Record<string, string> | null {
+  const parsed = parseExtraConfig(extraConfig);
+  const raw = parsed.modelMapping;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string' && value.trim()) {
+      result[key.trim()] = value.trim();
+    }
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}

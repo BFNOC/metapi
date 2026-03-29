@@ -1305,6 +1305,19 @@ export async function accountsRoutes(app: FastifyInstance) {
       });
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, 'modelMapping')) {
+      const baseExtraConfig = typeof updates.extraConfig === 'string'
+        ? updates.extraConfig : account.extraConfig;
+      const rawMapping = body.modelMapping;
+      // null or empty object clears the mapping; otherwise store as-is
+      const normalizedMapping = (rawMapping && typeof rawMapping === 'object' && !Array.isArray(rawMapping) && Object.keys(rawMapping).length > 0)
+        ? rawMapping
+        : undefined;
+      updates.extraConfig = mergeAccountExtraConfig(baseExtraConfig, {
+        modelMapping: normalizedMapping,
+      });
+    }
+
     updates.updatedAt = new Date().toISOString();
     await db.update(schema.accounts).set(updates).where(eq(schema.accounts.id, id)).run();
 
@@ -1607,5 +1620,43 @@ export async function accountsRoutes(app: FastifyInstance) {
       return reply.code(500).send({ success: false, message: err?.message || '保存失败' });
     }
   });
-}
 
+  // DELETE manual model from account
+  app.delete<{ Params: { id: string }; Body: { model: string } }>('/api/accounts/:id/models/manual', async (request, reply) => {
+    const accountId = parseInt(request.params.id, 10);
+    if (!Number.isFinite(accountId) || accountId <= 0) {
+      return reply.code(400).send({ message: '账号 ID 无效' });
+    }
+
+    const modelName = String(request.body?.model || '').trim();
+    if (!modelName) {
+      return reply.code(400).send({ message: '模型名不能为空' });
+    }
+
+    try {
+      const existing = await db.select().from(schema.modelAvailability)
+        .where(and(
+          eq(schema.modelAvailability.accountId, accountId),
+          eq(schema.modelAvailability.modelName, modelName),
+        ))
+        .get();
+
+      if (!existing) {
+        return reply.code(404).send({ message: '模型不存在' });
+      }
+      if (!existing.isManual) {
+        return reply.code(400).send({ message: '仅允许删除手动添加的模型' });
+      }
+
+      await db.delete(schema.modelAvailability)
+        .where(eq(schema.modelAvailability.id, existing.id))
+        .run();
+
+      await rebuildRoutesBestEffort();
+
+      return { success: true };
+    } catch (err: any) {
+      return reply.code(500).send({ success: false, message: err?.message || '删除失败' });
+    }
+  });
+}

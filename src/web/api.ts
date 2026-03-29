@@ -524,6 +524,7 @@ export const api = {
   refreshBalance: (id: number) => request(`/api/accounts/${id}/balance`, { method: 'POST' }),
   getAccountModels: (id: number) => request(`/api/accounts/${id}/models`),
   addAccountAvailableModels: (accountId: number, models: string[]) => request(`/api/accounts/${accountId}/models/manual`, { method: 'POST', body: JSON.stringify({ models }) }),
+  deleteAccountManualModel: (accountId: number, model: string) => request(`/api/accounts/${accountId}/models/manual`, { method: 'DELETE', body: JSON.stringify({ model }) }),
   refreshAccountHealth: (data?: { accountId?: number; wait?: boolean }) => request('/api/accounts/health/refresh', {
     method: 'POST',
     body: JSON.stringify(data || {}),

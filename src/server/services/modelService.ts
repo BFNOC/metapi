@@ -10,6 +10,7 @@ import {
 } from './accountTokenService.js';
 import {
   getCredentialModeFromExtraConfig,
+  getModelMappingFromExtraConfig,
   getProxyUrlFromExtraConfig,
   mergeAccountExtraConfig,
   requiresManagedAccountTokens,
@@ -1021,16 +1022,45 @@ export async function rebuildTokenRoutesFromAvailability() {
     return false;
   }
 
-  const modelCandidates = new Map<string, Map<string, { accountId: number; tokenId: number | null }>>();
+  // Build per-account reverse model mapping: upstreamModel → requestModel
+  // e.g. 「阿里」glm-5 → glm-5, so routes expose user-facing names
+  const accountReverseMappings = new Map<number, Map<string, string>>();
+  const accountIdsSeen = new Set<number>();
+  const allAccountRows: typeof accountRows[number]['accounts'][] = [];
+  for (const row of accountRows) {
+    if (!accountIdsSeen.has(row.accounts.id)) { accountIdsSeen.add(row.accounts.id); allAccountRows.push(row.accounts); }
+  }
+  for (const row of usableTokenRows) {
+    if (!accountIdsSeen.has(row.accounts.id)) { accountIdsSeen.add(row.accounts.id); allAccountRows.push(row.accounts); }
+  }
+  for (const acc of allAccountRows) {
+    const mapping = getModelMappingFromExtraConfig(acc.extraConfig);
+    if (!mapping) continue;
+    const reverse = new Map<string, string>();
+    for (const [requestName, upstreamName] of Object.entries(mapping)) {
+      reverse.set(upstreamName.toLowerCase(), requestName);
+    }
+    if (reverse.size > 0) accountReverseMappings.set(acc.id, reverse);
+  }
+
+  const modelCandidates = new Map<string, Map<string, { accountId: number; tokenId: number | null; sourceModel: string | null }>>();
   const addModelCandidate = (modelNameRaw: string | null | undefined, accountId: number, tokenId: number | null, siteId: number) => {
-    const modelName = (modelNameRaw || '').trim();
-    if (!modelName) return;
-    if (isModelFilteredBySite(siteId, modelName)) return;
-    if (isModelFilteredByToken(tokenId, modelName)) return;
-    if (blockedBrandRules.length > 0 && isModelBlockedByBrand(modelName, blockedBrandRules)) return;
-    if (!modelCandidates.has(modelName)) modelCandidates.set(modelName, new Map());
+    const originalModel = (modelNameRaw || '').trim();
+    if (!originalModel) return;
+    if (isModelFilteredBySite(siteId, originalModel)) return;
+    if (isModelFilteredByToken(tokenId, originalModel)) return;
+    if (blockedBrandRules.length > 0 && isModelBlockedByBrand(originalModel, blockedBrandRules)) return;
+
+    // Apply reverse model mapping: if account maps "glm-5" → "「阿里」glm-5",
+    // then when we see "「阿里」glm-5" in availability, expose it as "glm-5" in routes
+    const reverseMap = accountReverseMappings.get(accountId);
+    const mappedName = reverseMap?.get(originalModel.toLowerCase());
+    const routeModelName = mappedName || originalModel;
+    const sourceModel = mappedName ? originalModel : null;
+
+    if (!modelCandidates.has(routeModelName)) modelCandidates.set(routeModelName, new Map());
     const candidateKey = `${accountId}:${tokenId ?? 'account'}`;
-    modelCandidates.get(modelName)!.set(candidateKey, { accountId, tokenId });
+    modelCandidates.get(routeModelName)!.set(candidateKey, { accountId, tokenId, sourceModel });
   };
 
   for (const row of usableTokenRows) {
@@ -1080,6 +1110,7 @@ export async function rebuildTokenRoutesFromAvailability() {
         routeId: route.id,
         accountId: candidate.accountId,
         tokenId: candidate.tokenId,
+        sourceModel: candidate.sourceModel,
         priority: 0,
         weight: 10,
         enabled: true,

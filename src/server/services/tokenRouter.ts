@@ -10,6 +10,7 @@ import {
 } from './routeRoutingStrategy.js';
 import { type DownstreamRoutingPolicy, EMPTY_DOWNSTREAM_ROUTING_POLICY } from './downstreamPolicyTypes.js';
 import { isUsableAccountToken } from './accountTokenService.js';
+import { getModelMappingFromExtraConfig } from './accountExtraConfig.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import {
   isExactTokenRouteModelPattern,
@@ -1003,10 +1004,11 @@ function isModelAliasEquivalent(left: string, right: string): boolean {
 function channelSupportsRequestedModel(channelSourceModel: string | null | undefined, requestedModel: string): boolean {
   const source = (channelSourceModel || '').trim();
   if (!source) return true;
-  if (source === requestedModel) return true;
-  if (isModelAliasEquivalent(source, requestedModel)) return true;
-  if (matchesModelPattern(requestedModel, source)) return true;
-  return false;
+
+
+
+  // sourceModel set = channel explicitly placed on route (model-mapping).
+  return true;
 }
 
 function isModelAllowedByDownstreamPolicy(requestedModel: string, policy: DownstreamRoutingPolicy): boolean {
@@ -1065,10 +1067,18 @@ function resolveActualModelForSelectedChannel(
   route: RouteRow,
   mappedModel: string,
   channelSourceModel: string | null | undefined,
+  accountExtraConfig?: string | null,
 ): string {
   const sourceModel = normalizeChannelSourceModel(channelSourceModel);
-  if (isRouteDisplayNameMatch(requestedModel, route.displayName) && sourceModel) {
+  // If the channel has an explicit sourceModel (set by model mapping during route build,
+  // or by display-name/group routing), always use it as the upstream model.
+  if (sourceModel) {
     return sourceModel;
+  }
+  // Fallback: apply account-level model mapping at runtime (for channels without sourceModel)
+  const accountMapping = getModelMappingFromExtraConfig(accountExtraConfig);
+  if (accountMapping) {
+    return resolveMappedModel(mappedModel, accountMapping);
   }
   return mappedModel;
 }
@@ -1486,6 +1496,7 @@ export class TokenRouter {
         match.route,
         mappedModel,
         selected.channel.sourceModel,
+        selected.account.extraConfig,
       );
       summary.push(`全局轮询：可用 ${ordered.length}，忽略优先级`);
       summary.push(`最终选择：${selectedLabel}`);
@@ -1590,6 +1601,7 @@ export class TokenRouter {
       match.route,
       mappedModel,
       selected.channel.sourceModel,
+      selected.account.extraConfig,
     );
     summary.push(`最终选择：${selectedLabel}（P${selectedPriority}）`);
     if (actualModel !== mappedModel) {
@@ -1808,6 +1820,7 @@ export class TokenRouter {
         match.route,
         mappedModel,
         selected.channel.sourceModel,
+        selected.account.extraConfig,
       );
 
       return {
@@ -1856,6 +1869,7 @@ export class TokenRouter {
         match.route,
         mappedModel,
         selected.channel.sourceModel,
+        selected.account.extraConfig,
       );
 
       return {
@@ -1918,6 +1932,7 @@ export class TokenRouter {
       match.route,
       mappedModel,
       selected.channel.sourceModel,
+      selected.account.extraConfig,
     );
 
     return {

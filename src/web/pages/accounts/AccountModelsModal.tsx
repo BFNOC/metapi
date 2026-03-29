@@ -24,6 +24,7 @@ type AccountModelsModalProps = {
   onRefresh: () => Promise<void> | void;
   onManualInputChange: (value: string) => void;
   onAddManualModels: () => Promise<void> | void;
+  onDeleteManualModel?: (modelName: string) => Promise<void> | void;
 };
 
 export default function AccountModelsModal({
@@ -33,6 +34,7 @@ export default function AccountModelsModal({
   onRefresh,
   onManualInputChange,
   onAddManualModels,
+  onDeleteManualModel,
 }: AccountModelsModalProps) {
   return (
     <CenteredModal
@@ -124,7 +126,20 @@ export default function AccountModelsModal({
                       </span>
                     ) : null}
                     {model.isManual ? (
-                      <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0, padding: '0 4px' }}>手动</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                        <span className="badge badge-info" style={{ fontSize: 10, padding: '0 4px' }}>手动</span>
+                        {onDeleteManualModel && (
+                          <button
+                            type="button"
+                            onClick={() => void onDeleteManualModel(model.name)}
+                            className="btn btn-link btn-link-danger"
+                            style={{ padding: '2px 4px', fontSize: 12, lineHeight: 1 }}
+                            title="删除此手动模型"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </span>
                     ) : null}
                   </div>
                 ))}

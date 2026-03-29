@@ -14,6 +14,7 @@ import SiteBadgeLink from '../components/SiteBadgeLink.js';
 import AccountModelsModal from './accounts/AccountModelsModal.js';
 import ModelProbeModal from '../components/ModelProbeModal.js';
 import SiteModelsModal from '../components/SiteModelsModal.js';
+import ModelMappingModal from '../components/ModelMappingModal.js';
 import {
   buildAddAccountPrereqHint,
   buildVerifyFailureHint,
@@ -150,6 +151,7 @@ export default function Accounts() {
   const [probeTarget, setProbeTarget] = useState<{ id: number; name: string; accountId?: number; accountName?: string } | null>(null);
   const [probeInitialModels, setProbeInitialModels] = useState<string[] | undefined>(undefined);
   const [modelFilterTarget, setModelFilterTarget] = useState<{ siteId: number; siteName: string; modelFilterMode?: string | null } | null>(null);
+  const [mappingTarget, setMappingTarget] = useState<{ accountId: number; accountName: string; mapping: Record<string, string> | null; availableModels: string[]; loadingModels: boolean } | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRebindTargetRef = useRef<any | null>(null);
@@ -1748,6 +1750,23 @@ export default function Accounts() {
                             )}
                             {connectionMode === 'apikey' && (
                               <button
+                                onClick={() => {
+                                  const target = { accountId: a.id, accountName: resolveAccountDisplayName(a), mapping: parseAccountExtraConfig(a)?.modelMapping || null, availableModels: [] as string[], loadingModels: true };
+                                  setMappingTarget(target);
+                                  api.getAccountModels(a.id).then((result: any) => {
+                                    const models = Array.isArray(result?.models) ? result.models.map((m: any) => m.name as string).sort() : [];
+                                    setMappingTarget((prev) => prev && prev.accountId === a.id ? { ...prev, availableModels: models, loadingModels: false } : prev);
+                                  }).catch(() => {
+                                    setMappingTarget((prev) => prev && prev.accountId === a.id ? { ...prev, loadingModels: false } : prev);
+                                  });
+                                }}
+                                className="btn btn-link btn-link-primary"
+                              >
+                                模型映射
+                              </button>
+                            )}
+                            {connectionMode === 'apikey' && (
+                              <button
                                 onClick={() => setProbeTarget({ id: a.siteId, name: a.site?.name || resolveAccountDisplayName(a), accountId: a.id, accountName: resolveAccountDisplayName(a) })}
                                 className="btn btn-link btn-link-info"
                               >
@@ -2067,6 +2086,23 @@ export default function Accounts() {
                             )}
                             {connectionMode === 'apikey' && (
                               <button
+                                onClick={() => {
+                                  const target = { accountId: a.id, accountName: resolveAccountDisplayName(a), mapping: parseAccountExtraConfig(a)?.modelMapping || null, availableModels: [] as string[], loadingModels: true };
+                                  setMappingTarget(target);
+                                  api.getAccountModels(a.id).then((result: any) => {
+                                    const models = Array.isArray(result?.models) ? result.models.map((m: any) => m.name as string).sort() : [];
+                                    setMappingTarget((prev) => prev && prev.accountId === a.id ? { ...prev, availableModels: models, loadingModels: false } : prev);
+                                  }).catch(() => {
+                                    setMappingTarget((prev) => prev && prev.accountId === a.id ? { ...prev, loadingModels: false } : prev);
+                                  });
+                                }}
+                                className="btn btn-link btn-link-primary"
+                              >
+                                模型映射
+                              </button>
+                            )}
+                            {connectionMode === 'apikey' && (
+                              <button
                                 onClick={() => setProbeTarget({ id: a.siteId, name: a.site?.name || resolveAccountDisplayName(a), accountId: a.id, accountName: resolveAccountDisplayName(a) })}
                                 className="btn btn-link btn-link-info"
                               >
@@ -2129,6 +2165,16 @@ export default function Accounts() {
         }}
         onManualInputChange={(value) => setModelModal((state) => ({ ...state, manualModelsInput: value }))}
         onAddManualModels={handleAddManualModels}
+        onDeleteManualModel={async (modelName) => {
+          if (!modelModal.account) return;
+          try {
+            await api.deleteAccountManualModel(modelModal.account.id, modelName);
+            toast.success(`已删除手动模型: ${modelName}`);
+            await loadModelModalModels(modelModal.account, { refreshUpstream: false });
+          } catch (e: any) {
+            toast.error(e.message || '删除失败');
+          }
+        }}
       />
 
       {probeTarget && (
@@ -2148,6 +2194,20 @@ export default function Accounts() {
         siteId={modelFilterTarget?.siteId || 0}
         siteName={modelFilterTarget?.siteName || ''}
         currentFilterMode={modelFilterTarget?.modelFilterMode}
+      />
+
+      <ModelMappingModal
+        open={!!mappingTarget}
+        onClose={() => { setMappingTarget(null); void load(); }}
+        accountName={mappingTarget?.accountName || ''}
+        initialMapping={mappingTarget?.mapping || null}
+        availableModels={mappingTarget?.availableModels || []}
+        loadingModels={mappingTarget?.loadingModels || false}
+        onSave={async (mapping) => {
+          if (!mappingTarget) return;
+          await api.updateAccount(mappingTarget.accountId, { modelMapping: mapping });
+          toast.success(mapping ? '模型映射已保存' : '模型映射已清除');
+        }}
       />
 
     </div>

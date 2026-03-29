@@ -790,10 +790,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: 'Site not found' });
     }
 
-    // Guard: block probing if site has probe disabled
-    if (existingSite.probeDisabled) {
-      return reply.code(423).send({ error: '该站点已禁用模型探测功能，请在站点设置中关闭此选项后重试' });
-    }
+
 
     // Get API token: prefer site.apiKey, then fall back to first active account's apiToken or first accountToken
     let apiToken: string | null = existingSite.apiKey || null;

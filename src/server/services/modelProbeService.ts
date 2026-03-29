@@ -17,6 +17,7 @@ export type ProbeInput = {
   concurrency: number;
   timeoutMs: number;
   delayMs: number;
+  signal?: AbortSignal;
 };
 
 export type ProbeCallbacks = {
@@ -45,10 +46,29 @@ async function probeSingleModel(
   modelName: string,
   prompt: string,
   timeoutMs: number,
+  externalSignal?: AbortSignal,
 ): Promise<ProbeResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const startTime = Date.now();
+
+  // Track whether abort was caused by external signal (client disconnect)
+  // vs internal timeout — avoids race window when checking externalSignal.aborted
+  let abortedByExternal = false;
+  let cleanupExternalSignal = () => {};
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      abortedByExternal = true;
+      controller.abort();
+    } else {
+      const abortHandler = () => {
+        abortedByExternal = true;
+        controller.abort();
+      };
+      externalSignal.addEventListener('abort', abortHandler, { once: true });
+      cleanupExternalSignal = () => externalSignal.removeEventListener('abort', abortHandler);
+    }
+  }
 
   try {
     const normalizedBase = siteUrl.replace(/\/+$/, '');
@@ -67,7 +87,6 @@ async function probeSingleModel(
     });
 
     if (!response.ok) {
-      clearTimeout(timer);
       let errorBody: string | null = null;
       try {
         const raw = await response.text();
@@ -97,7 +116,6 @@ async function probeSingleModel(
 
     const reader = response.body?.getReader();
     if (!reader) {
-      clearTimeout(timer);
       return {
         modelName,
         status: 'error',
@@ -127,8 +145,6 @@ async function probeSingleModel(
       reader.releaseLock();
     }
 
-    clearTimeout(timer);
-
     const responseText = extractSseContentTokens(rawStream) || null;
 
     return {
@@ -140,8 +156,18 @@ async function probeSingleModel(
       responseText,
     };
   } catch (error: any) {
-    clearTimeout(timer);
+    // Distinguish external abort (client disconnect) from timeout
     if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') {
+      if (abortedByExternal) {
+        return {
+          modelName,
+          status: 'error',
+          ttftMs: Date.now() - startTime,
+          httpStatus: null,
+          error: 'Client disconnected',
+          responseText: null,
+        };
+      }
       return {
         modelName,
         status: 'timeout',
@@ -159,6 +185,9 @@ async function probeSingleModel(
       error: error?.message || 'Unknown error',
       responseText: null,
     };
+  } finally {
+    clearTimeout(timer);
+    cleanupExternalSignal();
   }
 }
 
@@ -171,6 +200,7 @@ export async function probeModels(input: ProbeInput, callbacks?: ProbeCallbacks)
     concurrency = 3,
     timeoutMs = 15000,
     delayMs = 0,
+    signal,
   } = input;
 
   const clampedConcurrency = Math.max(1, Math.min(10, concurrency));
@@ -179,13 +209,20 @@ export async function probeModels(input: ProbeInput, callbacks?: ProbeCallbacks)
   const results: ProbeResult[] = [];
 
   for (let offset = 0; offset < modelNames.length; offset += clampedConcurrency) {
+    // Stop probing if the caller (client) disconnected
+    if (signal?.aborted) break;
+
     if (offset > 0 && clampedDelay > 0) {
       await new Promise((resolve) => setTimeout(resolve, clampedDelay));
     }
+
+    // Re-check after delay
+    if (signal?.aborted) break;
+
     const batch = modelNames.slice(offset, offset + clampedConcurrency);
     const batchResults = await Promise.all(
       batch.map((modelName) =>
-        probeSingleModel(siteUrl, apiToken, modelName, prompt, clampedTimeout),
+        probeSingleModel(siteUrl, apiToken, modelName, prompt, clampedTimeout, signal),
       ),
     );
     for (const r of batchResults) {

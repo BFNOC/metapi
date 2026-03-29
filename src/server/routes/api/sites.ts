@@ -887,6 +887,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     const streamMode = request.headers.accept?.includes('text/event-stream');
 
     if (streamMode) {
+      // Abort probe when client disconnects (e.g. browser window closed)
+      const probeController = new AbortController();
+      request.raw.on('close', () => probeController.abort());
+
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -901,13 +905,18 @@ export async function sitesRoutes(app: FastifyInstance) {
         concurrency: request.body?.concurrency || 3,
         timeoutMs: request.body?.timeoutMs || 15000,
         delayMs: request.body?.delayMs || 0,
+        signal: probeController.signal,
       }, {
         onResult(r) {
-          reply.raw.write(`data: ${JSON.stringify(r)}\n\n`);
+          if (!probeController.signal.aborted) {
+            reply.raw.write(`data: ${JSON.stringify(r)}\n\n`);
+          }
         },
       });
 
-      reply.raw.write('data: [DONE]\n\n');
+      if (!probeController.signal.aborted) {
+        reply.raw.write('data: [DONE]\n\n');
+      }
       reply.raw.end();
       return reply;
     }

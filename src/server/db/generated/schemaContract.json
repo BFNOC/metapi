@@ -355,6 +355,12 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "excluded_site_ids": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },

@@ -550,7 +550,29 @@ function SiteExclusionPanel({
     );
   }
 
-  if (sites.length === 0) return null;
+  if (sites.length === 0 && selectedCount === 0) return null;
+
+  // If sites failed to load but there are existing exclusions, let user clear them
+  if (sites.length === 0 && selectedCount > 0) {
+    return (
+      <div className="downstream-key-modal-field downstream-key-modal-field-full">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <div>
+            <div className="downstream-key-modal-label" style={{ marginBottom: 0 }}>站点黑名单</div>
+            <div className="downstream-key-modal-help" style={{ marginTop: 2, color: 'var(--color-warning)' }}>站点列表加载失败，当前有 {selectedCount} 个排除项。</div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ border: '1px solid var(--color-border)', fontSize: 12 }}
+            onClick={() => onChange([])}
+          >
+            清空排除
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="downstream-key-modal-field downstream-key-modal-field-full">

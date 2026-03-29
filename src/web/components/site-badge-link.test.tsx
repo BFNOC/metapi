@@ -31,4 +31,33 @@ describe('SiteBadgeLink', () => {
 
     root.unmount();
   });
+
+  it('renders an external link when siteUrl is provided', () => {
+    const root = create(
+      <MemoryRouter>
+        <SiteBadgeLink siteId={7} siteName="Demo Site" siteUrl="https://api.example.com" />
+      </MemoryRouter>,
+    );
+
+    const link = root.root.findByType('a');
+    expect(link.props.href).toBe('https://api.example.com');
+    expect(link.props.target).toBe('_blank');
+    expect(link.props.rel).toContain('noopener');
+    expect(root.root.findByProps({ className: 'badge badge-muted' }).children.join('')).toContain('Demo Site');
+
+    root.unmount();
+  });
+
+  it('falls back to internal link when siteUrl is empty', () => {
+    const root = create(
+      <MemoryRouter>
+        <SiteBadgeLink siteId={7} siteName="Demo Site" siteUrl="" />
+      </MemoryRouter>,
+    );
+
+    const link = root.root.findByType('a');
+    expect(String(link.props.href || '')).toContain('/sites?focusSiteId=7');
+
+    root.unmount();
+  });
 });

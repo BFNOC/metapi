@@ -72,6 +72,9 @@ type RouteCardProps = {
   onCreateTokenForMissing: (accountId: number, modelName: string) => void;
   // Add channel
   onAddChannel: (routeId: number) => void;
+  // Reset priority
+  onResetPriority: (routeId: number) => void;
+  resettingPriority: boolean;
   // Site block model
   onSiteBlockModel: (channelId: number, routeId: number) => void;
   // Source group expansion
@@ -118,6 +121,8 @@ function RouteCardInner({
   missingTokenGroupItems,
   onCreateTokenForMissing,
   onAddChannel,
+  onResetPriority,
+  resettingPriority,
   onSiteBlockModel,
   expandedSourceGroupMap,
   onToggleSourceGroup,
@@ -467,13 +472,25 @@ function RouteCardInner({
           </div>
         ) : <div />}
         {!readOnlyRoute && !channelManagementDisabled && (
-          <button
-            onClick={() => onAddChannel(route.id)}
-            className="btn btn-ghost"
-            style={{ fontSize: 12, padding: '6px 10px', color: 'var(--color-primary)', border: '1px solid var(--color-border)', whiteSpace: compact ? 'normal' : 'nowrap', width: compact ? '100%' : 'auto' }}
-          >
-            + {tr('添加通道')}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', width: compact ? '100%' : 'auto' }}>
+            {channels && channels.length > 0 && channels.some((c) => (c.priority ?? 0) > 0) && (
+              <button
+                onClick={() => onResetPriority(route.id)}
+                disabled={resettingPriority || savingPriority}
+                className="btn btn-ghost"
+                style={{ fontSize: 12, padding: '6px 10px', color: 'var(--color-warning, #e67700)', border: '1px solid var(--color-border)', whiteSpace: compact ? 'normal' : 'nowrap', flex: compact ? '1 1 0' : undefined }}
+              >
+                {resettingPriority ? <><span className="spinner spinner-sm" /> {tr('重置中...')}</> : tr('重置优先级')}
+              </button>
+            )}
+            <button
+              onClick={() => onAddChannel(route.id)}
+              className="btn btn-ghost"
+              style={{ fontSize: 12, padding: '6px 10px', color: 'var(--color-primary)', border: '1px solid var(--color-border)', whiteSpace: compact ? 'normal' : 'nowrap', flex: compact ? '1 1 0' : undefined }}
+            >
+              + {tr('添加通道')}
+            </button>
+          </div>
         )}
       </div>
 

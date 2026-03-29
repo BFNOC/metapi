@@ -135,6 +135,7 @@ export default function TokenRoutes() {
 
   const [updatingChannel, setUpdatingChannel] = useState<Record<number, boolean>>({});
   const [savingPriorityByRoute, setSavingPriorityByRoute] = useState<Record<number, boolean>>({});
+  const [resettingPriorityByRoute, setResettingPriorityByRoute] = useState<Record<number, boolean>>({});
   const [updatingRoutingStrategyByRoute, setUpdatingRoutingStrategyByRoute] = useState<Record<number, boolean>>({});
 
   const [decisionByRoute, setDecisionByRoute] = useState<Record<number, RouteDecision | null>>({});
@@ -1054,6 +1055,33 @@ export default function TokenRoutes() {
     }
   };
 
+  const handleResetPriority = async (routeId: number) => {
+    if (resettingPriorityByRoute[routeId]) return;
+    setResettingPriorityByRoute((prev) => ({ ...prev, [routeId]: true }));
+    try {
+      await api.resetRouteChannelPriority(routeId);
+      toast.success(tr('已重置所有通道优先级为 P0'));
+      await loadChannels(routeId, true);
+
+      const route = routeSummaries.find((r) => r.id === routeId);
+      if (route && isRouteExactModel(route)) {
+        try {
+          const res = await api.getRouteDecision(route.modelPattern);
+          setDecisionByRoute((prev) => ({
+            ...prev,
+            [routeId]: (res?.decision || null) as RouteDecision | null,
+          }));
+        } catch {
+          // ignore route decision refresh failures
+        }
+      }
+    } catch (e: any) {
+      toast.error(e.message || tr('重置优先级失败'));
+    } finally {
+      setResettingPriorityByRoute((prev) => ({ ...prev, [routeId]: false }));
+    }
+  };
+
   const handleSiteBlockModel = async (channelId: number, routeId: number) => {
     const channels = channelsByRouteId[routeId] || [];
     const channel = channels.find((c) => c.id === channelId);
@@ -1264,6 +1292,12 @@ export default function TokenRoutes() {
   handleSiteBlockModelRef.current = handleSiteBlockModel;
   const stableSiteBlockModel = useCallback(
     (channelId: number, routeId: number) => handleSiteBlockModelRef.current(channelId, routeId),
+    [],
+  );
+  const handleResetPriorityRef = useRef(handleResetPriority);
+  handleResetPriorityRef.current = handleResetPriority;
+  const stableResetPriority = useCallback(
+    (routeId: number) => handleResetPriorityRef.current(routeId),
     [],
   );
 
@@ -1637,6 +1671,8 @@ export default function TokenRoutes() {
                     missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
                     onCreateTokenForMissing={stableCreateTokenForMissing}
                     onAddChannel={stableAddChannel}
+                    onResetPriority={stableResetPriority}
+                    resettingPriority={!!resettingPriorityByRoute[route.id]}
                     onSiteBlockModel={stableSiteBlockModel}
                     expandedSourceGroupMap={expandedSourceGroupMap}
                     onToggleSourceGroup={stableToggleSourceGroup}
@@ -1673,6 +1709,8 @@ export default function TokenRoutes() {
               missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
               onCreateTokenForMissing={stableCreateTokenForMissing}
               onAddChannel={stableAddChannel}
+              onResetPriority={stableResetPriority}
+              resettingPriority={!!resettingPriorityByRoute[route.id]}
               onSiteBlockModel={stableSiteBlockModel}
               expandedSourceGroupMap={expandedSourceGroupMap}
               onToggleSourceGroup={stableToggleSourceGroup}

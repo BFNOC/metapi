@@ -1325,6 +1325,31 @@ export async function tokensRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
+  // Reset all channel priorities for a route to 0 (weight-based scheduling)
+  app.post<{ Params: { id: string } }>('/api/routes/:id/channels/reset-priority', async (request, reply) => {
+    const routeId = parseInt(request.params.id, 10);
+    if (!Number.isFinite(routeId) || routeId <= 0) {
+      return reply.code(400).send({ success: false, message: '无效的路由 ID' });
+    }
+
+    const route = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, routeId)).get();
+    if (!route) {
+      return reply.code(404).send({ success: false, message: '路由不存在' });
+    }
+
+    // Set-based update: reset all channels under this route to priority 0
+    const result = await db.update(schema.routeChannels)
+      .set({ priority: 0 })
+      .where(eq(schema.routeChannels.routeId, routeId))
+      .run();
+
+    await clearRouteDecisionSnapshot(routeId);
+    await clearDependentExplicitGroupSnapshotsBySourceRouteIds([routeId]);
+    invalidateTokenRouterCache();
+
+    return { success: true, updatedCount: result.changes ?? 0 };
+  });
+
   // Rebuild routes/channels from model availability.
   app.post<{ Body?: { refreshModels?: boolean; wait?: boolean } }>('/api/routes/rebuild', async (request, reply) => {
     const body = (request.body || {}) as { refreshModels?: boolean };

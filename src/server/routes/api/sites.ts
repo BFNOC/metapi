@@ -8,6 +8,7 @@ import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
 import { getSub2ApiSubscriptionFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { probeModels, type ProbeResult } from '../../services/modelProbeService.js';
+import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 
 function normalizeSiteStatus(input: unknown): 'active' | 'disabled' | null {
   if (input === undefined || input === null) return null;
@@ -485,11 +486,20 @@ export async function sitesRoutes(app: FastifyInstance) {
       throw error;
     }
 
-    if (body.status !== undefined && normalizedStatus) {
+    if (body.status !== undefined && normalizedStatus && normalizedStatus !== existingSite.status) {
       await applySiteStatusSideEffects(id, existingSite.name, normalizedStatus);
     }
 
     invalidateSiteCaches();
+
+    // Rebuild routes if any topology-affecting field changed
+    const topologyChanged = (
+      (body.status !== undefined && normalizedStatus && normalizedStatus !== existingSite.status)
+      || (body.modelFilterMode !== undefined && normalizedModelFilterMode !== existingSite.modelFilterMode)
+    );
+    if (topologyChanged) {
+      await routeRefreshWorkflow.rebuildRoutesBestEffort();
+    }
 
     return await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
   });
@@ -499,6 +509,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     const id = parseInt(request.params.id);
     await db.delete(schema.sites).where(eq(schema.sites.id, id)).run();
     invalidateSiteCaches();
+    await routeRefreshWorkflow.rebuildRoutesBestEffort();
     return { success: true };
   });
 
@@ -550,6 +561,13 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
 
     invalidateSiteCaches();
+
+    // Rebuild routes if any status or delete changes occurred
+    const needsRebuild = ['enable', 'disable', 'delete'].includes(action) && successIds.length > 0;
+    if (needsRebuild) {
+      await routeRefreshWorkflow.rebuildRoutesBestEffort();
+    }
+
     return {
       success: true,
       successIds,
@@ -605,6 +623,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
 
     invalidateSiteCaches();
+    await routeRefreshWorkflow.rebuildRoutesBestEffort();
     return { siteId: id, models: uniqueModels };
   });
 
@@ -715,6 +734,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     });
 
     invalidateSiteCaches();
+    await routeRefreshWorkflow.rebuildRoutesBestEffort();
     return { siteId: id, models: uniqueModels, modelFilterMode: normalizedMode || existingSite.modelFilterMode || 'deny-list' };
   });
 
@@ -770,6 +790,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     });
 
     invalidateSiteCaches();
+    await routeRefreshWorkflow.rebuildRoutesBestEffort();
     return { siteId: id, modelFilterMode: normalizedMode, models: uniqueModels };
   });
 

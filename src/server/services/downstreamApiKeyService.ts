@@ -23,6 +23,7 @@ export type DownstreamApiKeyPolicyView = {
   supportedModels: string[];
   allowedRouteIds: number[];
   siteWeightMultipliers: Record<number, number>;
+  excludedSiteIds: number[];
   lastUsedAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
@@ -196,6 +197,25 @@ export function normalizeSiteWeightMultipliersInput(input: unknown): Record<numb
   return result;
 }
 
+export function normalizeExcludedSiteIdsInput(input: unknown): number[] {
+  const rawValues = Array.isArray(input)
+    ? input
+    : (typeof input === 'string' ? (() => { try { const p = JSON.parse(input); return Array.isArray(p) ? p : []; } catch { return []; } })()
+      : []);
+
+  const siteIds: number[] = [];
+  for (const item of rawValues) {
+    const n = Number(item);
+    if (!Number.isFinite(n)) continue;
+    const normalized = Math.trunc(n);
+    if (normalized <= 0 || siteIds.includes(normalized)) continue;
+    siteIds.push(normalized);
+    if (siteIds.length >= 500) break;
+  }
+
+  return siteIds;
+}
+
 export function matchesDownstreamModelPattern(model: string, pattern: string): boolean {
   const normalizedPattern = (pattern || '').trim();
   if (!normalizedPattern) return false;
@@ -259,6 +279,7 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
   const supportedModels = normalizeSupportedModelsInput(parseJson(row.supportedModels));
   const allowedRouteIds = normalizeAllowedRouteIdsInput(parseJson(row.allowedRouteIds));
   const siteWeightMultipliers = normalizeSiteWeightMultipliersInput(parseJson(row.siteWeightMultipliers));
+  const excludedSiteIds = normalizeExcludedSiteIdsInput(parseJson(row.excludedSiteIds));
 
   return {
     id: row.id,
@@ -277,17 +298,19 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
     supportedModels,
     allowedRouteIds,
     siteWeightMultipliers,
+    excludedSiteIds,
     lastUsedAt: row.lastUsedAt || null,
     createdAt: row.createdAt || null,
     updatedAt: row.updatedAt || null,
   };
 }
 
-export function toPolicyFromView(view: Pick<DownstreamApiKeyPolicyView, 'supportedModels' | 'allowedRouteIds' | 'siteWeightMultipliers'>): DownstreamRoutingPolicy {
+export function toPolicyFromView(view: Pick<DownstreamApiKeyPolicyView, 'supportedModels' | 'allowedRouteIds' | 'siteWeightMultipliers' | 'excludedSiteIds'>): DownstreamRoutingPolicy {
   return {
     supportedModels: normalizeSupportedModelsInput(view.supportedModels),
     allowedRouteIds: normalizeAllowedRouteIdsInput(view.allowedRouteIds),
     siteWeightMultipliers: normalizeSiteWeightMultipliersInput(view.siteWeightMultipliers),
+    excludedSiteIds: normalizeExcludedSiteIdsInput(view.excludedSiteIds),
     denyAllWhenEmpty: true,
   };
 }
@@ -437,6 +460,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
   supportedModels?: unknown;
   allowedRouteIds?: unknown;
   siteWeightMultipliers?: unknown;
+  excludedSiteIds?: unknown;
 }) {
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   const key = typeof input.key === 'string' ? input.key.trim() : '';
@@ -464,6 +488,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
   const supportedModels = normalizeSupportedModelsInput(input.supportedModels);
   const allowedRouteIds = normalizeAllowedRouteIdsInput(input.allowedRouteIds);
   const siteWeightMultipliers = normalizeSiteWeightMultipliersInput(input.siteWeightMultipliers);
+  const excludedSiteIds = normalizeExcludedSiteIdsInput(input.excludedSiteIds);
 
   return {
     name,
@@ -478,6 +503,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
     supportedModels,
     allowedRouteIds,
     siteWeightMultipliers,
+    excludedSiteIds,
   };
 }
 

@@ -120,6 +120,13 @@
       "when": 1774489488426,
       "tag": "0017_model_filter_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1774770699359,
+      "tag": "0018_excluded_site_ids",
+      "breakpoints": true
     }
   ]
 }

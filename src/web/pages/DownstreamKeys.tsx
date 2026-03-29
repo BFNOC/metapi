@@ -42,6 +42,7 @@ type DownstreamApiKeyItem = {
   supportedModels: string[];
   allowedRouteIds: number[];
   siteWeightMultipliers: Record<number, number>;
+  excludedSiteIds: number[];
   lastUsedAt: string | null;
 };
 
@@ -69,6 +70,7 @@ type EditorForm = {
   selectedModels: string[];
   selectedGroupRouteIds: number[];
   siteWeightMultipliersText: string;
+  excludedSiteIds: number[];
 };
 
 type DeleteConfirmState =
@@ -323,6 +325,7 @@ function buildEditorForm(
     selectedModels: uniqStrings(selectedModels),
     selectedGroupRouteIds: uniqIds(selectedGroupRouteIds),
     siteWeightMultipliersText: JSON.stringify(item?.siteWeightMultipliers || {}, null, 2),
+    excludedSiteIds: Array.isArray(item?.excludedSiteIds) ? item.excludedSiteIds : [],
   };
 }
 
@@ -508,6 +511,112 @@ function InlineToggle({
   );
 }
 
+type SiteListItem = { id: number; name: string; url: string; platform: string; status: string };
+
+function SiteExclusionPanel({
+  excludedSiteIds,
+  onChange,
+}: {
+  excludedSiteIds: number[];
+  onChange: (ids: number[]) => void;
+}) {
+  const [sites, setSites] = useState<SiteListItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getSites().then((res: any) => {
+      if (cancelled) return;
+      const rawList = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
+      const items: SiteListItem[] = rawList
+        .map((s: any) => ({ id: Number(s.id), name: String(s.name || ''), url: String(s.url || ''), platform: String(s.platform || ''), status: String(s.status || '') }))
+        .filter((s: SiteListItem) => s.id > 0)
+        .sort((a: SiteListItem, b: SiteListItem) => a.id - b.id);
+      setSites(items);
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+    return () => { cancelled = true; };
+  }, []);
+
+  const excludedSet = useMemo(() => new Set(excludedSiteIds), [excludedSiteIds]);
+  const selectedCount = excludedSiteIds.length;
+
+  if (!loaded) {
+    return (
+      <div className="downstream-key-modal-field downstream-key-modal-field-full">
+        <div className="downstream-key-modal-label">站点黑名单</div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>加载站点列表…</div>
+      </div>
+    );
+  }
+
+  if (sites.length === 0) return null;
+
+  return (
+    <div className="downstream-key-modal-field downstream-key-modal-field-full">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <div>
+          <div className="downstream-key-modal-label" style={{ marginBottom: 0 }}>站点黑名单</div>
+          <div className="downstream-key-modal-help" style={{ marginTop: 2 }}>勾选的站点将被此密钥完全排除，请求不会路由到这些站点的任何通道。</div>
+        </div>
+        {selectedCount > 0 ? (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ border: '1px solid var(--color-border)', fontSize: 12 }}
+            onClick={() => onChange([])}
+          >
+            清空
+          </button>
+        ) : null}
+      </div>
+      <div className="downstream-key-modal-meta" style={{ marginTop: 4 }}>
+        已排除 {selectedCount} 个站点
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+        {sites.map((site) => {
+          const checked = excludedSet.has(site.id);
+          return (
+            <label
+              key={site.id}
+              title={`${site.platform} · ${site.url}${site.status !== 'active' ? ` (${site.status})` : ''}`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                cursor: 'pointer',
+                padding: '5px 10px',
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 600,
+                border: `1px solid ${checked ? 'var(--color-danger)' : 'var(--color-border-light)'}`,
+                background: checked ? 'color-mix(in srgb, var(--color-danger) 10%, var(--color-bg-card))' : 'var(--color-bg-card)',
+                color: checked ? 'var(--color-danger)' : 'var(--color-text-primary)',
+                transition: 'background 0.15s, border-color 0.15s, color 0.15s',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => {
+                  if (checked) {
+                    onChange(excludedSiteIds.filter((id) => id !== site.id));
+                  } else {
+                    onChange([...excludedSiteIds, site.id]);
+                  }
+                }}
+                style={{ accentColor: 'var(--color-danger)', width: 13, height: 13 }}
+              />
+              {site.name}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function EditorModal({
   open,
   editingItem,
@@ -593,7 +702,7 @@ function EditorModal({
       open={open}
       onClose={onClose}
       title={editingItem ? '编辑下游密钥' : '新增下游密钥'}
-      maxWidth={860}
+      maxWidth={960}
       bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
       footer={(
         <>
@@ -705,6 +814,11 @@ function EditorModal({
               />
               <div className="downstream-key-modal-help">用于对特定站点做分发倍率微调；留空或 `{}` 表示走默认倍率。</div>
             </div>
+
+            <SiteExclusionPanel
+              excludedSiteIds={form.excludedSiteIds}
+              onChange={(excludedSiteIds) => onChange((prev) => ({ ...prev, excludedSiteIds }))}
+            />
 
             <div className="downstream-key-advanced-grid" style={{ gridTemplateColumns: '1fr' }}>
               <div className="downstream-key-advanced-panel">
@@ -917,6 +1031,7 @@ export default function DownstreamKeys() {
         supportedModels: raw?.supportedModels ?? item.supportedModels,
         allowedRouteIds: raw?.allowedRouteIds ?? item.allowedRouteIds,
         siteWeightMultipliers: raw?.siteWeightMultipliers ?? item.siteWeightMultipliers,
+        excludedSiteIds: raw?.excludedSiteIds ?? item.excludedSiteIds,
         lastUsedAt: raw?.lastUsedAt ?? item.lastUsedAt,
       };
     })
@@ -1125,6 +1240,7 @@ export default function DownstreamKeys() {
         supportedModels: uniqStrings(editorForm.selectedModels),
         allowedRouteIds: uniqIds(editorForm.selectedGroupRouteIds).filter((id) => routeMap.has(id) && isGroupRouteOption(routeMap.get(id)!)),
         siteWeightMultipliers,
+        excludedSiteIds: editorForm.excludedSiteIds,
       };
       if (editingId) {
         await api.updateDownstreamApiKey(editingId, payload);

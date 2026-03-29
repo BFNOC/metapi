@@ -888,6 +888,7 @@ type CandidateEligibilityOptions = {
   requestedModel: string;
   bypassSourceModelCheck?: boolean;
   excludeChannelIds?: number[];
+  excludedSiteIds?: number[];
   nowIso?: string;
 };
 
@@ -1286,6 +1287,7 @@ export class TokenRouter {
       match,
       requestedModel,
       normalizedPreferredChannelId,
+      downstreamPolicy,
       excludeChannelIds,
     );
   }
@@ -1402,6 +1404,7 @@ export class TokenRouter {
         requestedModel,
         bypassSourceModelCheck,
         excludeChannelIds,
+        excludedSiteIds: downstreamPolicy.excludedSiteIds,
         nowIso,
       });
 
@@ -1802,6 +1805,7 @@ export class TokenRouter {
         requestedModel,
         bypassSourceModelCheck,
         excludeChannelIds,
+        excludedSiteIds: downstreamPolicy.excludedSiteIds,
         nowIso,
       }).length === 0
     ));
@@ -1891,6 +1895,7 @@ export class TokenRouter {
     match: RouteMatch,
     requestedModel: string,
     preferredChannelId: number,
+    downstreamPolicy: DownstreamRoutingPolicy,
     excludeChannelIds: number[] = [],
     recordSelection = true,
   ): Promise<SelectedChannel | null> {
@@ -1909,6 +1914,7 @@ export class TokenRouter {
         requestedModel,
         bypassSourceModelCheck,
         excludeChannelIds,
+        excludedSiteIds: downstreamPolicy.excludedSiteIds,
         nowIso,
       }).length === 0
     ));
@@ -2021,6 +2027,7 @@ export class TokenRouter {
     const reasonParts: string[] = [];
     const bypassSourceModelCheck = options.bypassSourceModelCheck ?? false;
     const excludeChannelIds = options.excludeChannelIds ?? [];
+    const excludedSiteIds = options.excludedSiteIds ?? [];
     const nowIso = options.nowIso ?? new Date().toISOString();
 
     if (!bypassSourceModelCheck && !channelSupportsRequestedModel(candidate.channel.sourceModel, options.requestedModel)) {
@@ -2043,6 +2050,10 @@ export class TokenRouter {
 
     if (excludeChannelIds.includes(candidate.channel.id)) {
       reasonParts.push('当前请求已尝试');
+    }
+
+    if (excludedSiteIds.length > 0 && excludedSiteIds.includes(candidate.site.id)) {
+      reasonParts.push('站点被下游密钥排除');
     }
 
     const tokenValue = this.resolveChannelTokenValue(candidate);

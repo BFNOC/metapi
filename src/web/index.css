@@ -3388,8 +3388,7 @@ textarea {
   background: var(--color-bg-card);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
-  width: min(90vw, 500px);
-  max-width: 500px;
+  width: 90vw;
   max-height: calc(100vh - 32px);
   margin: auto;
   overflow-y: auto;

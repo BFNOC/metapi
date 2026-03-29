@@ -133,6 +133,7 @@ describe('downstreamApiKeyService', () => {
       supportedModels: ['gpt-4o-mini'],
       allowedRouteIds: [claudeGroup.id],
       siteWeightMultipliers: {},
+      excludedSiteIds: [],
     };
 
     expect(service.isModelAllowedByPolicy('claude-4-6-group', policy)).toBe(false);
@@ -147,6 +148,7 @@ describe('downstreamApiKeyService', () => {
       supportedModels: [],
       allowedRouteIds: [],
       siteWeightMultipliers: {},
+      excludedSiteIds: [],
       denyAllWhenEmpty: true,
     };
 
@@ -164,6 +166,7 @@ describe('downstreamApiKeyService', () => {
       supportedModels: [],
       allowedRouteIds: [virtualModelGroup.id],
       siteWeightMultipliers: {},
+      excludedSiteIds: [],
     };
 
     expect(await service.isModelAllowedByPolicyOrAllowedRoutes('claude-opus-4-6', policy)).toBe(true);
@@ -181,6 +184,7 @@ describe('downstreamApiKeyService', () => {
       supportedModels: [],
       allowedRouteIds: [aliasRoute.id],
       siteWeightMultipliers: {},
+      excludedSiteIds: [],
     };
 
     expect(await service.isModelAllowedByPolicyOrAllowedRoutes('claude-opus-4-6', policy)).toBe(true);

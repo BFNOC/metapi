@@ -18,6 +18,7 @@ export type SummaryItem = {
   supportedModels: string[];
   allowedRouteIds: number[];
   siteWeightMultipliers: Record<number, number>;
+  excludedSiteIds: number[];
   lastUsedAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;

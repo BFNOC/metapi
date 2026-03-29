@@ -1001,13 +1001,17 @@ function isModelAliasEquivalent(left: string, right: string): boolean {
   return !!a && !!b && a === b;
 }
 
+
 function channelSupportsRequestedModel(channelSourceModel: string | null | undefined, requestedModel: string): boolean {
   const source = (channelSourceModel || '').trim();
   if (!source) return true;
-
-
-
-  // sourceModel set = channel explicitly placed on route (model-mapping).
+  // Exact match or alias/pattern match
+  if (source === requestedModel) return true;
+  if (isModelAliasEquivalent(source, requestedModel)) return true;
+  if (matchesModelPattern(requestedModel, source)) return true;
+  // When sourceModel differs from the route name, the channel was deliberately
+  // placed here by model-mapping (e.g. sourceModel='「阿里」glm-5' on route 'glm-5').
+  // The route builder already validated this relationship, so allow it.
   return true;
 }
 

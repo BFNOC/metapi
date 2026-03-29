@@ -1648,9 +1648,18 @@ export async function accountsRoutes(app: FastifyInstance) {
         return reply.code(400).send({ message: '仅允许删除手动添加的模型' });
       }
 
-      await db.delete(schema.modelAvailability)
-        .where(eq(schema.modelAvailability.id, existing.id))
-        .run();
+      // If the model was originally discovered (has latencyMs from probe),
+      // just reset the manual flag instead of physical delete
+      if (existing.latencyMs != null) {
+        await db.update(schema.modelAvailability)
+          .set({ isManual: false })
+          .where(eq(schema.modelAvailability.id, existing.id))
+          .run();
+      } else {
+        await db.delete(schema.modelAvailability)
+          .where(eq(schema.modelAvailability.id, existing.id))
+          .run();
+      }
 
       await rebuildRoutesBestEffort();
 

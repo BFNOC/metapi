@@ -1038,6 +1038,10 @@ export async function rebuildTokenRoutesFromAvailability() {
     if (!mapping) continue;
     const reverse = new Map<string, string>();
     for (const [requestName, upstreamName] of Object.entries(mapping)) {
+      // Skip pattern keys (wildcards, regex) — these are runtime-only mappings
+      // and should NOT produce route names (they'd appear in /v1/models as garbage)
+      if (requestName.includes('*') || requestName.startsWith('re:') || requestName.startsWith('^')) continue;
+      if (typeof upstreamName !== 'string' || !upstreamName.trim()) continue;
       reverse.set(upstreamName.toLowerCase(), requestName);
     }
     if (reverse.size > 0) accountReverseMappings.set(acc.id, reverse);
@@ -1100,11 +1104,22 @@ export async function rebuildTokenRoutesFromAvailability() {
     const desiredKeys = new Set(Array.from(candidateMap.keys()));
 
     for (const [candidateKey, candidate] of candidateMap.entries()) {
-      const exists = routeChannels.some((channel) => (
+      const existingChannel = routeChannels.find((channel) => (
         channel.accountId === candidate.accountId
         && (channel.tokenId ?? null) === candidate.tokenId
       ));
-      if (exists) continue;
+      if (existingChannel) {
+        // Backfill sourceModel when mapping is added/changed after channel was created
+        const currentSource = existingChannel.sourceModel || null;
+        const desiredSource = candidate.sourceModel || null;
+        if (currentSource !== desiredSource) {
+          await db.update(schema.routeChannels)
+            .set({ sourceModel: desiredSource })
+            .where(eq(schema.routeChannels.id, existingChannel.id))
+            .run();
+        }
+        continue;
+      }
 
       const inserted = await db.insert(schema.routeChannels).values({
         routeId: route.id,

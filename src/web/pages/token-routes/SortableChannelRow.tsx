@@ -8,6 +8,68 @@ import {
 } from './tokenBindingPresentation.js';
 import { getChannelDecisionState, getPriorityTagStyle, getProbabilityColor } from './utils.js';
 import { ChannelSettingsPanel } from './ChannelSettingsPanel.js';
+import type { RouteDecisionCandidate } from '../../../shared/tokenRouteContract.js';
+
+function RuntimeHealthBadges({ health }: { health: RouteDecisionCandidate['runtimeHealth'] }) {
+  if (!health) return null;
+  const badges: JSX.Element[] = [];
+
+  if (health.globalBreakerOpen || health.modelBreakerOpen) {
+    const label = health.globalBreakerOpen ? '站点熔断' : '模型熔断';
+    badges.push(
+      <span
+        key="breaker"
+        className="badge"
+        style={{
+          fontSize: 10,
+          background: 'color-mix(in srgb, var(--color-danger) 15%, transparent)',
+          color: 'var(--color-danger)',
+        }}
+        data-tooltip={`${label}中 — 错误连续触发熔断保护，暂时不会被选中`}
+      >
+        🔴 {label}
+      </span>,
+    );
+  }
+
+  const multiplier = Number(health.combinedMultiplier) || 0;
+  const penalty = Number(health.penaltyScore) || 0;
+
+  if (multiplier < 0.5 && !health.globalBreakerOpen && !health.modelBreakerOpen) {
+    badges.push(
+      <span
+        key="multiplier"
+        className="badge"
+        style={{
+          fontSize: 10,
+          background: 'color-mix(in srgb, var(--color-warning) 15%, transparent)',
+          color: 'var(--color-warning)',
+        }}
+        data-tooltip={`错误健康乘子 ×${multiplier.toFixed(2)}（仅错误驱动：penalty=${penalty.toFixed(1)}）`}
+      >
+        ⚠ 降权 ×{multiplier.toFixed(2)}
+      </span>,
+    );
+  }
+
+  if (health.latencyEmaMs != null) {
+    const latencyText = health.latencyEmaMs >= 1000
+      ? `${(health.latencyEmaMs / 1000).toFixed(1)}s`
+      : `${Math.round(health.latencyEmaMs)}ms`;
+    badges.push(
+      <span
+        key="latency"
+        className="badge badge-muted"
+        style={{ fontSize: 10 }}
+        data-tooltip={`延迟 EMA ${Math.round(health.latencyEmaMs)}ms — 仅展示，不参与路由决策`}
+      >
+        ⏱ {latencyText}
+      </span>,
+    );
+  }
+
+  return badges.length > 0 ? <>{badges}</> : null;
+}
 
 export function SortableChannelRow({
   channel,
@@ -245,6 +307,8 @@ export function SortableChannelRow({
                 </span>
               </div>
 
+              <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} />
+
               {!readOnly && (
                 <button
                   type="button"
@@ -420,6 +484,8 @@ export function SortableChannelRow({
             <span style={{ color: 'var(--color-text-muted)', margin: '0 2px' }}>/</span>
             <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>{channel.failCount || 0}</span>
           </span>
+
+          <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} />
         </div>
       </div>
 

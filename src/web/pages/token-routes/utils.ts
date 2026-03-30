@@ -267,6 +267,22 @@ export function getChannelDecisionState(
 
   const probability = Number(candidate.probability || 0);
   if (probability <= 0) {
+    if (candidate.runtimeHealth?.globalBreakerOpen) {
+      return {
+        probability: 0,
+        showBar: false,
+        reasonText: '站点熔断中',
+        reasonColor: 'var(--color-danger)',
+      };
+    }
+    if (candidate.runtimeHealth?.modelBreakerOpen) {
+      return {
+        probability: 0,
+        showBar: false,
+        reasonText: '模型熔断中',
+        reasonColor: 'var(--color-danger)',
+      };
+    }
     if (candidate.recentlyFailed) {
       return {
         probability: 0,

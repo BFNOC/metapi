@@ -18,7 +18,7 @@ import { getAdapter } from '../../services/platforms/index.js';
 import { getCredentialModeFromExtraConfig, getProxyUrlFromExtraConfig, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { probeModels, type ProbeResult } from '../../services/modelProbeService.js';
-import { withAccountProxyOverride } from '../../services/siteProxy.js';
+import { withAccountProxyOverride, resolveChannelProxyUrl, getDispatcherForProxyUrl } from '../../services/siteProxy.js';
 import { type ModelRefreshResult } from '../../services/modelService.js';
 import {
   type CoverageBatchRebuildResult,
@@ -1123,6 +1123,9 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
 
 
+    // Resolve site-level proxy dispatcher so probe requests honour the configured proxy
+    const probeProxyUrl = resolveChannelProxyUrl(row.sites, row.accounts.extraConfig);
+    const probeDispatcher = probeProxyUrl ? getDispatcherForProxyUrl(probeProxyUrl) : undefined;
 
     let modelNames: string[] = [];
     const requestedModels = request.body?.modelNames;
@@ -1190,6 +1193,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         timeoutMs: request.body?.timeoutMs || 15000,
         delayMs: request.body?.delayMs || 0,
         signal: probeController.signal,
+        dispatcher: probeDispatcher,
       }, {
         onResult(r) {
           allResults.push(r);
@@ -1269,6 +1273,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       concurrency: request.body?.concurrency || 3,
       timeoutMs: request.body?.timeoutMs || 15000,
       delayMs: request.body?.delayMs || 0,
+      dispatcher: probeDispatcher,
     });
 
     // Write probe results back to token_model_availability

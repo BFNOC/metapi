@@ -153,8 +153,9 @@ describe('TokenRouter runtime cache', () => {
       .where(eq(schema.routeChannels.id, channel.id))
       .get();
     const firstCooldownMs = Date.parse(String(firstRecord?.cooldownUntil || '')) - firstStartedAt;
-    expect(firstCooldownMs).toBeGreaterThanOrEqual(10_000);
-    expect(firstCooldownMs).toBeLessThanOrEqual(20_000);
+    // FAILURE_BACKOFF_BASE_SEC=60, consecutiveFailCount=1 → fib(1)=1 → 60s
+    expect(firstCooldownMs).toBeGreaterThanOrEqual(55_000);
+    expect(firstCooldownMs).toBeLessThanOrEqual(65_000);
 
     const secondStartedAt = Date.now();
     await router.recordFailure(channel.id);
@@ -162,8 +163,9 @@ describe('TokenRouter runtime cache', () => {
       .where(eq(schema.routeChannels.id, channel.id))
       .get();
     const secondCooldownMs = Date.parse(String(secondRecord?.cooldownUntil || '')) - secondStartedAt;
-    expect(secondCooldownMs).toBeGreaterThanOrEqual(10_000);
-    expect(secondCooldownMs).toBeLessThanOrEqual(20_000);
+    // consecutiveFailCount=2 → fib(2)=1 → 60s
+    expect(secondCooldownMs).toBeGreaterThanOrEqual(55_000);
+    expect(secondCooldownMs).toBeLessThanOrEqual(65_000);
 
     const thirdStartedAt = Date.now();
     await router.recordFailure(channel.id);
@@ -171,8 +173,9 @@ describe('TokenRouter runtime cache', () => {
       .where(eq(schema.routeChannels.id, channel.id))
       .get();
     const thirdCooldownMs = Date.parse(String(thirdRecord?.cooldownUntil || '')) - thirdStartedAt;
-    expect(thirdCooldownMs).toBeGreaterThanOrEqual(25_000);
-    expect(thirdCooldownMs).toBeLessThanOrEqual(35_000);
+    // consecutiveFailCount=3 → fib(3)=2 → 120s
+    expect(thirdCooldownMs).toBeGreaterThanOrEqual(115_000);
+    expect(thirdCooldownMs).toBeLessThanOrEqual(125_000);
   });
 
   it('round robins across all available channels regardless of priority', async () => {

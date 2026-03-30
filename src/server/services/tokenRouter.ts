@@ -49,6 +49,7 @@ interface SelectedChannel {
 
 type FailureAwareChannel = {
   failCount?: number | null;
+  consecutiveFailCount?: number | null;
   lastFailAt?: string | null;
 };
 
@@ -70,24 +71,20 @@ type SiteRuntimeHealthState = {
   lastSuccessAtMs: number | null;
 };
 
-const FAILURE_BACKOFF_BASE_SEC = 15;
+const FAILURE_BACKOFF_BASE_SEC = 60;              // Aggressive: 60s base (was 15s), uses consecutiveFailCount now
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
 const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
 const SITE_RUNTIME_HEALTH_DECAY_HALF_LIFE_MS = 10 * 60 * 1000;
-const SITE_RUNTIME_MIN_MULTIPLIER = 0.08;
-const SITE_RUNTIME_LATENCY_BASELINE_MS = 800;    // Penalize sites with latency above 800ms (was 2500)
-const SITE_RUNTIME_LATENCY_WINDOW_MS = 8_000;     // Full penalty applied at 8.8s latency (was 32.5s)
-const SITE_RUNTIME_MAX_LATENCY_PENALTY = 0.65;    // Max 65% penalty for slow runtime latency (was 35%)
+const SITE_RUNTIME_MIN_MULTIPLIER = 0.02;          // Aggressive: near-zero floor (was 0.08)
+// Latency constants — observability only, NOT used in routing weight calculation
 const SITE_RUNTIME_LATENCY_EMA_ALPHA = 0.3;
 const SITE_RUNTIME_BREAKER_STREAK_THRESHOLD = 3;
-const SITE_RUNTIME_BREAKER_LEVELS_MS = [0, 60_000, 5 * 60_000, 30 * 60 * 1000] as const;
+const SITE_RUNTIME_BREAKER_LEVELS_MS = [0, 3 * 60_000, 15 * 60_000, 60 * 60_000] as const; // Aggressive: 3m/15m/60m (was 1m/5m/30m)
 const SITE_TRANSIENT_STREAK_WINDOW_MS = 5 * 60 * 1000;
-const SITE_HISTORICAL_HEALTH_MIN_MULTIPLIER = 0.45;
+const SITE_HISTORICAL_HEALTH_MIN_MULTIPLIER = 0.15; // Aggressive: lower floor (was 0.45)
 const SITE_HISTORICAL_HEALTH_MAX_SAMPLE = 24;
-const SITE_HISTORICAL_LATENCY_BASELINE_MS = 800;  // Penalize sites with historical avg above 800ms (was 2000)
-const SITE_HISTORICAL_LATENCY_WINDOW_MS = 8_000;  // Full penalty applied at 8.8s avg latency (was 22s)
-const SITE_HISTORICAL_MAX_LATENCY_PENALTY = 0.55; // Max 55% penalty for slow historical latency (was 18%)
+// Historical latency constants removed — health is purely error-driven
 const SITE_RUNTIME_HEALTH_SETTING_KEY = 'token_router_site_runtime_health_v1';
 const SITE_RUNTIME_HEALTH_PERSIST_DEBOUNCE_MS = 500;
 const SITE_RUNTIME_HEALTH_PERSIST_STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -144,6 +141,11 @@ const SITE_TRANSIENT_FAILURE_PATTERNS: RegExp[] = [
   /connection\s+refused/i,
   /econnreset/i,
   /econnrefused/i,
+  // Charity proxy pool exhaustion patterns
+  /号池见底/i,
+  /无可用渠道/i,
+  /insufficient\s+quota/i,
+  /quota\s+exceeded/i,
 ];
 
 type SiteRuntimeHealthPersistencePayload = {
@@ -239,8 +241,12 @@ function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {
     return 2.2;
   }
 
+  if (status === 402) {
+    return 5.0; // Quota exhausted — near-permanent, heavy penalty
+  }
+
   if (status === 401 || status === 403) {
-    return 1.8;
+    return 4.0; // Aggressive: auth/forbidden errors hit hard (was 1.8)
   }
 
   if (matchesAnyPattern(SITE_PROTOCOL_FAILURE_PATTERNS, errorText)) {
@@ -265,7 +271,7 @@ function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {
 function isTransientSiteRuntimeFailure(context: SiteRuntimeFailureContext = {}): boolean {
   const status = typeof context.status === 'number' ? context.status : 0;
   const errorText = (context.errorText || '').trim();
-  return status >= 500 || status === 429 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText);
+  return status >= 500 || status === 429 || status === 402 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText);
 }
 
 function getDecayedSiteRuntimePenalty(state: SiteRuntimeHealthState, nowMs: number): number {
@@ -370,15 +376,8 @@ function getRuntimeHealthMultiplier(state: SiteRuntimeHealthState | null | undef
   }
   const penaltyScore = getDecayedSiteRuntimePenalty(state, nowMs);
   const failurePenaltyFactor = 1 / (1 + penaltyScore);
-  const latencyPenaltyRatio = state.latencyEmaMs == null
-    ? 0
-    : clampNumber(
-      (state.latencyEmaMs - SITE_RUNTIME_LATENCY_BASELINE_MS) / SITE_RUNTIME_LATENCY_WINDOW_MS,
-      0,
-      1,
-    );
-  const latencyFactor = 1 - (latencyPenaltyRatio * SITE_RUNTIME_MAX_LATENCY_PENALTY);
-  return clampNumber(failurePenaltyFactor * latencyFactor, SITE_RUNTIME_MIN_MULTIPLIER, 1);
+  // Latency removed from health — kept for observability only
+  return clampNumber(failurePenaltyFactor, SITE_RUNTIME_MIN_MULTIPLIER, 1);
 }
 
 function getSiteRuntimeHealthDetails(siteId: number, modelName?: string | null, nowMs = Date.now()): SiteRuntimeHealthDetails {
@@ -427,11 +426,19 @@ function applyRuntimeHealthFailure(state: SiteRuntimeHealthState, context: SiteR
 }
 
 function applyRuntimeHealthSuccess(state: SiteRuntimeHealthState, latencyMs: number, nowMs = Date.now()): void {
-  state.penaltyScore = Math.max(0, state.penaltyScore * 0.2 - 0.3);
+  // Gradual recovery: reduce penalty by 50% instead of near-clearing it (was: score * 0.2 - 0.3)
+  state.penaltyScore = Math.max(0, state.penaltyScore * 0.5);
   state.transientFailureStreak = 0;
   state.lastTransientFailureAtMs = null;
-  state.breakerLevel = 0;
-  state.breakerUntilMs = null;
+  // Step down breaker level by 1 instead of clearing entirely (was: breakerLevel = 0)
+  state.breakerLevel = Math.max(0, state.breakerLevel - 1);
+  if (state.breakerLevel <= 0) {
+    state.breakerUntilMs = null;
+  } else {
+    // Shorten breakerUntilMs to match the new (lower) level's window
+    const newBreakerMs = resolveSiteRuntimeBreakerMs(state.breakerLevel);
+    state.breakerUntilMs = newBreakerMs > 0 ? nowMs + newBreakerMs : null;
+  }
   state.lastSuccessAtMs = nowMs;
   const normalizedLatencyMs = Math.max(0, Math.trunc(latencyMs));
   state.latencyEmaMs = state.latencyEmaMs == null
@@ -838,10 +845,10 @@ function isSiteDisabled(status?: string | null): boolean {
 export function isChannelRecentlyFailed(
   channel: FailureAwareChannel,
   nowMs = Date.now(),
-  avoidSec = resolveFailureBackoffSec(channel.failCount),
+  avoidSec = resolveFailureBackoffSec(channel.consecutiveFailCount),
 ): boolean {
   if (avoidSec <= 0) return false;
-  if ((channel.failCount ?? 0) <= 0) return false;
+  if ((channel.consecutiveFailCount ?? 0) <= 0) return false;
   if (!channel.lastFailAt) return false;
 
   const failTs = Date.parse(channel.lastFailAt);
@@ -1201,17 +1208,10 @@ function buildSiteHistoricalHealthMetrics(candidates: RouteChannelCandidate[]): 
     const avgLatencyMs = total.latencySamples > 0
       ? Math.round(total.totalLatencyMs / total.latencySamples)
       : null;
-    const latencyPenaltyRatio = avgLatencyMs == null
-      ? 0
-      : clampNumber(
-        (avgLatencyMs - SITE_HISTORICAL_LATENCY_BASELINE_MS) / SITE_HISTORICAL_LATENCY_WINDOW_MS,
-        0,
-        1,
-      ) * sampleFactor;
-    const latencyFactor = 1 - (latencyPenaltyRatio * SITE_HISTORICAL_MAX_LATENCY_PENALTY);
+    // Latency removed from historical health — only success rate matters
     metrics.set(siteId, {
       multiplier: clampNumber(
-        successPenaltyFactor * latencyFactor,
+        successPenaltyFactor,
         SITE_HISTORICAL_HEALTH_MIN_MULTIPLIER,
         1,
       ),
@@ -1412,6 +1412,11 @@ export class TokenRouter {
         ? isChannelRecentlyFailed(row.channel, nowMs)
         : false;
       const eligible = reasonParts.length === 0;
+      const resolvedModelForHealth = typeof runtimeModelResolver === 'function'
+        ? runtimeModelResolver(row)
+        : runtimeModelResolver;
+      const candidateHealth = getSiteRuntimeHealthDetails(row.site.id, resolvedModelForHealth, nowMs);
+      const candidateGlobalState = siteRuntimeHealthStates.get(row.site.id);
       const candidate: RouteDecisionCandidate = {
         channelId: row.channel.id,
         accountId: row.account.id,
@@ -1425,6 +1430,14 @@ export class TokenRouter {
         avoidedByRecentFailure: false,
         probability: 0,
         reason: eligible ? '可用' : reasonParts.join('、'),
+        runtimeHealth: {
+          combinedMultiplier: candidateHealth.combinedMultiplier,
+          globalBreakerOpen: candidateHealth.globalBreakerOpen,
+          modelBreakerOpen: candidateHealth.modelBreakerOpen,
+          latencyEmaMs: candidateGlobalState?.latencyEmaMs ?? null,
+          penaltyScore: (candidateGlobalState ? getDecayedSiteRuntimePenalty(candidateGlobalState, nowMs) : 0)
+            + (candidateHealth.modelKey ? (() => { const ms = getSiteModelRuntimeHealthState(row.site.id, candidateHealth.modelKey); return ms ? getDecayedSiteRuntimePenalty(ms, nowMs) : 0; })() : 0),
+        },
       };
       candidates.push(candidate);
       candidateMap.set(candidate.channelId, candidate);
@@ -1549,7 +1562,7 @@ export class TokenRouter {
           const target = candidateMap.get(row.channel.id);
           if (!target) continue;
           target.avoidedByRecentFailure = true;
-          target.reason = `最近失败，优先避让（${resolveFailureBackoffSec(row.channel.failCount)} 秒窗口）`;
+          target.reason = `最近失败，优先避让（${resolveFailureBackoffSec(row.channel.consecutiveFailCount)} 秒窗口）`;
         }
       }
 
@@ -1745,10 +1758,11 @@ export class TokenRouter {
         consecutiveFailCount = 0;
       }
     } else {
-      const cooldownSec = resolveFailureBackoffSec(failCount);
+      // Fix: use consecutiveFailCount instead of cumulative failCount to avoid
+      // permanently snowballing cooldowns on channels with high historical fail counts.
+      const cooldownSec = resolveFailureBackoffSec(consecutiveFailCount);
       cooldownUntil = new Date(nowMs + cooldownSec * 1000).toISOString();
-      consecutiveFailCount = 0;
-      cooldownLevel = 0;
+      // Keep consecutiveFailCount alive for fibonacci escalation; it resets on success.
     }
 
     await db.update(schema.routeChannels).set({

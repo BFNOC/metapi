@@ -158,6 +158,10 @@ async function getCachedSiteProxyRows(nowMs = Date.now()): Promise<SiteProxyRow[
   return siteProxyCache.rows;
 }
 
+export function getDispatcherForProxyUrl(proxyUrl: string): Dispatcher | undefined {
+  return getDispatcherByProxyUrl(proxyUrl);
+}
+
 function getDispatcherByProxyUrl(proxyUrl: string, skipCache = false): Dispatcher | undefined {
   const normalized = normalizeSiteProxyUrl(proxyUrl);
   if (!normalized) return undefined;

@@ -1,4 +1,4 @@
-import { fetch } from 'undici';
+import { fetch, type Dispatcher } from 'undici';
 
 export type ProbeResult = {
   modelName: string;
@@ -18,6 +18,8 @@ export type ProbeInput = {
   timeoutMs: number;
   delayMs: number;
   signal?: AbortSignal;
+  /** Optional undici Dispatcher (e.g. ProxyAgent) resolved from site proxy config */
+  dispatcher?: Dispatcher;
 };
 
 export type ProbeCallbacks = {
@@ -47,6 +49,7 @@ async function probeSingleModel(
   prompt: string,
   timeoutMs: number,
   externalSignal?: AbortSignal,
+  dispatcher?: Dispatcher,
 ): Promise<ProbeResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -72,7 +75,7 @@ async function probeSingleModel(
 
   try {
     const normalizedBase = siteUrl.replace(/\/+$/, '');
-    const response = await fetch(`${normalizedBase}/v1/chat/completions`, {
+    const fetchOptions: Parameters<typeof fetch>[1] = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -84,7 +87,11 @@ async function probeSingleModel(
         stream: true,
       }),
       signal: controller.signal,
-    });
+    };
+    if (dispatcher) {
+      (fetchOptions as any).dispatcher = dispatcher;
+    }
+    const response = await fetch(`${normalizedBase}/v1/chat/completions`, fetchOptions);
 
     if (!response.ok) {
       let errorBody: string | null = null;
@@ -222,7 +229,7 @@ export async function probeModels(input: ProbeInput, callbacks?: ProbeCallbacks)
     const batch = modelNames.slice(offset, offset + clampedConcurrency);
     const batchResults = await Promise.all(
       batch.map((modelName) =>
-        probeSingleModel(siteUrl, apiToken, modelName, prompt, clampedTimeout, signal),
+        probeSingleModel(siteUrl, apiToken, modelName, prompt, clampedTimeout, signal, input.dispatcher),
       ),
     );
     for (const r of batchResults) {

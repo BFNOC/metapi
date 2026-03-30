@@ -4,6 +4,7 @@ import { filterRecentlyFailedCandidates, isChannelRecentlyFailed, matchesModelPa
 type Candidate = {
   channel: {
     failCount?: number | null;
+    consecutiveFailCount?: number | null;
     lastFailAt?: string | null;
   };
   id: string;
@@ -17,21 +18,26 @@ describe('filterRecentlyFailedCandidates', () => {
 
   it('uses a short default recent-failure window', () => {
     const nowMs = Date.now();
+    // FAILURE_BACKOFF_BASE_SEC=60, consecutiveFailCount=1 → fib(1)=1 → 60*1=60s backoff
     expect(isChannelRecentlyFailed({
       failCount: 1,
-      lastFailAt: new Date(nowMs - 20 * 1000).toISOString(),
+      consecutiveFailCount: 1,
+      lastFailAt: new Date(nowMs - 70 * 1000).toISOString(),
     }, nowMs)).toBe(false);
   });
 
   it('expands the avoidance window with fibonacci-style backoff', () => {
     const nowMs = Date.now();
+    // FAILURE_BACKOFF_BASE_SEC=60, consecutiveFailCount=4 → fib(4)=3 → 60*3=180s backoff
     expect(isChannelRecentlyFailed({
       failCount: 4,
-      lastFailAt: new Date(nowMs - 40 * 1000).toISOString(),
+      consecutiveFailCount: 4,
+      lastFailAt: new Date(nowMs - 150 * 1000).toISOString(),
     }, nowMs)).toBe(true);
     expect(isChannelRecentlyFailed({
       failCount: 4,
-      lastFailAt: new Date(nowMs - 50 * 1000).toISOString(),
+      consecutiveFailCount: 4,
+      lastFailAt: new Date(nowMs - 200 * 1000).toISOString(),
     }, nowMs)).toBe(false);
   });
 
@@ -42,6 +48,7 @@ describe('filterRecentlyFailedCandidates', () => {
         id: 'failed',
         channel: {
           failCount: 2,
+          consecutiveFailCount: 2,
           lastFailAt: new Date(nowMs - 30 * 1000).toISOString(),
         },
       },
@@ -65,6 +72,7 @@ describe('filterRecentlyFailedCandidates', () => {
         id: 'a',
         channel: {
           failCount: 1,
+          consecutiveFailCount: 1,
           lastFailAt: new Date(nowMs - 20 * 1000).toISOString(),
         },
       },
@@ -72,6 +80,7 @@ describe('filterRecentlyFailedCandidates', () => {
         id: 'b',
         channel: {
           failCount: 3,
+          consecutiveFailCount: 3,
           lastFailAt: new Date(nowMs - 40 * 1000).toISOString(),
         },
       },

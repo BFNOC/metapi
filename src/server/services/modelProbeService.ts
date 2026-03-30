@@ -78,8 +78,21 @@ async function probeSingleModel(
     const fetchOptions: Parameters<typeof fetch>[1] = {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiToken}`,
+        'accept': '*/*',
+        'accept-language': 'zh-CN',
+        'content-type': 'application/json',
+        'authorization': `Bearer ${apiToken}`,
+        'x-api-key': apiToken,
+        'http-referer': 'https://cherry-ai.com',
+        'x-title': 'Cherry Studio',
+        'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) CherryStudio/1.8.1 Chrome/144.0.7559.236 Electron/40.8.0 Safari/537.36',
+        'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Linux"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+        'priority': 'u=1, i',
       },
       body: JSON.stringify({
         model: modelName,

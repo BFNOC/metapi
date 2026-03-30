@@ -3,14 +3,14 @@ import CenteredModal from '../components/CenteredModal.js';
 import { api } from '../api.js';
 
 const RANDOM_PROMPTS = [
-  '请用一句话解释什么是量子计算',
-  'JavaScript 的 Promise 和 async/await 有什么区别？',
-  '帮我写一个 Python 的 hello world',
-  '什么是 RESTful API？简单说明',
-  '计算 237 乘以 18 等于多少',
-  '请列举三种常见的排序算法',
-  'CSS 中 flex 和 grid 的区别是什么',
-  '简单介绍一下 TCP 三次握手',
+  '请用一句话解释什么是量子计算，要求非常的清晰，非常准确，最好能一针见血，我打算用一句话来唬住学生！',
+  'JavaScript 的 Promise 和 async/await 有什么区别？我不想听长篇大论，请用最精炼的语言回答我！要有那种一瞬间让我醍醐灌顶的感觉！!',
+  '帮我写一个 Rust 的 简单代码，要能体现出 Rust 的特性，比如所有权、生命周期等',
+  '什么是 RESTful API？简单说明，最好能告诉我它和GraphQL的区别，以及各自的优缺点，用三句话告诉我，你能做到吗？',
+  '计算 237 乘以 128 等于多少',
+  '请列举三种常见的排序算法，并告诉我他们之前适用的场景，让我用来做课件的起步！',
+  'CSS 中 flex 和 grid 的区别是什么，用最精炼的话告诉我，而且为什么会有table布局这种奇葩玩意？',
+  '简单介绍一下 TCP 三次握手，为什么需要这么多次握手，不能一次性握手吗？UDP为什么又不用握手，我希望听到你的一针见血而又简洁的回答！'
 ];
 
 function pickRandomPrompt(): string {
@@ -129,30 +129,30 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
         api.getSiteDisabledModels(siteId).catch(() => ({ models: [] })),
         api.getSites().catch(() => []),
       ]).then(([modelsRes, allowedRes, disabledRes, sitesRes]: [any, any, any, any]) => {
-          const modelList: AvailableModel[] = Array.isArray(modelsRes?.models)
-            ? modelsRes.models.map((m: any) => ({ name: String(m.name || m) }))
-            : [];
-          setAvailableModels(modelList);
+        const modelList: AvailableModel[] = Array.isArray(modelsRes?.models)
+          ? modelsRes.models.map((m: any) => ({ name: String(m.name || m) }))
+          : [];
+        setAvailableModels(modelList);
 
-          // Determine filter mode from site data
-          const site = Array.isArray(sitesRes) ? sitesRes.find((s: any) => s.id === siteId) : null;
-          const filterMode = site?.modelFilterMode || 'deny-list';
-          const allowedModels: string[] = Array.isArray(allowedRes?.models) ? allowedRes.models : [];
-          const disabledModels: string[] = Array.isArray(disabledRes?.models) ? disabledRes.models : [];
+        // Determine filter mode from site data
+        const site = Array.isArray(sitesRes) ? sitesRes.find((s: any) => s.id === siteId) : null;
+        const filterMode = site?.modelFilterMode || 'deny-list';
+        const allowedModels: string[] = Array.isArray(allowedRes?.models) ? allowedRes.models : [];
+        const disabledModels: string[] = Array.isArray(disabledRes?.models) ? disabledRes.models : [];
 
-          if (filterMode === 'allow-list' && allowedModels.length > 0) {
-            // Whitelist: only select allowed models
-            const allowedSet = new Set(allowedModels.map((m) => m.toLowerCase()));
-            setSelectedModels(new Set(modelList.filter((m) => allowedSet.has(m.name.toLowerCase())).map((m) => m.name)));
-          } else if (filterMode === 'deny-list' && disabledModels.length > 0) {
-            // Blacklist: select all except disabled models
-            const disabledSet = new Set(disabledModels.map((m) => m.toLowerCase()));
-            setSelectedModels(new Set(modelList.filter((m) => !disabledSet.has(m.name.toLowerCase())).map((m) => m.name)));
-          } else {
-            // No filter or empty list: select all
-            setSelectedModels(new Set(modelList.map((m) => m.name)));
-          }
-        })
+        if (filterMode === 'allow-list' && allowedModels.length > 0) {
+          // Whitelist: only select allowed models
+          const allowedSet = new Set(allowedModels.map((m) => m.toLowerCase()));
+          setSelectedModels(new Set(modelList.filter((m) => allowedSet.has(m.name.toLowerCase())).map((m) => m.name)));
+        } else if (filterMode === 'deny-list' && disabledModels.length > 0) {
+          // Blacklist: select all except disabled models
+          const disabledSet = new Set(disabledModels.map((m) => m.toLowerCase()));
+          setSelectedModels(new Set(modelList.filter((m) => !disabledSet.has(m.name.toLowerCase())).map((m) => m.name)));
+        } else {
+          // No filter or empty list: select all
+          setSelectedModels(new Set(modelList.map((m) => m.name)));
+        }
+      })
         .catch(() => {
           setAvailableModels([]);
           setSelectedModels(new Set());

@@ -1733,13 +1733,15 @@ export default function Accounts() {
                             <button onClick={() => openEditPanel(a)} className="btn btn-link btn-link-info">
                               编辑
                             </button>
-                            <button
-                              onClick={() => openModelModal(a)}
-                              disabled={actionLoading[`models-${a.id}`]}
-                              className="btn btn-link btn-link-info"
-                            >
-                              模型
-                            </button>
+                            {connectionMode !== 'session' && (
+                              <button
+                                onClick={() => openModelModal(a)}
+                                disabled={actionLoading[`models-${a.id}`]}
+                                className="btn btn-link btn-link-info"
+                              >
+                                模型
+                              </button>
+                            )}
                             {connectionMode === 'apikey' && (
                               <button
                                 onClick={() => setModelFilterTarget({ siteId: a.siteId, siteName: a.site?.name || resolveAccountDisplayName(a), modelFilterMode: a.site?.modelFilterMode })}
@@ -2071,13 +2073,15 @@ export default function Accounts() {
                                 {actionLoading[`refresh-${a.id}`] ? <span className="spinner spinner-sm" /> : '刷新'}
                               </button>
                             )}
-                            <button
-                              onClick={() => openModelModal(a)}
-                              disabled={actionLoading[`models-${a.id}`]}
-                              className="btn btn-link btn-link-info"
-                            >
-                              模型
-                            </button>
+                            {connectionMode !== 'session' && (
+                              <button
+                                onClick={() => openModelModal(a)}
+                                disabled={actionLoading[`models-${a.id}`]}
+                                className="btn btn-link btn-link-info"
+                              >
+                                模型
+                              </button>
+                            )}
                             {connectionMode === 'apikey' && (
                               <button
                                 onClick={() => setModelFilterTarget({ siteId: a.siteId, siteName: a.site?.name || resolveAccountDisplayName(a), modelFilterMode: a.site?.modelFilterMode })}

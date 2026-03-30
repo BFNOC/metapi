@@ -14,7 +14,11 @@ function RuntimeHealthBadges({ health }: { health: RouteDecisionCandidate['runti
   if (!health) return null;
   const badges: JSX.Element[] = [];
 
+  const multiplier = Number(health.combinedMultiplier) || 0;
+  const penalty = Number(health.penaltyScore) || 0;
+
   if (health.globalBreakerOpen || health.modelBreakerOpen) {
+    // Breaker active — highest severity
     const label = health.globalBreakerOpen ? '站点熔断' : '模型熔断';
     badges.push(
       <span
@@ -30,12 +34,24 @@ function RuntimeHealthBadges({ health }: { health: RouteDecisionCandidate['runti
         🔴 {label}
       </span>,
     );
-  }
-
-  const multiplier = Number(health.combinedMultiplier) || 0;
-  const penalty = Number(health.penaltyScore) || 0;
-
-  if (multiplier < 0.5 && !health.globalBreakerOpen && !health.modelBreakerOpen) {
+  } else if (multiplier < 0.5) {
+    // Significant degradation
+    badges.push(
+      <span
+        key="multiplier"
+        className="badge"
+        style={{
+          fontSize: 10,
+          background: 'color-mix(in srgb, var(--color-danger) 15%, transparent)',
+          color: 'var(--color-danger)',
+        }}
+        data-tooltip={`错误健康乘子 ×${multiplier.toFixed(2)}（仅错误驱动：penalty=${penalty.toFixed(1)}）`}
+      >
+        🔴 降权 ×{multiplier.toFixed(2)}
+      </span>,
+    );
+  } else if (multiplier < 0.85) {
+    // Moderate degradation
     badges.push(
       <span
         key="multiplier"
@@ -47,7 +63,23 @@ function RuntimeHealthBadges({ health }: { health: RouteDecisionCandidate['runti
         }}
         data-tooltip={`错误健康乘子 ×${multiplier.toFixed(2)}（仅错误驱动：penalty=${penalty.toFixed(1)}）`}
       >
-        ⚠ 降权 ×{multiplier.toFixed(2)}
+        ⚠ 轻微降权 ×{multiplier.toFixed(2)}
+      </span>,
+    );
+  } else {
+    // Healthy
+    badges.push(
+      <span
+        key="healthy"
+        className="badge"
+        style={{
+          fontSize: 10,
+          background: 'color-mix(in srgb, var(--color-success) 12%, transparent)',
+          color: 'var(--color-success)',
+        }}
+        data-tooltip={`运行时健康 ×${multiplier.toFixed(2)} — 无错误惩罚，路由权重未衰减`}
+      >
+        ✅ 正常
       </span>,
     );
   }
@@ -68,7 +100,7 @@ function RuntimeHealthBadges({ health }: { health: RouteDecisionCandidate['runti
     );
   }
 
-  return badges.length > 0 ? <>{badges}</> : null;
+  return <>{badges}</>;
 }
 
 export function SortableChannelRow({

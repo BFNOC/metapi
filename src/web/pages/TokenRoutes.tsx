@@ -271,9 +271,16 @@ export default function TokenRoutes() {
       decisionPlaceholder[route.id] = route.decisionSnapshot || null;
     }
     setDecisionByRoute(decisionPlaceholder);
-    setDecisionAutoSkipped(
-      summaries.some((route) => isRouteExactModel(route) && !route.decisionSnapshot),
+
+    const hasMissingSnapshots = summaries.some(
+      (route) => !route.decisionSnapshot && route.kind !== 'zero_channel' && route.readOnly !== true && route.isVirtual !== true,
     );
+    setDecisionAutoSkipped(hasMissingSnapshots);
+
+    // Auto-backfill missing snapshots in background
+    if (hasMissingSnapshots) {
+      loadRouteDecisions(summaries, { force: true, persistSnapshots: true }).catch(() => {});
+    }
 
     // Silently refresh candidates in the background if already loaded
     if (candidatesLoadedRef.current) {

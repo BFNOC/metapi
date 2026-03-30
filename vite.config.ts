@@ -1,7 +1,16 @@
 import { defineConfig, loadEnv } from 'vite';
+import { execSync } from 'node:child_process';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { resolveDevProxyTarget } from './src/web/devProxyTarget';
+
+function getGitCommitShort(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
@@ -12,9 +21,17 @@ export default defineConfig(({ mode }) => {
   const resolvedFrontendPort = Number.isFinite(frontendPort) && frontendPort > 0 ? frontendPort : 5173;
   const frontendHost = (env.VITE_DEV_HOST || '127.0.0.1').trim() || '127.0.0.1';
 
+  const buildCommit = process.env.VITE_BUILD_COMMIT || getGitCommitShort();
+  const buildTime = new Date().toISOString();
+  console.log(`[vite] build info: commit=${buildCommit}, time=${buildTime}`);
+
   return {
     root: 'src/web',
     plugins: [react(), tailwindcss()],
+    define: {
+      __BUILD_COMMIT__: JSON.stringify(buildCommit),
+      __BUILD_TIME__: JSON.stringify(buildTime),
+    },
     build: {
       outDir: '../../dist/web',
       emptyOutDir: true,

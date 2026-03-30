@@ -13,7 +13,11 @@ COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --no-audit --no-fund
 RUN npm rebuild esbuild sharp better-sqlite3 --no-audit --no-fund
 
+# Cache bust: pass --build-arg CACHE_BUST=$(date +%s) to force re-copy
+ARG CACHE_BUST=0
+ARG BUILD_COMMIT=unknown
 COPY . .
+ENV VITE_BUILD_COMMIT=${BUILD_COMMIT}
 RUN npm run build:web && npm run build:server
 RUN --mount=type=cache,target=/root/.npm npm prune --omit=dev --no-audit --no-fund
 

@@ -1,7 +1,12 @@
 import { tr } from '../i18n.js';
 import { SITE_DOCS_URL } from '../docsLink.js';
 
+declare const __BUILD_COMMIT__: string;
+declare const __BUILD_TIME__: string;
+
 const VERSION = '1.2.3';
+const BUILD_COMMIT = typeof __BUILD_COMMIT__ !== 'undefined' ? __BUILD_COMMIT__ : 'dev';
+const BUILD_TIME = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : '';
 
 const FEATURES = [
   { icon: '🌐', title: '统一代理网关', desc: '一个 Key、一个入口，兼容 OpenAI / Claude 下游格式' },
@@ -29,6 +34,16 @@ const LINKS = [
   { label: '站点文档', href: SITE_DOCS_URL, icon: '📚' },
 ];
 
+function formatBuildTime(iso: string): string {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  } catch {
+    return iso;
+  }
+}
+
 export default function About() {
   return (
     <div className="animate-fade-in" style={{ maxWidth: 860 }}>
@@ -47,7 +62,23 @@ export default function About() {
           />
           <div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>Metapi</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>v{VERSION}</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span>v{VERSION}</span>
+              {BUILD_COMMIT !== 'dev' && (
+                <span
+                  className="badge badge-muted"
+                  style={{ fontSize: 10, fontFamily: 'var(--font-mono, monospace)', letterSpacing: 0.5 }}
+                  data-tooltip={BUILD_TIME ? `构建于 ${formatBuildTime(BUILD_TIME)}` : undefined}
+                >
+                  {BUILD_COMMIT}
+                </span>
+              )}
+              {BUILD_TIME && (
+                <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                  {formatBuildTime(BUILD_TIME)}
+                </span>
+              )}
+            </div>
           </div>
         </div>
         <div style={{ fontSize: 14, color: 'var(--color-text-secondary)', lineHeight: 1.8 }}>

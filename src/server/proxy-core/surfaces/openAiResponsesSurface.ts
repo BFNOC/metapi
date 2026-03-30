@@ -33,7 +33,7 @@ import {
   unwrapGeminiCliPayload,
 } from '../../routes/proxy/geminiCliCompat.js';
 import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
-import { readRuntimeResponseText } from '../executors/types.js';
+import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { runCodexHttpSessionTask } from '../runtime/codexHttpSessionQueue.js';
 import {
   summarizeConversationFileInputsInOpenAiBody,
@@ -695,7 +695,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             replayReader = createSingleChunkStreamReader(rawText);
           }
 
-          const upstreamReader = replayReader ?? upstream.body?.getReader();
+          const upstreamReader = replayReader ?? getRuntimeResponseReader(upstream);
           const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
             ? createGeminiCliStreamReader(upstreamReader)
             : upstreamReader;

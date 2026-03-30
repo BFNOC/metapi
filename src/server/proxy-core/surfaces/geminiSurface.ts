@@ -35,7 +35,7 @@ import { dispatchRuntimeRequest } from '../../routes/proxy/runtimeExecutor.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
-import { readRuntimeResponseText } from '../executors/types.js';
+import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 const GEMINI_MODEL_PROBES = [
   'gemini-2.5-flash',
@@ -579,7 +579,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             reply.hijack();
             reply.raw.statusCode = upstream.status;
             reply.raw.setHeader('Content-Type', contentType || 'text/event-stream');
-            const upstreamReader = upstream.body?.getReader();
+            const upstreamReader = getRuntimeResponseReader(upstream);
             const reader = isInternalGemini && !isGeminiCliDownstream && upstreamReader
               ? createGeminiCliStreamReader(upstreamReader)
               : upstreamReader;

@@ -2,6 +2,45 @@
 
 > 记录每次从上游 `cita-777/metapi` 同步的变更。
 
+## 2026-03-31 同步
+
+**上游已审阅到**：`618ca0b`（upstream/main HEAD）
+
+### Cherry-pick 的 Commit
+
+| Commit | 说明 | 冲突 |
+|--------|------|------|
+| `eb65a2b` | fix: preserve repeated short responses deltas (#336) | ✅ 无冲突 |
+| `9e95819` | fix: decode zstd-compressed SSE proxy surfaces (#335) | ⚠️ `geminiSurface.ts` 1处冲突（SSE reader 获取方式），保留本地 reply.hijack() + 采用上游 getRuntimeResponseReader() |
+| `9212b76` | feat: 新站点创建后显示选择对话框 (#302) | ⚠️ `Sites.tsx` 1处冲突（与本地 bulkImport 位置重叠），两者均保留 |
+
+### 跳过的 Commit（已审阅，不需要）
+
+| Commit | 说明 | 跳过原因 |
+|--------|------|----------|
+| `618ca0b` | fix: restore armv7 docker base image (#337) | Docker ARM 构建修复，不影响功能 |
+| `5d54e92` | docs: add management API guide (#334) | 纯文档 |
+| `9eb33df` | [codex] add automatic update-center reminders (#333) | K3s update-center 基础设施，不需要 |
+| `6726da9` | persist proxy trace panel state (#331) | 依赖代理调试追踪（#299，已跳过） |
+| `9aeec87` | chore: sweep dependabot updates and align Node 25 (#329) | 依赖升级，可能引入不兼容 |
+| `26f9717` | [codex] add setting to disable cross-protocol fallback (#332) | 全局级开关，个人使用场景不需要；站点级实现成本高 |
+| `fa25a50` | feat: 实现全局模型白名单功能 (#301) | 已有3层模型过滤，全局白名单增加 debug 难度 |
+| `01481be` | [codex] Add digest-safe k3s update-center assets (#326) | K3s 基础设施 |
+| `7d91823` | Add site filters for manual connection selection (#328) | 已有类似站点排除功能 |
+| `0d2c450` | make proxy trace panel collapsible (#327) | 依赖 #299 |
+| `26d87db` | [codex] tighten update center and proxy debug UX (#325) | 依赖 #299 + update-center |
+| `71be4cb` | Handle codex OAuth usage-limit cooldowns (#316) | OAuth 功能，per-credential cooldown 思路可借鉴 |
+| `d47c3c4` | Support digest-aware update center rollbacks (#318) | K3s 基础设施 |
+| `b9ae85e` | Fix update center helper token lookup (#317) | K3s 基础设施 |
+| `faf9874` | Fix armv7 docker helper build | Docker 构建修复 |
+| `11583c5` | [codex] add K3s update center (#314) | K3s 基础设施 |
+| `dcfd45e` | Fix proxy debug trace truncation previews (#313) | 依赖 #299 |
+| `7092e2f` | [codex] refine proxy logs debug UI follow-ups (#312) | 依赖 #299 |
+| `ab8640c` | [daily] reset oauth proxy form after start (#311) | OAuth 功能 |
+| `ed44e7f` | Refine proxy logs debug trace UI (#309) | 依赖 #299 |
+
+---
+
 ## 2026-03-27 同步
 
 **分叉点**：`7e1fb8e`

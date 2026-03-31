@@ -581,7 +581,26 @@ function SiteExclusionPanel({
           <div className="downstream-key-modal-label" style={{ marginBottom: 0 }}>站点黑名单</div>
           <div className="downstream-key-modal-help" style={{ marginTop: 2 }}>勾选的站点将被此密钥完全排除，请求不会路由到这些站点的任何通道。</div>
         </div>
-        {selectedCount > 0 ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ border: '1px solid var(--color-border)', fontSize: 12 }}
+            onClick={() => onChange(sites.map((s) => s.id))}
+          >
+            全选
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ border: '1px solid var(--color-border)', fontSize: 12 }}
+            onClick={() => {
+              const allIds = sites.map((s) => s.id);
+              onChange(allIds.filter((id) => !excludedSet.has(id)));
+            }}
+          >
+            反选
+          </button>
           <button
             type="button"
             className="btn btn-ghost"
@@ -590,7 +609,7 @@ function SiteExclusionPanel({
           >
             清空
           </button>
-        ) : null}
+        </div>
       </div>
       <div className="downstream-key-modal-meta" style={{ marginTop: 4 }}>
         已排除 {selectedCount} 个站点
@@ -862,6 +881,17 @@ function EditorModal({
                       type="button"
                       className="btn btn-ghost"
                       style={{ border: '1px solid var(--color-border)' }}
+                      onClick={() => onChange((prev) => {
+                        const selectedSet = new Set(prev.selectedModels);
+                        return { ...prev, selectedModels: exactModels.filter((m) => !selectedSet.has(m)) };
+                      })}
+                    >
+                      反选
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ border: '1px solid var(--color-border)' }}
                       onClick={() => onChange((prev) => ({ ...prev, selectedModels: [] }))}
                     >
                       清空
@@ -911,6 +941,17 @@ function EditorModal({
                       onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: groupRouteOptions.map((route) => route.id) }))}
                     >
                       全选
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ border: '1px solid var(--color-border)' }}
+                      onClick={() => onChange((prev) => {
+                        const selectedSet = new Set(prev.selectedGroupRouteIds);
+                        return { ...prev, selectedGroupRouteIds: groupRouteOptions.filter((route) => !selectedSet.has(route.id)).map((route) => route.id) };
+                      })}
+                    >
+                      反选
                     </button>
                     <button
                       type="button"

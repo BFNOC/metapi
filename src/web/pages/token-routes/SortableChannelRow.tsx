@@ -22,7 +22,7 @@ function RuntimeHealthBadges({ health, siteId, onResetHealth }: RuntimeHealthBad
 
   const multiplier = Number(health.combinedMultiplier) || 0;
   const penalty = Number(health.penaltyScore) || 0;
-  const hasPenalty = health.breakerOpen || multiplier < 0.85;
+  const hasPenalty = health.breakerOpen || penalty > 0;
 
   if (health.breakerOpen) {
     // Breaker active — highest severity

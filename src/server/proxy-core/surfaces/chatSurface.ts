@@ -2,7 +2,7 @@ import { TextDecoder } from 'node:util';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
-import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
+import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { type DownstreamFormat } from '../../transformers/shared/normalized.js';
 import {
   buildClaudeCountTokensUpstreamRequest,
@@ -392,7 +392,10 @@ export async function handleChatSurfaceRequest(
 
       if (isStream) {
         const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
+        let streamStarted = false;
         const startSseResponse = () => {
+          if (streamStarted) return;
+          streamStarted = true;
           reply.hijack();
           reply.raw.statusCode = 200;
           reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -409,11 +412,40 @@ export async function handleChatSurfaceRequest(
           cacheCreationTokens: 0,
           promptTokensIncludeCache: null,
         };
+        let upstreamUsagePresent = false;
+        const recordStreamSuccess = async (latencyMs: number) => {
+          await recordSurfaceSuccess({
+            selected,
+            requestedModel,
+            modelName,
+            parsedUsage,
+            upstreamUsagePresent,
+            requestStartedAtMs: startTime,
+            latencyMs,
+            retryCount,
+            upstreamPath: successfulUpstreamPath,
+            logSuccess: failureToolkit.log,
+            recordDownstreamCost: (estimatedCost) => {
+              recordDownstreamCostUsage(request, estimatedCost);
+            },
+            bestEffortMetrics: {
+              errorLabel: '[proxy/chat] failed to record success metrics',
+            },
+          });
+        };
 
         const writeLines = (lines: string[]) => {
+          startSseResponse();
           for (const line of lines) {
             reply.raw.write(line);
           }
+        };
+        const streamResponse = {
+          end() {
+            if (streamStarted) {
+              reply.raw.end();
+            }
+          },
         };
         const streamSession = openAiChatTransformer.proxyStream.createSession({
           downstreamFormat,
@@ -421,11 +453,13 @@ export async function handleChatSurfaceRequest(
           successfulUpstreamPath,
           onParsedPayload: (payload) => {
             if (payload && typeof payload === 'object') {
+              upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(payload);
               parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
             }
           },
           writeLines,
           writeRaw: (chunk) => {
+            startSseResponse();
             reply.raw.write(chunk);
           },
         });
@@ -434,10 +468,9 @@ export async function handleChatSurfaceRequest(
           const fallbackText = await readRuntimeResponseText(upstream);
           rawText = fallbackText;
           if (looksLikeResponsesSseText(fallbackText)) {
-            startSseResponse();
             const streamResult = await streamSession.run(
               createSingleChunkStreamReader(fallbackText),
-              reply.raw,
+              streamResponse,
             );
             const latency = Date.now() - startTime;
             if (streamResult.status === 'failed') {
@@ -457,8 +490,34 @@ export async function handleChatSurfaceRequest(
                 totalTokens: parsedUsage.totalTokens,
                 upstreamPath: successfulUpstreamPath,
               });
+              await finalizeDebugFailure(502, {
+                error: {
+                  message: streamResult.errorMessage,
+                  type: 'stream_error',
+                },
+              }, successfulUpstreamPath);
+              if (!streamStarted) {
+                return reply.code(502).send({
+                  error: {
+                    message: streamResult.errorMessage,
+                    type: 'upstream_error',
+                  },
+                });
+              }
               return;
             }
+            await recordStreamSuccess(latency);
+            await finalizeDebugSuccess(
+              200,
+              successfulUpstreamPath,
+              buildSurfaceProxyDebugResponseHeaders(upstream),
+              debugTrace?.options.captureStreamChunks
+                ? fallbackText
+                : {
+                  stream: true,
+                  usage: parsedUsage,
+                },
+            );
             bindSurfaceStickyChannel({
               stickySessionKey,
               selected,
@@ -474,6 +533,7 @@ export async function handleChatSurfaceRequest(
           if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
             fallbackData = unwrapGeminiCliPayload(fallbackData);
           }
+          upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(fallbackData);
           parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(fallbackData));
           const latency = Date.now() - startTime;
           const failure = detectProxyFailure({ rawText, usage: parsedUsage });
@@ -501,8 +561,7 @@ export async function handleChatSurfaceRequest(
             return reply.code(failureOutcome.status).send(failureOutcome.payload);
           }
 
-          startSseResponse();
-          const streamResult = streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, reply.raw);
+          const streamResult = streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, streamResponse);
           if (streamResult.status === 'failed') {
             clearSurfaceStickyChannel({
               stickySessionKey,
@@ -521,14 +580,40 @@ export async function handleChatSurfaceRequest(
               upstreamPath: successfulUpstreamPath,
               runtimeFailureStatus: 502,
             });
+            await finalizeDebugFailure(502, {
+              error: {
+                message: streamResult.errorMessage,
+                type: 'stream_error',
+              },
+            }, successfulUpstreamPath);
+            if (!streamStarted) {
+              return reply.code(502).send({
+                error: {
+                  message: streamResult.errorMessage,
+                  type: 'upstream_error',
+                },
+              });
+            }
             return;
           }
+          await recordStreamSuccess(latency);
+            await finalizeDebugSuccess(
+              200,
+              successfulUpstreamPath,
+              buildSurfaceProxyDebugResponseHeaders(upstream),
+              debugTrace?.options.captureStreamChunks
+              ? fallbackText
+              : {
+                stream: true,
+                usage: parsedUsage,
+              },
+          );
           bindSurfaceStickyChannel({
             stickySessionKey,
             selected,
           });
+          return;
         } else {
-          startSseResponse();
           const upstreamReader = getRuntimeResponseReader(upstream);
           const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
             ? createGeminiCliStreamReader(upstreamReader)
@@ -551,7 +636,7 @@ export async function handleChatSurfaceRequest(
               },
             }
             : baseReader;
-          const streamResult = await streamSession.run(reader, reply.raw);
+          const streamResult = await streamSession.run(reader, streamResponse);
           rawText += decoder.decode();
 
           const latency = Date.now() - startTime;
@@ -573,6 +658,20 @@ export async function handleChatSurfaceRequest(
               upstreamPath: successfulUpstreamPath,
               runtimeFailureStatus: 502,
             });
+            await finalizeDebugFailure(502, {
+              error: {
+                message: streamResult.errorMessage,
+                type: 'stream_error',
+              },
+            }, successfulUpstreamPath);
+            if (!streamStarted) {
+              return reply.code(502).send({
+                error: {
+                  message: streamResult.errorMessage,
+                  type: 'upstream_error',
+                },
+              });
+            }
             return;
           }
 
@@ -583,23 +682,18 @@ export async function handleChatSurfaceRequest(
         }
 
         const latency = Date.now() - startTime;
-        await recordSurfaceSuccess({
-          selected,
-          requestedModel,
-          modelName,
-          parsedUsage,
-          requestStartedAtMs: startTime,
-          latencyMs: latency,
-          retryCount,
-          upstreamPath: successfulUpstreamPath,
-          logSuccess: failureToolkit.log,
-          recordDownstreamCost: (estimatedCost) => {
-            recordDownstreamCostUsage(request, estimatedCost);
-          },
-          bestEffortMetrics: {
-            errorLabel: '[proxy/chat] failed to record success metrics',
-          },
-        });
+        await recordStreamSuccess(latency);
+        await finalizeDebugSuccess(
+          200,
+          successfulUpstreamPath,
+          buildSurfaceProxyDebugResponseHeaders(upstream),
+          debugTrace?.options.captureStreamChunks
+            ? rawText
+            : {
+              stream: true,
+              usage: parsedUsage,
+            },
+        );
         bindSurfaceStickyChannel({
           stickySessionKey,
           selected,
@@ -633,6 +727,7 @@ export async function handleChatSurfaceRequest(
 
       const latency = Date.now() - startTime;
       const parsedUsage = parseProxyUsage(upstreamData);
+      const upstreamUsagePresent = hasProxyUsagePayload(upstreamData);
       const failure = detectProxyFailure({ rawText, usage: parsedUsage });
       if (failure) {
         clearSurfaceStickyChannel({
@@ -665,6 +760,7 @@ export async function handleChatSurfaceRequest(
         requestedModel,
         modelName,
         parsedUsage,
+        upstreamUsagePresent,
         requestStartedAtMs: startTime,
         latencyMs: latency,
         retryCount,

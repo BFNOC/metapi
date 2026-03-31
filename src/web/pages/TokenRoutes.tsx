@@ -1308,6 +1308,23 @@ export default function TokenRoutes() {
     [],
   );
 
+  const handleResetSiteHealth = async (siteId: number) => {
+    try {
+      const res = await api.resetSiteHealth(siteId);
+      toast.success(res.message || '已清除站点运行时惩罚');
+      // Refresh route decisions so badges reflect the reset immediately
+      loadRouteDecisions(routeSummaries, { force: true, persistSnapshots: true }).catch(() => {});
+    } catch (e: unknown) {
+      toast.error((e instanceof Error ? e.message : null) || '清除站点惩罚失败');
+    }
+  };
+  const handleResetSiteHealthRef = useRef(handleResetSiteHealth);
+  handleResetSiteHealthRef.current = handleResetSiteHealth;
+  const stableResetSiteHealth = useCallback(
+    (siteId: number) => handleResetSiteHealthRef.current(siteId),
+    [],
+  );
+
   const addChannelModalRoute = addChannelModalRouteId
     ? routeSummaries.find((r) => r.id === addChannelModalRouteId) || null
     : null;
@@ -1683,6 +1700,7 @@ export default function TokenRoutes() {
                     onSiteBlockModel={stableSiteBlockModel}
                     expandedSourceGroupMap={expandedSourceGroupMap}
                     onToggleSourceGroup={stableToggleSourceGroup}
+                    onResetSiteHealth={stableResetSiteHealth}
                   />
                 )}
               </div>
@@ -1721,6 +1739,7 @@ export default function TokenRoutes() {
               onSiteBlockModel={stableSiteBlockModel}
               expandedSourceGroupMap={expandedSourceGroupMap}
               onToggleSourceGroup={stableToggleSourceGroup}
+              onResetSiteHealth={stableResetSiteHealth}
             />
           );
 

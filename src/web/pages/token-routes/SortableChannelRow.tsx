@@ -10,16 +10,22 @@ import { getChannelDecisionState, getPriorityTagStyle, getProbabilityColor } fro
 import { ChannelSettingsPanel } from './ChannelSettingsPanel.js';
 import type { RouteDecisionCandidate } from '../../../shared/tokenRouteContract.js';
 
-function RuntimeHealthBadges({ health }: { health: RouteDecisionCandidate['runtimeHealth'] }) {
+type RuntimeHealthBadgesProps = {
+  health: RouteDecisionCandidate['runtimeHealth'];
+  siteId?: number;
+  onResetHealth?: (siteId: number) => void;
+};
+
+function RuntimeHealthBadges({ health, siteId, onResetHealth }: RuntimeHealthBadgesProps) {
   if (!health) return null;
   const badges: JSX.Element[] = [];
 
   const multiplier = Number(health.combinedMultiplier) || 0;
   const penalty = Number(health.penaltyScore) || 0;
+  const hasPenalty = health.breakerOpen || multiplier < 0.85;
 
-  if (health.globalBreakerOpen || health.modelBreakerOpen) {
+  if (health.breakerOpen) {
     // Breaker active — highest severity
-    const label = health.globalBreakerOpen ? '站点熔断' : '模型熔断';
     badges.push(
       <span
         key="breaker"
@@ -29,9 +35,9 @@ function RuntimeHealthBadges({ health }: { health: RouteDecisionCandidate['runti
           background: 'color-mix(in srgb, var(--color-danger) 15%, transparent)',
           color: 'var(--color-danger)',
         }}
-        data-tooltip={`${label}中 — 错误连续触发熔断保护，暂时不会被选中`}
+        data-tooltip="熔断中 — 错误连续触发熔断保护，暂时不会被选中"
       >
-        🔴 {label}
+        🔴 熔断
       </span>,
     );
   } else if (multiplier < 0.5) {
@@ -84,6 +90,29 @@ function RuntimeHealthBadges({ health }: { health: RouteDecisionCandidate['runti
     );
   }
 
+  if (hasPenalty && siteId && onResetHealth) {
+    badges.push(
+      <button
+        key="reset-health"
+        type="button"
+        className="btn btn-link"
+        style={{
+          fontSize: 10,
+          padding: '1px 4px',
+          lineHeight: 1,
+          color: 'var(--color-info)',
+          textDecoration: 'underline',
+          cursor: 'pointer',
+        }}
+        aria-label="清除该站点的运行时健康惩罚"
+        data-tooltip="清除该站点的运行时惩罚（penalty、熔断），立即恢复正常权重"
+        onClick={(e) => { e.stopPropagation(); onResetHealth(siteId); }}
+      >
+        撤销处罚
+      </button>,
+    );
+  }
+
   if (health.latencyEmaMs != null) {
     const latencyText = health.latencyEmaMs >= 1000
       ? `${(health.latencyEmaMs / 1000).toFixed(1)}s`
@@ -118,6 +147,7 @@ export function SortableChannelRow({
   onDeleteChannel,
   onToggleEnabled,
   onSiteBlockModel,
+  onResetSiteHealth,
 }: SortableChannelRowProps) {
   const {
     attributes,
@@ -339,7 +369,7 @@ export function SortableChannelRow({
                 </span>
               </div>
 
-              <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} />
+              <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} siteId={channel.site?.id} onResetHealth={onResetSiteHealth} />
 
               {!readOnly && (
                 <button
@@ -517,7 +547,7 @@ export function SortableChannelRow({
             <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>{channel.failCount || 0}</span>
           </span>
 
-          <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} />
+          <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} siteId={channel.site?.id} onResetHealth={onResetSiteHealth} />
         </div>
       </div>
 

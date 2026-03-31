@@ -137,6 +137,7 @@ export type SortableChannelRowProps = {
   onDeleteChannel: () => void;
   onToggleEnabled: (enabled: boolean) => void;
   onSiteBlockModel?: () => void;
+  onResetSiteHealth?: (siteId: number) => void;
 };
 
 export type GroupRouteItem = {

@@ -69,9 +69,13 @@ type SiteRuntimeHealthState = {
   lastUpdatedAtMs: number;
   lastFailureAtMs: number | null;
   lastSuccessAtMs: number | null;
+  // Tracks consecutive successes to dampen soft failure penalties.
+  // Reset only by hard (admission-health) failures.
+  recentSuccessStreak: number;
 };
 
 const FAILURE_BACKOFF_BASE_SEC = 60;              // Aggressive: 60s base (was 15s), uses consecutiveFailCount now
+const SOFT_CHANNEL_COOLDOWN_SEC = 10;             // Short fixed cooldown for soft completion failures (no fibonacci escalation)
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
 const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
@@ -82,6 +86,9 @@ const SITE_RUNTIME_LATENCY_EMA_ALPHA = 0.3;
 const SITE_RUNTIME_BREAKER_STREAK_THRESHOLD = 3;
 const SITE_RUNTIME_BREAKER_LEVELS_MS = [0, 3 * 60_000, 15 * 60_000, 60 * 60_000] as const; // Aggressive: 3m/15m/60m (was 1m/5m/30m)
 const SITE_TRANSIENT_STREAK_WINDOW_MS = 5 * 60 * 1000;
+// Success-dampening divisor for soft (completion-health) failures.
+// With K=10: after 10 successes, soft penalty is halved; after 30, quartered.
+const SOFT_PENALTY_DAMPENING_K = 10;
 const SITE_HISTORICAL_HEALTH_MIN_MULTIPLIER = 0.15; // Aggressive: lower floor (was 0.45)
 const SITE_HISTORICAL_HEALTH_MAX_SAMPLE = 24;
 // Historical latency constants removed — health is purely error-driven
@@ -148,30 +155,59 @@ const SITE_TRANSIENT_FAILURE_PATTERNS: RegExp[] = [
   /quota\s+exceeded/i,
 ];
 
+// Completion-health: stream connected successfully but content delivery failed.
+// These indicate the site is alive; upstream account pool or network had a hiccup.
+// Much lighter penalty, should NOT trigger transient streak / breaker.
+const SITE_SOFT_STREAM_FAILURE_PATTERNS: RegExp[] = [
+  /stream\s+closed\s+before\s+response\.completed/i,
+  /upstream\s+stream\s+failed/i,
+  /stream\s+processing\s+failed/i,
+  /premature\s+close/i,
+  /unexpected\s+end\s+of\s+stream/i,
+  /incomplete\s+chunked\s+encoding/i,
+  /other\s+side\s+closed/i,
+];
+
+const SITE_EMPTY_CONTENT_FAILURE_PATTERNS: RegExp[] = [
+  /upstream\s+returned\s+empty\s+content/i,
+  /empty\s+response/i,
+];
+
+// Client-initiated cancellations — not the site's fault at all.
+// Zero penalty, should not affect site health.
+// IMPORTANT: patterns must be specific enough to avoid matching server-side
+// errors like "connection aborted by server" or "transaction aborted".
+const SITE_CLIENT_CANCELLATION_PATTERNS: RegExp[] = [
+  /AbortError/,
+  /\babort(?:ed)?\b.*(?:client|user|request|signal|downstream)/i,
+  /client\s+disconnect/i,
+  /context\s+cancel/i,
+  /request\s+was\s+cancelled/i,
+  /user\s+cancel/i,
+];
+
 type SiteRuntimeHealthPersistencePayload = {
   version: 1;
   savedAtMs: number;
-  globalBySiteId: Record<string, SiteRuntimeHealthState>;
-  modelBySiteId: Record<string, Record<string, SiteRuntimeHealthState>>;
+  /** v2: single bucket keyed by (siteId, modelName). Legacy globalBySiteId is ignored on load. */
+  bySiteModel: Record<string, Record<string, SiteRuntimeHealthState>>;
 };
 
 type SiteRuntimeHealthDetails = {
-  globalMultiplier: number;
-  modelMultiplier: number;
-  combinedMultiplier: number;
-  globalBreakerOpen: boolean;
-  modelBreakerOpen: boolean;
+  multiplier: number;
+  breakerOpen: boolean;
   modelKey: string;
 };
 
 type WeightedSelectionMode = 'weighted' | 'stable_first';
 
-const siteRuntimeHealthStates = new Map<number, SiteRuntimeHealthState>();
+// Single-bucket model: keyed by (siteId, modelName). No separate global bucket.
 const siteModelRuntimeHealthStates = new Map<number, Map<string, SiteRuntimeHealthState>>();
 let siteRuntimeHealthLoaded = false;
 let siteRuntimeHealthLoadPromise: Promise<void> | null = null;
 let siteRuntimeHealthSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let siteRuntimeHealthPersistInFlight: Promise<void> | null = null;
+let siteRuntimeHealthPersistDirty = false;
 
 function fibonacciNumber(index: number): number {
   if (index <= 2) return 1;
@@ -233,6 +269,21 @@ function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {
   const status = typeof context.status === 'number' ? context.status : 0;
   const errorText = (context.errorText || '').trim();
 
+  // Completion-health checks MUST come before status-code checks.
+  // Stream failures often carry runtimeFailureStatus=502 from the surface layer,
+  // but the errorText reveals they are soft completion issues, not true 5xx outages.
+  if (matchesAnyPattern(SITE_CLIENT_CANCELLATION_PATTERNS, errorText)) {
+    return 0;      // Client cancelled — not the site's fault
+  }
+
+  if (matchesAnyPattern(SITE_SOFT_STREAM_FAILURE_PATTERNS, errorText)) {
+    return 0.30;   // Soft stream interruption — site alive, upstream hiccup
+  }
+
+  if (matchesAnyPattern(SITE_EMPTY_CONTENT_FAILURE_PATTERNS, errorText)) {
+    return 0.35;   // Empty content — site responded but no useful output
+  }
+
   if (status >= 500 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText)) {
     return 2.5;
   }
@@ -271,7 +322,22 @@ function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {
 function isTransientSiteRuntimeFailure(context: SiteRuntimeFailureContext = {}): boolean {
   const status = typeof context.status === 'number' ? context.status : 0;
   const errorText = (context.errorText || '').trim();
+  // Completion-health issues should NOT trigger the availability breaker
+  if (matchesAnyPattern(SITE_CLIENT_CANCELLATION_PATTERNS, errorText)) return false;
+  if (matchesAnyPattern(SITE_SOFT_STREAM_FAILURE_PATTERNS, errorText)) return false;
+  if (matchesAnyPattern(SITE_EMPTY_CONTENT_FAILURE_PATTERNS, errorText)) return false;
   return status >= 500 || status === 429 || status === 402 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText);
+}
+
+function isSoftCompletionFailure(context: SiteRuntimeFailureContext = {}): boolean {
+  const errorText = (context.errorText || '').trim();
+  return matchesAnyPattern(SITE_SOFT_STREAM_FAILURE_PATTERNS, errorText)
+    || matchesAnyPattern(SITE_EMPTY_CONTENT_FAILURE_PATTERNS, errorText);
+}
+
+function isClientCancellation(context: SiteRuntimeFailureContext = {}): boolean {
+  const errorText = (context.errorText || '').trim();
+  return matchesAnyPattern(SITE_CLIENT_CANCELLATION_PATTERNS, errorText);
 }
 
 function getDecayedSiteRuntimePenalty(state: SiteRuntimeHealthState, nowMs: number): number {
@@ -296,6 +362,7 @@ function hydrateSiteRuntimeHealthState(raw: unknown): SiteRuntimeHealthState | n
     lastUpdatedAtMs: Math.max(0, lastUpdatedAtMs),
     lastFailureAtMs: readNullableTimestamp(raw.lastFailureAtMs),
     lastSuccessAtMs: readNullableTimestamp(raw.lastSuccessAtMs),
+    recentSuccessStreak: Math.max(0, readFiniteInteger(raw.recentSuccessStreak) ?? 0),
   };
 }
 
@@ -310,6 +377,7 @@ function cloneSiteRuntimeHealthState(state: SiteRuntimeHealthState): SiteRuntime
     lastUpdatedAtMs: state.lastUpdatedAtMs,
     lastFailureAtMs: state.lastFailureAtMs,
     lastSuccessAtMs: state.lastSuccessAtMs,
+    recentSuccessStreak: state.recentSuccessStreak,
   };
 }
 
@@ -326,6 +394,7 @@ function getOrCreateRuntimeHealthState<K>(states: Map<K, SiteRuntimeHealthState>
       lastUpdatedAtMs: nowMs,
       lastFailureAtMs: null,
       lastSuccessAtMs: null,
+      recentSuccessStreak: 0,
     };
     states.set(key, initial);
     return initial;
@@ -339,10 +408,6 @@ function getOrCreateRuntimeHealthState<K>(states: Map<K, SiteRuntimeHealthState>
   return existing;
 }
 
-function getOrCreateSiteRuntimeHealthState(siteId: number, nowMs = Date.now()): SiteRuntimeHealthState {
-  return getOrCreateRuntimeHealthState(siteRuntimeHealthStates, siteId, nowMs);
-}
-
 function getSiteModelRuntimeHealthState(siteId: number, modelName?: string | null): SiteRuntimeHealthState | null {
   const modelKey = normalizeModelAlias(modelName || '');
   if (!modelKey) return null;
@@ -351,11 +416,10 @@ function getSiteModelRuntimeHealthState(siteId: number, modelName?: string | nul
 
 function getOrCreateSiteModelRuntimeHealthState(
   siteId: number,
-  modelName?: string | null,
+  modelName: string,
   nowMs = Date.now(),
-): SiteRuntimeHealthState | null {
-  const modelKey = normalizeModelAlias(modelName || '');
-  if (!modelKey) return null;
+): SiteRuntimeHealthState {
+  const modelKey = normalizeModelAlias(modelName);
   let modelStates = siteModelRuntimeHealthStates.get(siteId);
   if (!modelStates) {
     modelStates = new Map<string, SiteRuntimeHealthState>();
@@ -382,26 +446,37 @@ function getRuntimeHealthMultiplier(state: SiteRuntimeHealthState | null | undef
 
 function getSiteRuntimeHealthDetails(siteId: number, modelName?: string | null, nowMs = Date.now()): SiteRuntimeHealthDetails {
   const modelKey = normalizeModelAlias(modelName || '');
-  const globalState = siteRuntimeHealthStates.get(siteId);
-  const modelState = modelKey ? getSiteModelRuntimeHealthState(siteId, modelKey) : null;
-  const globalMultiplier = getRuntimeHealthMultiplier(globalState, nowMs);
-  const modelMultiplier = modelState ? getRuntimeHealthMultiplier(modelState, nowMs) : 1;
+  const state = modelKey ? getSiteModelRuntimeHealthState(siteId, modelKey) : null;
+  const multiplier = getRuntimeHealthMultiplier(state, nowMs);
   return {
-    globalMultiplier,
-    modelMultiplier,
-    combinedMultiplier: clampNumber(
-      globalMultiplier * modelMultiplier,
-      SITE_RUNTIME_MIN_MULTIPLIER * SITE_RUNTIME_MIN_MULTIPLIER,
-      1,
-    ),
-    globalBreakerOpen: isRuntimeHealthBreakerOpen(globalState, nowMs),
-    modelBreakerOpen: isRuntimeHealthBreakerOpen(modelState, nowMs),
+    multiplier,
+    breakerOpen: isRuntimeHealthBreakerOpen(state, nowMs),
     modelKey,
   };
 }
 
-function applyRuntimeHealthFailure(state: SiteRuntimeHealthState, context: SiteRuntimeFailureContext = {}, nowMs = Date.now()): void {
-  state.penaltyScore += resolveSiteRuntimeFailurePenalty(context);
+function applyRuntimeHealthFailure(
+  state: SiteRuntimeHealthState,
+  context: SiteRuntimeFailureContext = {},
+  nowMs = Date.now(),
+): void {
+  // Client cancellation — not the site's fault, skip entirely
+  if (isClientCancellation(context)) return;
+
+  const basePenalty = resolveSiteRuntimeFailurePenalty(context);
+
+  if (isSoftCompletionFailure(context)) {
+    // Completion-health failure: dampen penalty based on accumulated success trust.
+    // A site that has had many recent successes absorbs soft failures more gracefully.
+    // DON'T reset success streak — the site is fundamentally healthy.
+    const dampening = 1 / (1 + state.recentSuccessStreak / SOFT_PENALTY_DAMPENING_K);
+    state.penaltyScore += basePenalty * dampening;
+  } else {
+    // Admission-health failure: full penalty, reset success trust.
+    state.penaltyScore += basePenalty;
+    state.recentSuccessStreak = 0;
+  }
+
   if (isTransientSiteRuntimeFailure(context)) {
     const lastTransientFailureAtMs = state.lastTransientFailureAtMs;
     const shouldContinueStreak = (
@@ -418,7 +493,10 @@ function applyRuntimeHealthFailure(state: SiteRuntimeHealthState, context: SiteR
       state.breakerUntilMs = breakerMs > 0 ? nowMs + breakerMs : null;
       state.transientFailureStreak = 0;
     }
-  } else {
+  } else if (!isSoftCompletionFailure(context)) {
+    // Only hard non-transient failures reset the streak.
+    // Soft completion failures should neither increment nor clear the streak,
+    // so that a hard→hard→soft→hard sequence can still reach the breaker threshold.
     state.transientFailureStreak = 0;
     state.lastTransientFailureAtMs = null;
   }
@@ -428,6 +506,7 @@ function applyRuntimeHealthFailure(state: SiteRuntimeHealthState, context: SiteR
 function applyRuntimeHealthSuccess(state: SiteRuntimeHealthState, latencyMs: number, nowMs = Date.now()): void {
   // Gradual recovery: reduce penalty by 50% instead of near-clearing it (was: score * 0.2 - 0.3)
   state.penaltyScore = Math.max(0, state.penaltyScore * 0.5);
+  state.recentSuccessStreak++;
   state.transientFailureStreak = 0;
   state.lastTransientFailureAtMs = null;
   // Step down breaker level by 1 instead of clearing entirely (was: breakerLevel = 0)
@@ -465,13 +544,7 @@ function shouldPersistSiteRuntimeHealthState(state: SiteRuntimeHealthState, nowM
 }
 
 function buildSiteRuntimeHealthPersistencePayload(nowMs = Date.now()): SiteRuntimeHealthPersistencePayload {
-  const globalBySiteId: Record<string, SiteRuntimeHealthState> = {};
-  const modelBySiteId: Record<string, Record<string, SiteRuntimeHealthState>> = {};
-
-  for (const [siteId, state] of siteRuntimeHealthStates.entries()) {
-    if (!shouldPersistSiteRuntimeHealthState(state, nowMs)) continue;
-    globalBySiteId[String(siteId)] = cloneSiteRuntimeHealthState(state);
-  }
+  const bySiteModel: Record<string, Record<string, SiteRuntimeHealthState>> = {};
 
   for (const [siteId, modelStates] of siteModelRuntimeHealthStates.entries()) {
     const persistedModels: Record<string, SiteRuntimeHealthState> = {};
@@ -480,23 +553,26 @@ function buildSiteRuntimeHealthPersistencePayload(nowMs = Date.now()): SiteRunti
       persistedModels[modelKey] = cloneSiteRuntimeHealthState(state);
     }
     if (Object.keys(persistedModels).length > 0) {
-      modelBySiteId[String(siteId)] = persistedModels;
+      bySiteModel[String(siteId)] = persistedModels;
     }
   }
 
   return {
     version: 1,
     savedAtMs: nowMs,
-    globalBySiteId,
-    modelBySiteId,
+    bySiteModel,
   };
 }
 
 async function persistSiteRuntimeHealthState(): Promise<void> {
   if (siteRuntimeHealthPersistInFlight) {
+    // Mark dirty so the current writer knows to re-persist after finishing.
+    siteRuntimeHealthPersistDirty = true;
     await siteRuntimeHealthPersistInFlight;
-    return;
+    // If another waiter already handled the dirty flag, we're done.
+    if (!siteRuntimeHealthPersistDirty) return;
   }
+  siteRuntimeHealthPersistDirty = false;
   const persistTask = (async () => {
     const payload = buildSiteRuntimeHealthPersistencePayload();
     await upsertSetting(SITE_RUNTIME_HEALTH_SETTING_KEY, payload);
@@ -507,6 +583,10 @@ async function persistSiteRuntimeHealthState(): Promise<void> {
     }
   });
   await siteRuntimeHealthPersistInFlight;
+  // If someone dirtied state while we were writing, persist once more.
+  if (siteRuntimeHealthPersistDirty) {
+    await persistSiteRuntimeHealthState();
+  }
 }
 
 function scheduleSiteRuntimeHealthPersistence(): void {
@@ -520,7 +600,6 @@ function scheduleSiteRuntimeHealthPersistence(): void {
 }
 
 async function loadSiteRuntimeHealthStateFromSettings(): Promise<void> {
-  siteRuntimeHealthStates.clear();
   siteModelRuntimeHealthStates.clear();
 
   const row = await db.select({ value: schema.settings.value })
@@ -537,16 +616,10 @@ async function loadSiteRuntimeHealthStateFromSettings(): Promise<void> {
   }
   if (!isRecord(parsed)) return;
 
-  const globalBySiteId = isRecord(parsed.globalBySiteId) ? parsed.globalBySiteId : {};
-  for (const [siteIdKey, stateRaw] of Object.entries(globalBySiteId)) {
-    const siteId = Number(siteIdKey);
-    if (!Number.isFinite(siteId) || siteId <= 0) continue;
-    const state = hydrateSiteRuntimeHealthState(stateRaw);
-    if (!state) continue;
-    siteRuntimeHealthStates.set(siteId, state);
-  }
-
-  const modelBySiteId = isRecord(parsed.modelBySiteId) ? parsed.modelBySiteId : {};
+  // Support both new `bySiteModel` and legacy `modelBySiteId` keys
+  const modelBySiteId = isRecord(parsed.bySiteModel) ? parsed.bySiteModel
+    : isRecord(parsed.modelBySiteId) ? parsed.modelBySiteId
+    : {};
   for (const [siteIdKey, modelStatesRaw] of Object.entries(modelBySiteId)) {
     const siteId = Number(siteIdKey);
     if (!Number.isFinite(siteId) || siteId <= 0 || !isRecord(modelStatesRaw)) continue;
@@ -581,26 +654,19 @@ async function ensureSiteRuntimeHealthStateLoaded(): Promise<void> {
   await siteRuntimeHealthLoadPromise;
 }
 
-function recordSiteRuntimeFailure(siteId: number, context: SiteRuntimeFailureContext = {}, nowMs = Date.now()): void {
-  applyRuntimeHealthFailure(getOrCreateSiteRuntimeHealthState(siteId, nowMs), context, nowMs);
-  const modelState = getOrCreateSiteModelRuntimeHealthState(siteId, context.modelName, nowMs);
-  if (modelState) {
-    applyRuntimeHealthFailure(modelState, context, nowMs);
-  }
+function recordSiteRuntimeFailure(siteId: number, modelName: string, context: SiteRuntimeFailureContext = {}, nowMs = Date.now()): void {
+  const state = getOrCreateSiteModelRuntimeHealthState(siteId, modelName, nowMs);
+  applyRuntimeHealthFailure(state, context, nowMs);
   scheduleSiteRuntimeHealthPersistence();
 }
 
-function recordSiteRuntimeSuccess(siteId: number, latencyMs: number, modelName?: string | null, nowMs = Date.now()): void {
-  applyRuntimeHealthSuccess(getOrCreateSiteRuntimeHealthState(siteId, nowMs), latencyMs, nowMs);
-  const modelState = getOrCreateSiteModelRuntimeHealthState(siteId, modelName, nowMs);
-  if (modelState) {
-    applyRuntimeHealthSuccess(modelState, latencyMs, nowMs);
-  }
+function recordSiteRuntimeSuccess(siteId: number, modelName: string, latencyMs: number, nowMs = Date.now()): void {
+  const state = getOrCreateSiteModelRuntimeHealthState(siteId, modelName, nowMs);
+  applyRuntimeHealthSuccess(state, latencyMs, nowMs);
   scheduleSiteRuntimeHealthPersistence();
 }
 
 export function resetSiteRuntimeHealthState(): void {
-  siteRuntimeHealthStates.clear();
   siteModelRuntimeHealthStates.clear();
   siteRuntimeHealthLoaded = false;
   siteRuntimeHealthLoadPromise = null;
@@ -609,6 +675,18 @@ export function resetSiteRuntimeHealthState(): void {
     siteRuntimeHealthSaveTimer = null;
   }
   siteRuntimeHealthPersistInFlight = null;
+}
+
+export async function resetSiteRuntimeHealthForSite(siteId: number): Promise<void> {
+  await ensureSiteRuntimeHealthStateLoaded();
+  siteModelRuntimeHealthStates.delete(siteId);
+  // Flush immediately — this is an explicit admin action that must survive a
+  // process restart. The debounce timer is not reliable enough here.
+  if (siteRuntimeHealthSaveTimer) {
+    clearTimeout(siteRuntimeHealthSaveTimer);
+    siteRuntimeHealthSaveTimer = null;
+  }
+  await persistSiteRuntimeHealthState();
 }
 
 export async function flushSiteRuntimeHealthPersistence(): Promise<void> {
@@ -623,34 +701,9 @@ export async function flushSiteRuntimeHealthPersistence(): Promise<void> {
   }
 }
 
-export function getSiteRuntimeHealthMultiplier(siteId: number, nowMs = Date.now()): number {
-  const state = siteRuntimeHealthStates.get(siteId);
-  return getRuntimeHealthMultiplier(state, nowMs);
-}
-
-export function isSiteRuntimeBreakerOpen(siteId: number, nowMs = Date.now()): boolean {
-  const state = siteRuntimeHealthStates.get(siteId);
-  return isRuntimeHealthBreakerOpen(state, nowMs);
-}
-
-export function filterSiteRuntimeBrokenCandidates<T extends { site: { id: number } }>(
-  candidates: T[],
-  nowMs = Date.now(),
-): T[] {
-  if (candidates.length <= 1) return candidates;
-  const healthy = candidates.filter((candidate) => !isSiteRuntimeBreakerOpen(candidate.site.id, nowMs));
-  return healthy.length > 0 ? healthy : candidates;
-}
-
 function buildRuntimeBreakerReason(details: SiteRuntimeHealthDetails): string {
-  if (details.globalBreakerOpen && details.modelBreakerOpen) {
-    return '站点熔断中，模型熔断中，优先避让';
-  }
-  if (details.globalBreakerOpen) {
-    return '站点熔断中，优先避让';
-  }
-  if (details.modelBreakerOpen) {
-    return '模型熔断中，优先避让';
+  if (details.breakerOpen) {
+    return '熔断中，优先避让';
   }
   return '运行时熔断中，优先避让';
 }
@@ -676,7 +729,7 @@ function filterSiteRuntimeBrokenCandidatesByModel(
   const avoided: Array<{ candidate: RouteChannelCandidate; reason: string }> = [];
   const healthy = candidates.filter((candidate) => {
     const details = getSiteRuntimeHealthDetails(candidate.site.id, resolveModelName(candidate), nowMs);
-    const blocked = details.globalBreakerOpen || details.modelBreakerOpen;
+    const blocked = details.breakerOpen;
     if (blocked) {
       avoided.push({
         candidate,
@@ -1416,7 +1469,7 @@ export class TokenRouter {
         ? runtimeModelResolver(row)
         : runtimeModelResolver;
       const candidateHealth = getSiteRuntimeHealthDetails(row.site.id, resolvedModelForHealth, nowMs);
-      const candidateGlobalState = siteRuntimeHealthStates.get(row.site.id);
+      const candidateState = getSiteModelRuntimeHealthState(row.site.id, resolvedModelForHealth);
       const candidate: RouteDecisionCandidate = {
         channelId: row.channel.id,
         accountId: row.account.id,
@@ -1431,12 +1484,10 @@ export class TokenRouter {
         probability: 0,
         reason: eligible ? '可用' : reasonParts.join('、'),
         runtimeHealth: {
-          combinedMultiplier: candidateHealth.combinedMultiplier,
-          globalBreakerOpen: candidateHealth.globalBreakerOpen,
-          modelBreakerOpen: candidateHealth.modelBreakerOpen,
-          latencyEmaMs: candidateGlobalState?.latencyEmaMs ?? null,
-          penaltyScore: (candidateGlobalState ? getDecayedSiteRuntimePenalty(candidateGlobalState, nowMs) : 0)
-            + (candidateHealth.modelKey ? (() => { const ms = getSiteModelRuntimeHealthState(row.site.id, candidateHealth.modelKey); return ms ? getDecayedSiteRuntimePenalty(ms, nowMs) : 0; })() : 0),
+          combinedMultiplier: candidateHealth.multiplier,
+          breakerOpen: candidateHealth.breakerOpen,
+          latencyEmaMs: candidateState?.latencyEmaMs ?? null,
+          penaltyScore: candidateState ? getDecayedSiteRuntimePenalty(candidateState, nowMs) : 0,
         },
       };
       candidates.push(candidate);
@@ -1720,7 +1771,7 @@ export class TokenRouter {
       channel.cooldownLevel = 0;
     });
 
-    recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
+    recordSiteRuntimeSuccess(account.siteId, modelName || '', latencyMs);
   }
 
   /**
@@ -1741,10 +1792,39 @@ export class TokenRouter {
     const route = row.token_routes;
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
-    const failCount = (ch.failCount ?? 0) + 1;
     const normalizedContext: SiteRuntimeFailureContext = typeof context === 'string'
       ? { modelName: context }
       : (context ?? {});
+
+    // Client cancellations are not the channel's fault — skip channel-level
+    // bookkeeping entirely (no failCount bump, no cooldown).
+    if (isClientCancellation(normalizedContext)) {
+      recordSiteRuntimeFailure(account.siteId, normalizedContext.modelName || '', normalizedContext, nowMs);
+      return;
+    }
+
+    // Soft completion failures (stream closed, empty content) get a short fixed
+    // cooldown so the channel is briefly deprioritized, but we do NOT escalate
+    // consecutiveFailCount — this avoids fibonacci snowballing on transient hiccups.
+    if (isSoftCompletionFailure(normalizedContext)) {
+      const softCooldownUntil = new Date(nowMs + SOFT_CHANNEL_COOLDOWN_SEC * 1000).toISOString();
+      await db.update(schema.routeChannels).set({
+        failCount: (ch.failCount ?? 0) + 1,
+        lastFailAt: nowIso,
+        cooldownUntil: softCooldownUntil,
+      }).where(eq(schema.routeChannels.id, channelId)).run();
+
+      patchCachedChannel(channelId, (channel) => {
+        channel.failCount = (ch.failCount ?? 0) + 1;
+        channel.lastFailAt = nowIso;
+        channel.cooldownUntil = softCooldownUntil;
+      });
+
+      recordSiteRuntimeFailure(account.siteId, normalizedContext.modelName || '', normalizedContext, nowMs);
+      return;
+    }
+
+    const failCount = (ch.failCount ?? 0) + 1;
     const routeStrategy = resolveRouteStrategy(route);
     let cooldownUntil: string | null = null;
     let consecutiveFailCount = Math.max(0, ch.consecutiveFailCount ?? 0) + 1;
@@ -1781,7 +1861,7 @@ export class TokenRouter {
       channel.cooldownLevel = cooldownLevel;
     });
 
-    recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
+    recordSiteRuntimeFailure(account.siteId, normalizedContext.modelName || '', normalizedContext, nowMs);
   }
 
   /**
@@ -2218,7 +2298,7 @@ export class TokenRouter {
         contribution *= combinedSiteWeight;
       }
 
-      contribution *= runtimeHealthDetails[i]?.combinedMultiplier ?? 1;
+      contribution *= runtimeHealthDetails[i]?.multiplier ?? 1;
       contribution *= siteHistoricalHealthMetrics.get(candidate.site.id)?.multiplier ?? 1;
 
       // If upstream price is unknown and we are using fallback unit cost,
@@ -2270,9 +2350,7 @@ export class TokenRouter {
       const historicalLatencyText = siteHistoricalHealth?.avgLatencyMs == null
         ? '—'
         : `${siteHistoricalHealth.avgLatencyMs}ms`;
-      const runtimeHealthText = siteRuntimeDetail.modelKey
-        ? `${siteRuntimeDetail.combinedMultiplier.toFixed(2)}（站点=${siteRuntimeDetail.globalMultiplier.toFixed(2)}，模型=${siteRuntimeDetail.modelMultiplier.toFixed(2)}）`
-        : `${siteRuntimeDetail.globalMultiplier.toFixed(2)}`;
+      const runtimeHealthText = `${siteRuntimeDetail.multiplier.toFixed(2)}`;
       const reasonPrefix = selectionMode === 'stable_first'
         ? `稳定优先（综合评分第 ${rankByIndex.get(i) ?? 1} / ${candidates.length}`
         : '按权重随机';

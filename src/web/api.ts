@@ -494,6 +494,7 @@ export const api = {
   detectSite: (url: string) => request('/api/sites/detect', { method: 'POST', body: JSON.stringify({ url }) }),
   getSiteDisabledModels: (siteId: number) => request(`/api/sites/${siteId}/disabled-models`),
   updateSiteDisabledModels: (siteId: number, models: string[]) => request(`/api/sites/${siteId}/disabled-models`, { method: 'PUT', body: JSON.stringify({ models }) }),
+  resetSiteHealth: (siteId: number) => request(`/api/sites/${siteId}/reset-health`, { method: 'POST' }),
   getSiteAvailableModels: (siteId: number) => request(`/api/sites/${siteId}/available-models`),
   probeModels: (siteId: number, data: { modelNames?: string[]; prompt?: string; concurrency?: number; timeoutMs?: number }) =>
     request(`/api/sites/${siteId}/probe-models`, { method: 'POST', body: JSON.stringify(data), timeoutMs: 120_000 }),

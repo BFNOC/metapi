@@ -11,7 +11,7 @@ import {
   normalizeRouteRoutingStrategy,
   type RouteRoutingStrategy,
 } from '../../services/routeRoutingStrategy.js';
-import { invalidateTokenRouterCache, matchesModelPattern, tokenRouter } from '../../services/tokenRouter.js';
+import { invalidateTokenRouterCache, matchesModelPattern, tokenRouter, resetSiteRuntimeHealthForSite } from '../../services/tokenRouter.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import {
   clearRouteDecisionSnapshot,
@@ -1389,6 +1389,36 @@ export async function tokensRoutes(app: FastifyInstance) {
         ? '路由重建任务执行中，请稍后查看程序日志'
         : '已开始路由重建，请稍后查看程序日志',
     });
+  });
+
+  // Reset runtime health penalties for a specific site
+  app.post<{ Params: { siteId: string } }>('/api/sites/:siteId/reset-health', async (request, reply) => {
+    const siteId = parseInt(request.params.siteId, 10);
+    if (!Number.isFinite(siteId) || siteId <= 0) {
+      return reply.code(400).send({ success: false, message: '无效的站点 ID' });
+    }
+
+    const site = await db.select().from(schema.sites).where(eq(schema.sites.id, siteId)).get();
+    if (!site) {
+      return reply.code(404).send({ success: false, message: '站点不存在' });
+    }
+
+    await resetSiteRuntimeHealthForSite(siteId);
+
+    // Clear decision snapshots for routes that use this site so the UI reflects the reset
+    const affectedRows = await db.select({ routeId: schema.routeChannels.routeId })
+      .from(schema.routeChannels)
+      .innerJoin(schema.accounts, eq(schema.routeChannels.accountId, schema.accounts.id))
+      .where(eq(schema.accounts.siteId, siteId))
+      .all();
+    const affectedRouteIds: number[] = Array.from(new Set(affectedRows.map((r: { routeId: number }) => r.routeId)));
+    if (affectedRouteIds.length > 0) {
+      await clearRouteDecisionSnapshots(affectedRouteIds);
+      // Also clear snapshots for explicit_group routes that source from affected routes
+      await clearDependentExplicitGroupSnapshotsBySourceRouteIds(affectedRouteIds);
+    }
+
+    return { success: true, message: `已清除站点「${site.name || siteId}」的运行时健康惩罚` };
   });
 }
 

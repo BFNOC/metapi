@@ -14,12 +14,10 @@ export type RouteDecisionCandidate = {
     reason: string;
     /** Runtime health observability — error-driven, latency is display-only */
     runtimeHealth?: {
-        /** Error-only combined multiplier (0.02 ~ 1.0) */
+        /** Error-only health multiplier (0.02 ~ 1.0), single (siteId, model) bucket */
         combinedMultiplier: number;
-        /** Site-level circuit breaker active */
-        globalBreakerOpen: boolean;
-        /** Model-level circuit breaker active */
-        modelBreakerOpen: boolean;
+        /** Circuit breaker active for this (site, model) pair */
+        breakerOpen: boolean;
         /** Latency EMA in ms — observability only, NOT used in routing */
         latencyEmaMs: number | null;
         /** Current decayed penalty score */

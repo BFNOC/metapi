@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import CenteredModal from './CenteredModal.js';
 
 type NextStepChoice = 'session' | 'apikey' | 'later';
 
@@ -10,74 +10,53 @@ type Props = {
 };
 
 export default function SiteCreatedModal({ siteName, platform, onChoice, onClose }: Props) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-
-    if (!dialog.open) {
-      dialog.showModal();
-    }
-
-    return () => {
-      if (dialog.open) {
-        dialog.close();
-      }
-    };
-  }, []);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onChoice('later');
-    }
+  const handleClose = () => {
+    onChoice('later');
   };
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="modal"
-      onKeyDown={handleKeyDown}
-      onClick={(e) => {
-        if (e.target === dialogRef.current) {
-          onChoice('later');
-        }
-      }}
-    >
-      <div className="modal-box" style={{ maxWidth: 480 }}>
-        <h3 className="font-bold text-lg mb-2">
+    <CenteredModal
+      open
+      onClose={handleClose}
+      closeOnBackdrop
+      maxWidth={480}
+      title={
+        <div style={{ fontSize: 14, fontWeight: 600 }}>
           站点创建成功
-        </h3>
-        <p className="py-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-          站点 <strong>"{siteName}"</strong> 已添加成功。接下来您想做什么？
-        </p>
-
-        <div className="modal-action" style={{ flexDirection: 'column', gap: 12 }}>
+        </div>
+      }
+      footer={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
           <button
-            className="btn btn-primary btn-block"
+            className="btn btn-primary"
+            style={{ width: '100%' }}
             onClick={() => onChoice('session')}
           >
             添加账号（用户名密码登录）
           </button>
           <button
-            className="btn btn-outline btn-block"
+            className="btn btn-ghost"
+            style={{ width: '100%', border: '1px solid var(--color-border)' }}
             onClick={() => onChoice('apikey')}
           >
             添加 API Key
           </button>
           <button
-            className="btn btn-ghost btn-block"
+            className="btn btn-ghost"
+            style={{ width: '100%' }}
             onClick={() => onChoice('later')}
           >
             稍后配置
           </button>
         </div>
-
-        <p className="text-xs mt-3" style={{ color: 'var(--color-text-muted)' }}>
-          提示：您可以随时在"站点管理"页面配置账号信息
-        </p>
-      </div>
-    </dialog>
+      }
+    >
+      <p style={{ color: 'var(--color-text-muted)', fontSize: 13, margin: 0 }}>
+        站点 <strong>"{siteName}"</strong> 已添加成功。接下来您想做什么？
+      </p>
+      <p style={{ color: 'var(--color-text-muted)', fontSize: 12, margin: '8px 0 0' }}>
+        提示：您可以随时在"站点管理"页面配置账号信息
+      </p>
+    </CenteredModal>
   );
 }

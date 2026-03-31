@@ -61,6 +61,9 @@ type SyncableAccount = {
     name?: string | null;
   } | null;
 };
+
+const ACCOUNT_SELECT_SEARCH_PLACEHOLDER = '筛选账号（名称 / 站点）';
+
 const isAccountSyncable = (account: any) =>
   resolveAccountCredentialMode(account) === 'session'
   && account?.status === 'active'
@@ -338,6 +341,17 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     && accountClusteredTokens.every((token) => selectedTokenIds.includes(token.id));
 
   const activeAccounts = useMemo(() => accounts.filter(isAccountSyncable), [accounts]);
+  const activeAccountSelectOptions = useMemo(() => (
+    activeAccounts.map((account) => {
+      const accountName = account.username || `account-${account.id}`;
+      const siteName = account.site?.name || '-';
+      return {
+        value: String(account.id),
+        label: `${accountName} @ ${siteName}`,
+        description: siteName,
+      };
+    })
+  ), [activeAccounts]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -818,12 +832,11 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
               onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
               options={[
                 { value: '0', label: '选择账号后同步站点令牌' },
-                ...activeAccounts.map((account) => ({
-                  value: String(account.id),
-                  label: `${account.username || `account-${account.id}`} @ ${account.site?.name || '-'}`,
-                })),
+                ...activeAccountSelectOptions,
               ]}
               placeholder="选择账号后同步站点令牌"
+              searchable
+              searchPlaceholder={ACCOUNT_SELECT_SEARCH_PLACEHOLDER}
             />
           </div>
           <button
@@ -851,7 +864,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         {showAdd ? '取消' : '+ 新增令牌'}
       </button>
     </div>
-  ), [activeAccounts, allVisibleTokensSelected, embedded, handleSync, handleSyncAll, handleToggleAdd, isMobile, showAdd, syncing, syncingAccountId, syncingAll]);
+  ), [activeAccountSelectOptions, activeAccounts.length, allVisibleTokensSelected, embedded, handleSync, handleSyncAll, handleToggleAdd, isMobile, showAdd, syncing, syncingAccountId, syncingAll]);
 
   useEffect(() => {
     if (!embedded || !onEmbeddedActionsChange) return;
@@ -884,12 +897,11 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                 onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
                 options={[
                   { value: '0', label: '选择账号后同步站点令牌' },
-                  ...activeAccounts.map((account) => ({
-                    value: String(account.id),
-                    label: `${account.username || `account-${account.id}`} @ ${account.site?.name || '-'}`,
-                  })),
+                  ...activeAccountSelectOptions,
                 ]}
                 placeholder="选择账号后同步站点令牌"
+                searchable
+                searchPlaceholder={ACCOUNT_SELECT_SEARCH_PLACEHOLDER}
               />
             </div>
             <button
@@ -1086,12 +1098,11 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
               }}
               options={[
                 { value: '0', label: '选择账号' },
-                ...activeAccounts.map((account) => ({
-                  value: String(account.id),
-                  label: `${account.username || `account-${account.id}`} @ ${account.site?.name || '-'}`,
-                })),
+                ...activeAccountSelectOptions,
               ]}
               placeholder="选择账号"
+              searchable
+              searchPlaceholder={ACCOUNT_SELECT_SEARCH_PLACEHOLDER}
             />
           </div>
           {createHintModelName ? (

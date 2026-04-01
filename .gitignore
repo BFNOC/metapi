@@ -22,6 +22,10 @@ Thumbs.db
 docker/data/
 docker/.env
 
+# Local ops/debug scripts
+batch_set_allowlist.sh
+check_tokens.ts
+
 # Local planning docs
 docs/plan/
 docs/plans/

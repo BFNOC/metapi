@@ -581,6 +581,7 @@ export const api = {
   batchUpdateChannels: (updates: Array<{ id: number; priority: number }>) =>
     request('/api/channels/batch', { method: 'PUT', body: JSON.stringify({ updates }) }),
   deleteChannel: (id: number) => request(`/api/channels/${id}`, { method: 'DELETE' }),
+  resetChannelCooldown: (id: number) => request(`/api/channels/${id}/reset-cooldown`, { method: 'POST' }),
   resetRouteChannelPriority: (routeId: number) =>
     request(`/api/routes/${routeId}/channels/reset-priority`, { method: 'POST' }),
   rebuildRoutes: (refreshModels = true, wait = false) => request('/api/routes/rebuild', {

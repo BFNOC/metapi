@@ -145,11 +145,27 @@ effectivePenalty = basePenalty × 1/(1 + recentSuccessStreak / K)
 
 ### 手动重置
 
-管理员可通过 `POST /api/sites/:siteId/reset-health` 清除指定站点的运行时健康惩罚：
-- 删除该站点下所有模型桶的内存状态
+管理员可通过两种粒度的 API 清除冷却和惩罚状态：
+
+#### 站点级重置
+
+`POST /api/sites/:siteId/reset-health`
+
+- 删除该站点下所有模型桶的内存状态（penalty、breaker）
+- **同步清除**该站点下所有通道的 DB 级冷却字段（`cooldownUntil`、`cooldownLevel`、`consecutiveFailCount`、`lastFailAt`）
+- 更新内存通道缓存（`patchCachedChannel`）
 - **立即持久化**（不走 debounce），确保进程重启后不会恢复旧惩罚
 - 清除受影响路由的决策快照（包括 explicit_group 依赖路由）
 - 前端自动刷新决策展示
+
+#### 通道级冷却重置
+
+`POST /api/channels/:channelId/reset-cooldown`
+
+- 仅清除指定通道的 DB 级冷却字段，不影响同站点其他通道
+- 适用场景：单个通道因偶发错误进入冷却，但站点整体健康
+- 清除受影响路由的决策快照
+- 刷新路由缓存
 
 > 对于黑与白这样 573 成功的主力站点，即使连续 5 次 stream closed，
 > 有效惩罚仅 5 × 0.005 = 0.025，multiplier 仍保持 ×0.98。
@@ -183,6 +199,21 @@ effectivePenalty = basePenalty × 1/(1 + recentSuccessStreak / K)
 
 查看方式：进入路由管理 → 展开某个路由 → 查看各通道右侧的 badge。
 
+### 操作按钮
+
+当通道或站点处于异常状态时，在通道行内会出现可点击的操作按钮：
+
+| 按钮 | 触发条件 | 样式 | 操作 |
+|------|---------|------|------|
+| ↻ 撤销处罚 | 站点存在运行时惩罚（penalty/breaker） | 橙色渐变药丸 | 调用站点级重置 API |
+| ❄ 解除冷却 | 通道处于冷却中状态 | 蓝色渐变药丸 | 调用通道级冷却重置 API |
+
+两个按钮均带有 hover 浮起动效和 tooltip 提示。点击后自动刷新路由决策。
+
+### 算法可观测性
+
+选中概率条（probability bar）和百分比数字上带有 tooltip，hover 后显示路由引擎的完整决策逻辑（如 `weighted-random` 权重分配、`stable-first` 排序依据等），方便诊断通道选择行为。
+
 ## 与上游（原版 metapi）的差异
 
 | 特性 | 原版 | 本 Fork |
@@ -196,4 +227,8 @@ effectivePenalty = basePenalty × 1/(1 + recentSuccessStreak / K)
 | 软流中断惩罚 | 1.2（默认） | 0.30（轻罚） |
 | 客户端取消惩罚 | 1.2（默认） | 0（不罚） |
 | 健康 WebUI 可视化 | 无 | ✅ badge + tooltip |
+| 手动站点重置 | 仅内存 | ✅ 内存 + DB 通道冷却同步 |
+| 手动通道重置 | 无 | ✅ 单通道冷却独立重置 |
+| 算法可观测 | 无 | ✅ 概率条 tooltip 显示路由算法 |
+| 操作按钮 | 无 | ✅ 撤销处罚 + 解除冷却药丸按钮 |
 

@@ -295,7 +295,7 @@ export function getChannelDecisionState(
   return {
     probability,
     showBar: true,
-    reasonText: '',
+    reasonText: candidate.reason || '',
     reasonColor: 'var(--color-text-muted)',
   };
 }

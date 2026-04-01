@@ -687,6 +687,37 @@ export async function resetSiteRuntimeHealthForSite(siteId: number): Promise<voi
     siteRuntimeHealthSaveTimer = null;
   }
   await persistSiteRuntimeHealthState();
+
+  // Also clear channel-level cooldown state for all channels under this site.
+  // Without this, channels remain in "冷却中" even after the site-level penalty
+  // is revoked, because getCandidateEligibilityReasons checks cooldownUntil
+  // independently of site runtime health.
+  const affectedChannels: Array<{ id: number }> = await db.select({ id: schema.routeChannels.id })
+    .from(schema.routeChannels)
+    .innerJoin(schema.accounts, eq(schema.routeChannels.accountId, schema.accounts.id))
+    .where(eq(schema.accounts.siteId, siteId))
+    .all();
+
+  if (affectedChannels.length > 0) {
+    const channelIds = affectedChannels.map(({ id }) => id);
+    await db.update(schema.routeChannels).set({
+      cooldownUntil: null,
+      cooldownLevel: 0,
+      consecutiveFailCount: 0,
+      lastFailAt: null,
+    }).where(inArray(schema.routeChannels.id, channelIds)).run();
+
+    // Patch in-memory cache so the change is visible immediately without
+    // waiting for a cache invalidation cycle.
+    for (const { id } of affectedChannels) {
+      patchCachedChannel(id, (channel) => {
+        channel.cooldownUntil = null;
+        channel.cooldownLevel = 0;
+        channel.consecutiveFailCount = 0;
+        channel.lastFailAt = null;
+      });
+    }
+  }
 }
 
 export async function flushSiteRuntimeHealthPersistence(): Promise<void> {

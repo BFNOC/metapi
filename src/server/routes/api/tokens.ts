@@ -1325,6 +1325,32 @@ export async function tokensRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
+  // Reset cooldown for a single channel
+  app.post<{ Params: { channelId: string } }>('/api/channels/:channelId/reset-cooldown', async (request, reply) => {
+    const channelId = parseInt(request.params.channelId, 10);
+    if (!Number.isFinite(channelId) || channelId <= 0) {
+      return reply.code(400).send({ success: false, message: '无效的通道 ID' });
+    }
+
+    const channel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
+    if (!channel) {
+      return reply.code(404).send({ success: false, message: '通道不存在' });
+    }
+
+    await db.update(schema.routeChannels).set({
+      cooldownUntil: null,
+      cooldownLevel: 0,
+      consecutiveFailCount: 0,
+      lastFailAt: null,
+    }).where(eq(schema.routeChannels.id, channelId)).run();
+
+    await clearRouteDecisionSnapshot(channel.routeId);
+    await clearDependentExplicitGroupSnapshotsBySourceRouteIds([channel.routeId]);
+    invalidateTokenRouterCache();
+
+    return { success: true, message: `已清除通道 ${channelId} 的冷却状态` };
+  });
+
   // Reset all channel priorities for a route to 0 (weight-based scheduling)
   app.post<{ Params: { id: string } }>('/api/routes/:id/channels/reset-priority', async (request, reply) => {
     const routeId = parseInt(request.params.id, 10);
@@ -1417,8 +1443,9 @@ export async function tokensRoutes(app: FastifyInstance) {
       // Also clear snapshots for explicit_group routes that source from affected routes
       await clearDependentExplicitGroupSnapshotsBySourceRouteIds(affectedRouteIds);
     }
+    invalidateTokenRouterCache();
 
-    return { success: true, message: `已清除站点「${site.name || siteId}」的运行时健康惩罚` };
+    return { success: true, message: `已清除站点「${site.name || siteId}」的运行时健康惩罚及通道冷却` };
   });
 }
 

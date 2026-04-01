@@ -1325,6 +1325,22 @@ export default function TokenRoutes() {
     [],
   );
 
+  const handleResetChannelCooldown = async (channelId: number) => {
+    try {
+      const res = await api.resetChannelCooldown(channelId);
+      toast.success(res.message || '已解除通道冷却');
+      loadRouteDecisions(routeSummaries, { force: true, persistSnapshots: true }).catch(() => {});
+    } catch (e: unknown) {
+      toast.error((e instanceof Error ? e.message : null) || '解除通道冷却失败');
+    }
+  };
+  const handleResetChannelCooldownRef = useRef(handleResetChannelCooldown);
+  handleResetChannelCooldownRef.current = handleResetChannelCooldown;
+  const stableResetChannelCooldown = useCallback(
+    (channelId: number) => handleResetChannelCooldownRef.current(channelId),
+    [],
+  );
+
   const addChannelModalRoute = addChannelModalRouteId
     ? routeSummaries.find((r) => r.id === addChannelModalRouteId) || null
     : null;
@@ -1701,6 +1717,7 @@ export default function TokenRoutes() {
                     expandedSourceGroupMap={expandedSourceGroupMap}
                     onToggleSourceGroup={stableToggleSourceGroup}
                     onResetSiteHealth={stableResetSiteHealth}
+                    onResetChannelCooldown={stableResetChannelCooldown}
                   />
                 )}
               </div>
@@ -1740,6 +1757,7 @@ export default function TokenRoutes() {
               expandedSourceGroupMap={expandedSourceGroupMap}
               onToggleSourceGroup={stableToggleSourceGroup}
               onResetSiteHealth={stableResetSiteHealth}
+              onResetChannelCooldown={stableResetChannelCooldown}
             />
           );
 

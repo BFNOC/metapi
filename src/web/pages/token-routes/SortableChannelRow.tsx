@@ -95,20 +95,31 @@ function RuntimeHealthBadges({ health, siteId, onResetHealth }: RuntimeHealthBad
       <button
         key="reset-health"
         type="button"
-        className="btn btn-link"
+        className="badge"
         style={{
           fontSize: 10,
-          padding: '1px 4px',
-          lineHeight: 1,
-          color: 'var(--color-info)',
-          textDecoration: 'underline',
+          fontWeight: 600,
+          padding: '3px 8px',
+          background: 'linear-gradient(135deg, color-mix(in srgb, var(--color-warning) 18%, transparent), color-mix(in srgb, var(--color-danger) 12%, transparent))',
+          color: 'var(--color-warning)',
+          border: '1px solid color-mix(in srgb, var(--color-warning) 25%, transparent)',
           cursor: 'pointer',
+          transition: 'all 0.2s ease',
+          letterSpacing: 0.2,
         }}
         aria-label="清除该站点的运行时健康惩罚"
         data-tooltip="清除该站点的运行时惩罚（penalty、熔断），立即恢复正常权重"
         onClick={(e) => { e.stopPropagation(); onResetHealth(siteId); }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-1px)';
+          e.currentTarget.style.boxShadow = '0 3px 10px color-mix(in srgb, var(--color-warning) 25%, transparent)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = '';
+          e.currentTarget.style.boxShadow = '';
+        }}
       >
-        撤销处罚
+        ↻ 撤销处罚
       </button>,
     );
   }
@@ -148,6 +159,7 @@ export function SortableChannelRow({
   onToggleEnabled,
   onSiteBlockModel,
   onResetSiteHealth,
+  onResetChannelCooldown,
 }: SortableChannelRowProps) {
   const {
     attributes,
@@ -191,6 +203,9 @@ export function SortableChannelRow({
   );
 
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
+
+  const isCoolingDown = decisionState.reasonText === '冷却中'
+    || (!!channel.cooldownUntil && channel.cooldownUntil > new Date().toISOString());
 
   // Shared action buttons rendered inside ChannelSettingsPanel
   const actionButtons = (
@@ -337,7 +352,7 @@ export function SortableChannelRow({
               <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 120 }}>
                 <div
-                  data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
+                  data-tooltip={decisionState.reasonText || undefined}
                   style={{
                     width: 80,
                     height: 6,
@@ -357,7 +372,7 @@ export function SortableChannelRow({
                   />
                 </div>
                 <span
-                  data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
+                  data-tooltip={decisionState.reasonText || undefined}
                   style={{
                     fontSize: 11,
                     color: decisionState.probability > 0 ? 'var(--color-text-secondary)' : decisionState.reasonColor,
@@ -370,6 +385,36 @@ export function SortableChannelRow({
               </div>
 
               <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} siteId={channel.site?.id} onResetHealth={onResetSiteHealth} />
+
+              {isCoolingDown && onResetChannelCooldown && (
+                <button
+                  type="button"
+                  className="badge"
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: '3px 8px',
+                    background: 'linear-gradient(135deg, color-mix(in srgb, var(--color-info) 18%, transparent), color-mix(in srgb, var(--color-primary) 12%, transparent))',
+                    color: 'var(--color-info)',
+                    border: '1px solid color-mix(in srgb, var(--color-info) 25%, transparent)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    letterSpacing: 0.2,
+                  }}
+                  data-tooltip="清除该通道的冷却状态，立即恢复可用"
+                  onClick={(e) => { e.stopPropagation(); onResetChannelCooldown(channel.id); }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                    e.currentTarget.style.boxShadow = '0 3px 10px color-mix(in srgb, var(--color-info) 25%, transparent)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = '';
+                    e.currentTarget.style.boxShadow = '';
+                  }}
+                >
+                  ❄ 解除冷却
+                </button>
+              )}
 
               {!readOnly && (
                 <button
@@ -508,7 +553,7 @@ export function SortableChannelRow({
           <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 120 }}>
             <div
-              data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
+              data-tooltip={decisionState.reasonText || undefined}
               style={{
                 width: 80,
                 height: 6,
@@ -528,7 +573,7 @@ export function SortableChannelRow({
               />
             </div>
             <span
-              data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
+              data-tooltip={decisionState.reasonText || undefined}
               style={{
                 fontSize: 11,
                 color: decisionState.probability > 0 ? 'var(--color-text-secondary)' : decisionState.reasonColor,
@@ -548,6 +593,36 @@ export function SortableChannelRow({
           </span>
 
           <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} siteId={channel.site?.id} onResetHealth={onResetSiteHealth} />
+
+          {isCoolingDown && onResetChannelCooldown && (
+            <button
+              type="button"
+              className="badge"
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '3px 8px',
+                background: 'linear-gradient(135deg, color-mix(in srgb, var(--color-info) 18%, transparent), color-mix(in srgb, var(--color-primary) 12%, transparent))',
+                color: 'var(--color-info)',
+                border: '1px solid color-mix(in srgb, var(--color-info) 25%, transparent)',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                letterSpacing: 0.2,
+              }}
+              data-tooltip="清除该通道的冷却状态，立即恢复可用"
+              onClick={(e) => { e.stopPropagation(); onResetChannelCooldown(channel.id); }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-1px)';
+                e.currentTarget.style.boxShadow = '0 3px 10px color-mix(in srgb, var(--color-info) 25%, transparent)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = '';
+                e.currentTarget.style.boxShadow = '';
+              }}
+            >
+              ❄ 解除冷却
+            </button>
+          )}
         </div>
       </div>
 

@@ -81,6 +81,7 @@ type RouteCardProps = {
   expandedSourceGroupMap: Record<string, boolean>;
   onToggleSourceGroup: (groupKey: string) => void;
   onResetSiteHealth?: (siteId: number) => void;
+  onResetChannelCooldown?: (channelId: number) => void;
 };
 
 function AnimatedCollapseSection({ open, children }: { open: boolean; children: ReactNode }) {
@@ -128,6 +129,7 @@ function RouteCardInner({
   expandedSourceGroupMap,
   onToggleSourceGroup,
   onResetSiteHealth,
+  onResetChannelCooldown,
 }: RouteCardProps) {
   const routeIcon = resolveRouteIcon(route);
   const exactRoute = isRouteExactModel(route);
@@ -578,6 +580,7 @@ function RouteCardInner({
                                 onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
                                 onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
                                 onResetSiteHealth={onResetSiteHealth}
+                                onResetChannelCooldown={onResetChannelCooldown}
                               />
                             );
                           })}
@@ -604,6 +607,7 @@ function RouteCardInner({
                                 onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
                                 onSiteBlockModel={() => onSiteBlockModel(channel.id, route.id)}
                                 onResetSiteHealth={onResetSiteHealth}
+                                onResetChannelCooldown={onResetChannelCooldown}
                               />
                             );
                           })}

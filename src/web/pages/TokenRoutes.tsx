@@ -1314,10 +1314,13 @@ export default function TokenRoutes() {
       toast.success(res.message || '已清除站点运行时惩罚');
       // Refresh route decisions so badges reflect the reset immediately
       loadRouteDecisions(routeSummaries, { force: true, persistSnapshots: true }).catch(() => {});
-      // Refresh channel lists for all expanded routes so cooldown buttons disappear
-      for (const routeId of expandedRouteIds) {
-        if (channelsByRouteId[routeId]) {
+      // Refresh expanded routes' channel lists; invalidate collapsed-but-cached
+      // routes so they re-fetch fresh data when expanded again.
+      for (const routeId of Object.keys(channelsByRouteId).map(Number)) {
+        if (expandedRouteIds.includes(routeId)) {
           loadChannels(routeId, true).catch(() => {});
+        } else {
+          invalidateChannels(routeId);
         }
       }
     } catch (e: unknown) {
@@ -1336,11 +1339,15 @@ export default function TokenRoutes() {
       const res = await api.resetChannelCooldown(channelId);
       toast.success(res.message || '已解除通道冷却');
       loadRouteDecisions(routeSummaries, { force: true, persistSnapshots: true }).catch(() => {});
-      // Refresh the channel list for the route containing this channel
-      for (const routeId of expandedRouteIds) {
+      // Refresh or invalidate the channel list for the route containing this channel
+      for (const routeId of Object.keys(channelsByRouteId).map(Number)) {
         const channels = channelsByRouteId[routeId];
         if (channels?.some((ch) => ch.id === channelId)) {
-          loadChannels(routeId, true).catch(() => {});
+          if (expandedRouteIds.includes(routeId)) {
+            loadChannels(routeId, true).catch(() => {});
+          } else {
+            invalidateChannels(routeId);
+          }
           break;
         }
       }

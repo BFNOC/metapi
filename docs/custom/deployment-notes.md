@@ -10,6 +10,8 @@ export https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897 all_pr
 docker buildx build --platform linux/amd64 -f docker/Dockerfile -t hfxmci/metapi:latest --push .
 ```
 
+> **⚠️ 注意**：上述命令仅构建 **amd64** 单架构镜像。ARM 设备（如 Apple Silicon Mac、树莓派、部分 VPS）拉取后会走 QEMU 仿真，性能显著下降。如需多架构支持，改为 `--platform linux/amd64,linux/arm64`。
+
 ## Docker Compose 配置
 
 ```yaml

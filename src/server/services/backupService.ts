@@ -1600,6 +1600,8 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         source: row.source,
         enabled: row.enabled,
         isDefault: row.isDefault,
+        modelFilterMode: row.modelFilterMode ?? null,
+        filteredModels: row.filteredModels ?? null,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();

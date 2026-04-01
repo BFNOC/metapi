@@ -351,6 +351,20 @@ export async function refreshModelsForAccount(
     }
   };
 
+  // Skip checks BEFORE clearing availability — otherwise a skipped refresh would
+  // wipe existing model data and leave the account with no routable models.
+  if (isSiteDisabled(site.status)) {
+    return buildSkippedRefreshResult(accountId, 'site_disabled', '站点已禁用');
+  }
+
+  if (site.probeDisabled && !options?.ignoreProbeDisabled) {
+    return buildSkippedRefreshResult(accountId, 'probe_disabled', '站点已禁用模型探测');
+  }
+
+  if (account.status !== 'active' && !options?.allowInactive) {
+    return buildSkippedRefreshResult(accountId, 'adapter_or_status', '平台不可用或账号未激活');
+  }
+
   await clearExistingAvailability();
 
   // Collect manual model names so discovered models that collide are skipped (unique index).
@@ -364,18 +378,6 @@ export async function refreshModelsForAccount(
       .all()
     ).map((r) => r.modelName.toLowerCase()),
   );
-
-  if (isSiteDisabled(site.status)) {
-    return buildSkippedRefreshResult(accountId, 'site_disabled', '站点已禁用');
-  }
-
-  if (site.probeDisabled && !options?.ignoreProbeDisabled) {
-    return buildSkippedRefreshResult(accountId, 'probe_disabled', '站点已禁用模型探测');
-  }
-
-  if (account.status !== 'active' && !options?.allowInactive) {
-    return buildSkippedRefreshResult(accountId, 'adapter_or_status', '平台不可用或账号未激活');
-  }
 
   if (oauth?.provider === 'codex') {
     const checkedAt = new Date().toISOString();

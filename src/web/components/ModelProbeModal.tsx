@@ -93,22 +93,35 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
     // Load models for the token (or account)
     setLoadingModels(true);
     if (tokenId) {
-      // Load token's discovered models + filter config
-      Promise.all([
+      // Load token's discovered models + filter config via allSettled
+      // so a filter-fetch failure degrades gracefully to "select all"
+      Promise.allSettled([
         api.getTokenModels(tokenId),
         (api as any).getTokenModelFilter(tokenId),
-      ]).then(([modelsRes, filterRes]: [any, any]) => {
+      ]).then(([modelsResult, filterResult]) => {
+        // Models fetch is critical — if it fails, we have no baseline
+        if (modelsResult.status === 'rejected') {
+          setAvailableModels([]);
+          setSelectedModels(new Set());
+          return;
+        }
+        const modelsRes = modelsResult.value as any;
         const modelList: AvailableModel[] = Array.isArray(modelsRes?.models)
           ? modelsRes.models.map((m: any) => ({ name: String(m.name || m) }))
           : [];
         setAvailableModels(modelList);
 
-        // Pre-select based on filter mode
+        // Filter fetch is optional — failure means "unknown filter", fall back to select all
+        if (filterResult.status === 'rejected') {
+          setSelectedModels(new Set(modelList.map((m) => m.name)));
+          return;
+        }
+        const filterRes = filterResult.value as any;
         const mode = filterRes?.modelFilterMode || 'none';
         const filtered: string[] = Array.isArray(filterRes?.filteredModels) ? filterRes.filteredModels : [];
-        if (mode === 'allow-list' && filtered.length > 0) {
-          // Whitelist: only select the allowed models
-          setSelectedModels(new Set(filtered));
+        if (mode === 'allow-list') {
+          // Whitelist: only select the allowed models (confirmed empty allow-list = select nothing)
+          setSelectedModels(filtered.length > 0 ? new Set(filtered) : new Set());
         } else if (mode === 'deny-list' && filtered.length > 0) {
           // Blacklist: select all models EXCEPT the denied ones
           const deniedSet = new Set(filtered.map((m) => m.toLowerCase()));
@@ -117,47 +130,56 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
           // Default: select all discovered models
           setSelectedModels(new Set(modelList.map((m) => m.name)));
         }
-      }).catch(() => {
-        setAvailableModels([]);
-        setSelectedModels(new Set());
       }).finally(() => setLoadingModels(false));
     } else if (accountId) {
       // API Key connection probe: load account's discovered models + site filter
-      Promise.all([
+      // Use allSettled for optional requests so API failures don't masquerade as empty lists
+      Promise.allSettled([
         api.getAccountModels(accountId),
-        api.getSiteAllowedModels(siteId).catch(() => ({ models: [] })),
-        api.getSiteDisabledModels(siteId).catch(() => ({ models: [] })),
-        api.getSites().catch(() => []),
-      ]).then(([modelsRes, allowedRes, disabledRes, sitesRes]: [any, any, any, any]) => {
+        api.getSiteAllowedModels(siteId),
+        api.getSiteDisabledModels(siteId),
+        api.getSites(),
+      ]).then(([modelsResult, allowedResult, disabledResult, sitesResult]) => {
+        // Models fetch is critical
+        if (modelsResult.status === 'rejected') {
+          setAvailableModels([]);
+          setSelectedModels(new Set());
+          return;
+        }
+        const modelsRes = modelsResult.value as any;
         const modelList: AvailableModel[] = Array.isArray(modelsRes?.models)
           ? modelsRes.models.map((m: any) => ({ name: String(m.name || m) }))
           : [];
         setAvailableModels(modelList);
 
-        // Determine filter mode from site data
-        const site = Array.isArray(sitesRes) ? sitesRes.find((s: any) => s.id === siteId) : null;
-        const filterMode = site?.modelFilterMode || 'deny-list';
-        const allowedModels: string[] = Array.isArray(allowedRes?.models) ? allowedRes.models : [];
-        const disabledModels: string[] = Array.isArray(disabledRes?.models) ? disabledRes.models : [];
+        // Extract optional results — null means "fetch failed, unknown"
+        const allowedRes = allowedResult.status === 'fulfilled' ? allowedResult.value as any : null;
+        const disabledRes = disabledResult.status === 'fulfilled' ? disabledResult.value as any : null;
+        const sitesRes = sitesResult.status === 'fulfilled' ? sitesResult.value as any : null;
 
-        if (filterMode === 'allow-list' && allowedModels.length > 0) {
-          // Whitelist: only select allowed models
-          const allowedSet = new Set(allowedModels.map((m) => m.toLowerCase()));
-          setSelectedModels(new Set(modelList.filter((m) => allowedSet.has(m.name.toLowerCase())).map((m) => m.name)));
-        } else if (filterMode === 'deny-list' && disabledModels.length > 0) {
-          // Blacklist: select all except disabled models
+        // Determine filter mode from site data; null sitesRes means unknown → fall back to select all
+        const site = Array.isArray(sitesRes) ? sitesRes.find((s: any) => s.id === siteId) : null;
+        const filterMode = site?.modelFilterMode ?? null; // null = site fetch failed or site not found
+        const allowedModels: string[] | null = allowedRes ? (Array.isArray(allowedRes.models) ? allowedRes.models : []) : null;
+        const disabledModels: string[] | null = disabledRes ? (Array.isArray(disabledRes.models) ? disabledRes.models : []) : null;
+
+        if (filterMode === 'allow-list' && allowedModels !== null) {
+          // Whitelist with confirmed data: empty allow-list = select nothing
+          if (allowedModels.length > 0) {
+            const allowedSet = new Set(allowedModels.map((m) => m.toLowerCase()));
+            setSelectedModels(new Set(modelList.filter((m) => allowedSet.has(m.name.toLowerCase())).map((m) => m.name)));
+          } else {
+            setSelectedModels(new Set());
+          }
+        } else if (filterMode === 'deny-list' && disabledModels !== null && disabledModels.length > 0) {
+          // Blacklist with confirmed data: select all except disabled models
           const disabledSet = new Set(disabledModels.map((m) => m.toLowerCase()));
           setSelectedModels(new Set(modelList.filter((m) => !disabledSet.has(m.name.toLowerCase())).map((m) => m.name)));
         } else {
-          // No filter or empty list: select all
+          // No filter, unknown mode (fetch failed), or empty deny-list: select all
           setSelectedModels(new Set(modelList.map((m) => m.name)));
         }
-      })
-        .catch(() => {
-          setAvailableModels([]);
-          setSelectedModels(new Set());
-        })
-        .finally(() => setLoadingModels(false));
+      }).finally(() => setLoadingModels(false));
     } else {
       // Site-level probe without specific account: no pre-loaded model list
       setAvailableModels([]);

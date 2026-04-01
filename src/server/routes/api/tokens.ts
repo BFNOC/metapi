@@ -1186,7 +1186,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       .all())
       .some((channel) =>
         channel.accountId === body.accountId
-        && (channel.tokenId ?? null) === (body.tokenId ?? null)
+        && (channel.tokenId ?? null) === (normalizedTokenId ?? null)
         && (channel.sourceModel || '').trim().toLowerCase() === sourceModel.toLowerCase(),
       );
     if (duplicate) {

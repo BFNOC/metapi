@@ -53,8 +53,8 @@ JSON 字符串，格式为 `["model-a", "model-b", ...]`。
 
 ## 相关文件
 
-- [`src/server/db/schema.ts`](file:///src/server/db/schema.ts#L77-L95) — Drizzle Schema 定义
-- [`src/server/db/accountTokenSchemaCompatibility.ts`](file:///src/server/db/accountTokenSchemaCompatibility.ts) — 多方言迁移规范
-- [`src/server/db/index.ts`](file:///src/server/db/index.ts) → `ensureTokenManagementSchema()` — SQLite 启动迁移
-- [`src/server/services/backupService.ts`](file:///src/server/services/backupService.ts) — 备份导入时需包含自定义列
-- [`src/server/services/databaseMigrationService.ts`](file:///src/server/services/databaseMigrationService.ts) — 跨库迁移时需序列化自定义列
+- `src/server/db/schema.ts` — Drizzle Schema 定义
+- `src/server/db/accountTokenSchemaCompatibility.ts` — 多方言迁移规范
+- `src/server/db/index.ts` → `ensureTokenManagementSchema()` — SQLite 启动迁移
+- `src/server/services/backupService.ts` — 备份导入时需包含自定义列
+- `src/server/services/databaseMigrationService.ts` — 跨库迁移时需序列化自定义列

@@ -10,6 +10,68 @@ import { getChannelDecisionState, getPriorityTagStyle, getProbabilityColor } fro
 import { ChannelSettingsPanel } from './ChannelSettingsPanel.js';
 import type { RouteDecisionCandidate } from '../../../shared/tokenRouteContract.js';
 
+/* ── Shared action pill button ── */
+type ActionPillVariant = 'warning' | 'info';
+
+const PILL_VARIANT_STYLES: Record<ActionPillVariant, {
+  bg: string; color: string; border: string; shadow: string;
+}> = {
+  warning: {
+    bg: 'linear-gradient(135deg, color-mix(in srgb, var(--color-warning) 18%, transparent), color-mix(in srgb, var(--color-danger) 12%, transparent))',
+    color: 'var(--color-warning)',
+    border: '1px solid color-mix(in srgb, var(--color-warning) 25%, transparent)',
+    shadow: '0 3px 10px color-mix(in srgb, var(--color-warning) 25%, transparent)',
+  },
+  info: {
+    bg: 'linear-gradient(135deg, color-mix(in srgb, var(--color-info) 18%, transparent), color-mix(in srgb, var(--color-primary) 12%, transparent))',
+    color: 'var(--color-info)',
+    border: '1px solid color-mix(in srgb, var(--color-info) 25%, transparent)',
+    shadow: '0 3px 10px color-mix(in srgb, var(--color-info) 25%, transparent)',
+  },
+};
+
+function ActionPillButton(
+  { variant, label, tooltip, ariaLabel, onClick }: {
+    variant: ActionPillVariant;
+    label: string;
+    tooltip: string;
+    ariaLabel?: string;
+    onClick: (e: React.MouseEvent) => void;
+  },
+) {
+  const v = PILL_VARIANT_STYLES[variant];
+  return (
+    <button
+      type="button"
+      className="badge"
+      style={{
+        fontSize: 10,
+        fontWeight: 600,
+        padding: '3px 8px',
+        background: v.bg,
+        color: v.color,
+        border: v.border,
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+        letterSpacing: 0.2,
+      }}
+      aria-label={ariaLabel}
+      data-tooltip={tooltip}
+      onClick={(e) => { e.stopPropagation(); onClick(e); }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.transform = 'translateY(-1px)';
+        e.currentTarget.style.boxShadow = v.shadow;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.transform = '';
+        e.currentTarget.style.boxShadow = '';
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 type RuntimeHealthBadgesProps = {
   health: RouteDecisionCandidate['runtimeHealth'];
   siteId?: number;
@@ -92,35 +154,14 @@ function RuntimeHealthBadges({ health, siteId, onResetHealth }: RuntimeHealthBad
 
   if (hasPenalty && siteId && onResetHealth) {
     badges.push(
-      <button
+      <ActionPillButton
         key="reset-health"
-        type="button"
-        className="badge"
-        style={{
-          fontSize: 10,
-          fontWeight: 600,
-          padding: '3px 8px',
-          background: 'linear-gradient(135deg, color-mix(in srgb, var(--color-warning) 18%, transparent), color-mix(in srgb, var(--color-danger) 12%, transparent))',
-          color: 'var(--color-warning)',
-          border: '1px solid color-mix(in srgb, var(--color-warning) 25%, transparent)',
-          cursor: 'pointer',
-          transition: 'all 0.2s ease',
-          letterSpacing: 0.2,
-        }}
-        aria-label="清除该站点的运行时健康惩罚"
-        data-tooltip="清除该站点的运行时惩罚（penalty、熔断），立即恢复正常权重"
-        onClick={(e) => { e.stopPropagation(); onResetHealth(siteId); }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'translateY(-1px)';
-          e.currentTarget.style.boxShadow = '0 3px 10px color-mix(in srgb, var(--color-warning) 25%, transparent)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = '';
-          e.currentTarget.style.boxShadow = '';
-        }}
-      >
-        ↻ 撤销处罚
-      </button>,
+        variant="warning"
+        label="↻ 撤销处罚"
+        tooltip="清除该站点的运行时惩罚（penalty、熔断），立即恢复正常权重"
+        ariaLabel="清除该站点的运行时健康惩罚"
+        onClick={() => onResetHealth(siteId)}
+      />,
     );
   }
 
@@ -387,33 +428,12 @@ export function SortableChannelRow({
               <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} siteId={channel.site?.id} onResetHealth={onResetSiteHealth} />
 
               {isCoolingDown && onResetChannelCooldown && (
-                <button
-                  type="button"
-                  className="badge"
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 600,
-                    padding: '3px 8px',
-                    background: 'linear-gradient(135deg, color-mix(in srgb, var(--color-info) 18%, transparent), color-mix(in srgb, var(--color-primary) 12%, transparent))',
-                    color: 'var(--color-info)',
-                    border: '1px solid color-mix(in srgb, var(--color-info) 25%, transparent)',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    letterSpacing: 0.2,
-                  }}
-                  data-tooltip="清除该通道的冷却状态，立即恢复可用"
-                  onClick={(e) => { e.stopPropagation(); onResetChannelCooldown(channel.id); }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                    e.currentTarget.style.boxShadow = '0 3px 10px color-mix(in srgb, var(--color-info) 25%, transparent)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = '';
-                    e.currentTarget.style.boxShadow = '';
-                  }}
-                >
-                  ❄ 解除冷却
-                </button>
+                <ActionPillButton
+                  variant="info"
+                  label="❄ 解除冷却"
+                  tooltip="清除该通道的冷却状态，立即恢复可用"
+                  onClick={() => onResetChannelCooldown(channel.id)}
+                />
               )}
 
               {!readOnly && (
@@ -595,33 +615,12 @@ export function SortableChannelRow({
           <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} siteId={channel.site?.id} onResetHealth={onResetSiteHealth} />
 
           {isCoolingDown && onResetChannelCooldown && (
-            <button
-              type="button"
-              className="badge"
-              style={{
-                fontSize: 10,
-                fontWeight: 600,
-                padding: '3px 8px',
-                background: 'linear-gradient(135deg, color-mix(in srgb, var(--color-info) 18%, transparent), color-mix(in srgb, var(--color-primary) 12%, transparent))',
-                color: 'var(--color-info)',
-                border: '1px solid color-mix(in srgb, var(--color-info) 25%, transparent)',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                letterSpacing: 0.2,
-              }}
-              data-tooltip="清除该通道的冷却状态，立即恢复可用"
-              onClick={(e) => { e.stopPropagation(); onResetChannelCooldown(channel.id); }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-1px)';
-                e.currentTarget.style.boxShadow = '0 3px 10px color-mix(in srgb, var(--color-info) 25%, transparent)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = '';
-                e.currentTarget.style.boxShadow = '';
-              }}
-            >
-              ❄ 解除冷却
-            </button>
+            <ActionPillButton
+              variant="info"
+              label="❄ 解除冷却"
+              tooltip="清除该通道的冷却状态，立即恢复可用"
+              onClick={() => onResetChannelCooldown(channel.id)}
+            />
           )}
         </div>
       </div>

@@ -128,5 +128,8 @@
 | `025cf91` | fix: 通道 tokenId 校验优化 + 登录会话延长至30天 + 剥离上游IP泄漏请求头 |
 | `2156154` | feat: 通道优先级与权重手动配置 — 路由 UI 新增 Priority/Weight 编辑 + 后端校验统一 |
 | `2cb16c0` | fix: 修复 Codex 审查发现的 7 项问题 |
-| *(pending)* | refactor: 精简模型发现 — Session 连接跳过账号级发现 + probeDisabled 手动刷新放行 |
-| *(pending)* | feat: API Key 连接新增探活功能 + 探活模型选择改为多选框 |
+| *(merged)* | refactor: 精简模型发现 — Session 连接跳过账号级发现 + probeDisabled 手动刷新放行 |
+| *(merged)* | feat: API Key 连接新增探活功能 + 探活模型选择改为多选框 |
+| *(merged)* | feat(路由健康): 站点运行时惩罚重置 + WebUI 健康 badge/操作按钮 |
+| `2bd80d1` | feat(路由健康): 通道级冷却重置 + 站点惩罚 DB 同步 + WebUI 操作按钮 |
+

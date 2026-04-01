@@ -1314,6 +1314,12 @@ export default function TokenRoutes() {
       toast.success(res.message || '已清除站点运行时惩罚');
       // Refresh route decisions so badges reflect the reset immediately
       loadRouteDecisions(routeSummaries, { force: true, persistSnapshots: true }).catch(() => {});
+      // Refresh channel lists for all expanded routes so cooldown buttons disappear
+      for (const routeId of expandedRouteIds) {
+        if (channelsByRouteId[routeId]) {
+          loadChannels(routeId, true).catch(() => {});
+        }
+      }
     } catch (e: unknown) {
       toast.error((e instanceof Error ? e.message : null) || '清除站点惩罚失败');
     }
@@ -1330,6 +1336,14 @@ export default function TokenRoutes() {
       const res = await api.resetChannelCooldown(channelId);
       toast.success(res.message || '已解除通道冷却');
       loadRouteDecisions(routeSummaries, { force: true, persistSnapshots: true }).catch(() => {});
+      // Refresh the channel list for the route containing this channel
+      for (const routeId of expandedRouteIds) {
+        const channels = channelsByRouteId[routeId];
+        if (channels?.some((ch) => ch.id === channelId)) {
+          loadChannels(routeId, true).catch(() => {});
+          break;
+        }
+      }
     } catch (e: unknown) {
       toast.error((e instanceof Error ? e.message : null) || '解除通道冷却失败');
     }

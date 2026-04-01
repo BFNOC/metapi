@@ -16,19 +16,16 @@
 | `8675ff3` | fix: cap weighted route backoff overflow crash (手动移植 #354) | ⚠️ tokenRouter.ts 已分叉，手动移植 3 行（Math.min cap） |
 | `5fffcb6` | feat: support CIDR admin allowlists (#377) | ✅ 无冲突 |
 | `8739065` | fix: add searchable token account selectors (#347) | ✅ 无冲突 |
-
-### 尝试但中止的 Commit
-
-| Commit | 说明 | 中止原因 |
-|--------|------|----------|
-| `ace5ddd` | fix: edit payload clearing boundaries (#381) | 5 文件冲突：accountsRoutePayloads.ts/monitor.test.ts 本地已删除（modify/delete），tokens.ts/downstreamApiKeys.ts/tokens.route-update-rebuild.test.ts 内容冲突 |
+| `6b19d06` | fix: empty stream success handling and unknown usage logs (#343) | ⚠️ chatSurface.ts/openAiResponsesSurface.ts/ProxyLogs.test.tsx 3处冲突，保留本地协议亲和性逻辑 + 采用上游空流成功处理 |
+| `ace5ddd` | fix: edit payload clearing boundaries (#381) | ⚠️ 5处冲突：accountsRoutePayloads.ts/monitor.test.ts（modify/delete，接受上游重建）+ tokens.ts/downstreamApiKeys.ts/test 内容冲突 |
+| `1e0dffe` | fix: mysql insert boundary handling (#364) | ⚠️ 7处冲突：accountTokens.ts/sites.ts/tokens.ts/downstreamApiKeys.ts 内容冲突 + oauthSiteRegistry.ts/proxyDebugTraceStore.ts（modify/delete，接受上游）|
 
 ### 跳过的 Commit（已审阅，不需要）
 
 | Commit | 说明 | 跳过原因 |
 |--------|------|----------|
 | `6e04db6` | fix: site-created dialog cancel cleanup (#341) | SiteCreatedModal 本地已重构为 CenteredModal，补丁无法 apply |
-| `6b19d06` | fix: empty stream success handling (#343) | 24 文件中 2 个 surface 文件冲突，需专项移植（后续处理） |
+
 | `3ce5179` | fix: detect latest digest updates in update center (#344) | Update center 基础设施 |
 | `d930b87` | fix: Anyrouter model sync shield handling (#348) | Anyrouter 专用修复 |
 | `baa11d7` | cache update center status snapshots (#349) | Update center 基础设施 |
@@ -40,7 +37,7 @@
 | `8c3be1a` | add zod payload contracts for admin API (#358) | 适合分模块渐进引入，不适合一次吞 |
 | `3ebe851` | fix update helper health for ready failed release (#361) | Update center |
 | `aac1307` | add vendor code entry presets follow-up (#363) | 依赖 #351 |
-| `1e0dffe` | fix mysql insert boundary handling (#364) | 20 文件 +544 行，tokens.ts/backupService.ts 等 6 文件拒绝，需专项移植 |
+
 | `532be86` | add route cooldown controls (#365) | 与本地通道冷却重置功能重叠，需对比评估（见审阅报告） |
 | `21d92e1` | recognize structured oauth accounts in routing (#369) | OAuth 功能 |
 | `37a86d1` | background route decision refresh (#370) | 路由决策后台刷新 |

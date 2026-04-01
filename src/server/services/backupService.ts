@@ -1,6 +1,7 @@
 import { asc, eq } from 'drizzle-orm';
 import cron from 'node-cron';
 import { db, schema } from '../db/index.js';
+import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { upsertSetting } from '../db/upsertSetting.js';
 import { mergeAccountExtraConfig } from './accountExtraConfig.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
@@ -1776,8 +1777,12 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
           siteWeightMultipliers: row.siteWeightMultipliers ?? null,
           excludedSiteIds: row.excludedSiteIds ?? null,
           lastUsedAt: runtimeDownstream?.lastUsedAt ?? row.lastUsedAt ?? null,
-        }).returning({ id: schema.downstreamApiKeys.id }).get();
-        downstreamApiKeyIdByKey.set(normalizedKey, insertedKey.id);
+        }).run();
+        const downstreamApiKeyId = requireInsertedRowId(
+          insertedKey,
+          `failed to import downstream api key: ${maskSecret(normalizedKey)}`,
+        );
+        downstreamApiKeyIdByKey.set(normalizedKey, downstreamApiKeyId);
       }
     }
 

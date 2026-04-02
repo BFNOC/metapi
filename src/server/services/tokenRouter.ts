@@ -76,6 +76,8 @@ type SiteRuntimeHealthState = {
 
 const FAILURE_BACKOFF_BASE_SEC = 60;              // Aggressive: 60s base (was 15s), uses consecutiveFailCount now
 const SOFT_CHANNEL_COOLDOWN_SEC = 10;             // Short fixed cooldown for soft completion failures (no fibonacci escalation)
+// Keep weighted-route backoff within the JavaScript Date range when fail counts grow large.
+const MAX_FAILURE_BACKOFF_SEC = 30 * 24 * 60 * 60;
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
 const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
@@ -221,9 +223,13 @@ function fibonacciNumber(index: number): number {
   return current;
 }
 
+/**
+ * Weighted-route failures use a Fibonacci backoff, but the resulting cooldown must stay
+ * representable as a JavaScript Date for downstream `toISOString()` calls.
+ */
 function resolveFailureBackoffSec(failCount?: number | null): number {
   const normalizedFailCount = Math.max(1, Math.trunc(failCount ?? 0));
-  return FAILURE_BACKOFF_BASE_SEC * fibonacciNumber(normalizedFailCount);
+  return Math.min(FAILURE_BACKOFF_BASE_SEC * fibonacciNumber(normalizedFailCount), MAX_FAILURE_BACKOFF_SEC);
 }
 
 function resolveRoundRobinCooldownSec(level: number): number {
@@ -523,7 +529,7 @@ function applyRuntimeHealthSuccess(state: SiteRuntimeHealthState, latencyMs: num
   state.latencyEmaMs = state.latencyEmaMs == null
     ? normalizedLatencyMs
     : (state.latencyEmaMs * (1 - SITE_RUNTIME_LATENCY_EMA_ALPHA))
-      + (normalizedLatencyMs * SITE_RUNTIME_LATENCY_EMA_ALPHA);
+    + (normalizedLatencyMs * SITE_RUNTIME_LATENCY_EMA_ALPHA);
 }
 
 function shouldPersistSiteRuntimeHealthState(state: SiteRuntimeHealthState, nowMs = Date.now()): boolean {
@@ -619,7 +625,7 @@ async function loadSiteRuntimeHealthStateFromSettings(): Promise<void> {
   // Support both new `bySiteModel` and legacy `modelBySiteId` keys
   const modelBySiteId = isRecord(parsed.bySiteModel) ? parsed.bySiteModel
     : isRecord(parsed.modelBySiteId) ? parsed.modelBySiteId
-    : {};
+      : {};
   for (const [siteIdKey, modelStatesRaw] of Object.entries(modelBySiteId)) {
     const siteId = Number(siteIdKey);
     if (!Number.isFinite(siteId) || siteId <= 0 || !isRecord(modelStatesRaw)) continue;
@@ -1984,11 +1990,11 @@ export class TokenRouter {
           nowMs,
         )
         : this.weightedRandomSelect(
-        candidates,
-        requestedByDisplayName ? runtimeModelResolver : mappedModel,
-        downstreamPolicy,
-        nowMs,
-      );
+          candidates,
+          requestedByDisplayName ? runtimeModelResolver : mappedModel,
+          downstreamPolicy,
+          nowMs,
+        );
       if (!selected) continue;
 
       const tokenValue = this.resolveChannelTokenValue(selected);

@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import cron from 'node-cron';
 import { fetch } from 'undici';
-import { config } from '../../config.js';
+import { config, normalizeTokenRouterFailureCooldownMaxSec } from '../../config.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
@@ -72,6 +72,7 @@ interface RuntimeSettingsBody {
   notifyCooldownSec?: number;
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
+  tokenRouterFailureCooldownMaxSec?: number;
   routingWeights?: Partial<RoutingWeights>;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
@@ -562,6 +563,12 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.routingFallbackUnitCost = Math.max(1e-6, n);
       return;
     }
+    case 'token_router_failure_cooldown_max_sec': {
+      const normalized = normalizeTokenRouterFailureCooldownMaxSec(value);
+      if (normalized == null) return;
+      config.tokenRouterFailureCooldownMaxSec = normalized;
+      return;
+    }
     default:
       return;
   }
@@ -581,6 +588,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
     proxySessionChannelQueueWaitMs: config.proxySessionChannelQueueWaitMs,
     routingFallbackUnitCost: config.routingFallbackUnitCost,
+    tokenRouterFailureCooldownMaxSec: config.tokenRouterFailureCooldownMaxSec,
     routingWeights: config.routingWeights,
     webhookUrl: config.webhookUrl,
     barkUrl: config.barkUrl,
@@ -1296,6 +1304,18 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.routingFallbackUnitCost = normalized;
       upsertSetting('routing_fallback_unit_cost', normalized);
+    }
+
+    if (body.tokenRouterFailureCooldownMaxSec !== undefined) {
+      const normalized = normalizeTokenRouterFailureCooldownMaxSec(body.tokenRouterFailureCooldownMaxSec);
+      if (normalized == null) {
+        return reply.code(400).send({ success: false, message: '路由失败冷却上限必须是大于 0 的数字（秒）' });
+      }
+      if (normalized !== config.tokenRouterFailureCooldownMaxSec) {
+        changedLabels.push(`路由失败冷却上限（${config.tokenRouterFailureCooldownMaxSec}s -> ${normalized}s）`);
+      }
+      config.tokenRouterFailureCooldownMaxSec = normalized;
+      upsertSetting('token_router_failure_cooldown_max_sec', normalized);
     }
 
     if (changedLabels.length > 0) {

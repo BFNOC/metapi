@@ -1,7 +1,11 @@
 import { eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
-import { config } from '../config.js';
+import {
+  config,
+  normalizeTokenRouterFailureCooldownMaxSec,
+  TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING,
+} from '../config.js';
 import { getCachedModelRoutingReferenceCost, refreshModelPricingCatalog } from './modelPricingService.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
 import { proxyChannelCoordinator } from './proxyChannelCoordinator.js';
@@ -248,6 +252,21 @@ function fibonacciNumber(index: number): number {
 function resolveFailureBackoffSec(failCount?: number | null): number {
   const normalizedFailCount = Math.max(1, Math.trunc(failCount ?? 0));
   return Math.min(FAILURE_BACKOFF_BASE_SEC * fibonacciNumber(normalizedFailCount), MAX_FAILURE_BACKOFF_SEC);
+}
+
+function resolveConfiguredFailureCooldownMaxMs(): number {
+  const normalized = normalizeTokenRouterFailureCooldownMaxSec(config.tokenRouterFailureCooldownMaxSec)
+    ?? TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING;
+  return Math.max(1_000, normalized * 1000);
+}
+
+function clampFailureCooldownMs(cooldownMs: number): number {
+  const normalized = Math.max(0, Math.trunc(cooldownMs));
+  return Math.min(normalized, resolveConfiguredFailureCooldownMaxMs());
+}
+
+function resolveEffectiveFailureCooldownMs(failCount?: number | null): number {
+  return clampFailureCooldownMs(resolveFailureBackoffSec(failCount) * 1000);
 }
 
 function resolveRoundRobinCooldownSec(level: number): number {
@@ -709,6 +728,56 @@ function recordSiteRuntimeRecoverySuccess(siteId: number, modelName: string, now
   scheduleSiteRuntimeHealthPersistence();
 }
 
+type ChannelRuntimeHealthRef = {
+  siteId: number;
+  sourceModel?: string | null;
+  routeModelPattern: string;
+};
+
+function clearRuntimeHealthStatesForChannels(rows: ChannelRuntimeHealthRef[]): boolean {
+  let changed = false;
+  const modelKeysBySiteId = new Map<number, Set<string>>();
+
+  for (const row of rows) {
+    if (!Number.isFinite(row.siteId) || row.siteId <= 0) continue;
+    const resolvedModelName = normalizeChannelSourceModel(row.sourceModel)
+      || (isExactRouteModelPattern(row.routeModelPattern) ? row.routeModelPattern.trim() : '');
+    const modelKey = normalizeModelAlias(resolvedModelName);
+    if (!modelKey) continue;
+    if (!modelKeysBySiteId.has(row.siteId)) {
+      modelKeysBySiteId.set(row.siteId, new Set());
+    }
+    modelKeysBySiteId.get(row.siteId)!.add(modelKey);
+  }
+
+  for (const [siteId, modelKeys] of modelKeysBySiteId.entries()) {
+    const modelStates = siteModelRuntimeHealthStates.get(siteId);
+    if (!modelStates) continue;
+    for (const modelKey of modelKeys) {
+      if (modelStates.delete(modelKey)) {
+        changed = true;
+      }
+    }
+    if (modelStates.size === 0) {
+      siteModelRuntimeHealthStates.delete(siteId);
+    }
+  }
+
+  return changed;
+}
+
+export async function clearSiteModelRuntimeHealthForChannels(rows: ChannelRuntimeHealthRef[]): Promise<boolean> {
+  await ensureSiteRuntimeHealthStateLoaded();
+  const changed = clearRuntimeHealthStatesForChannels(rows);
+  if (!changed) return false;
+  if (siteRuntimeHealthSaveTimer) {
+    clearTimeout(siteRuntimeHealthSaveTimer);
+    siteRuntimeHealthSaveTimer = null;
+  }
+  await persistSiteRuntimeHealthState();
+  return true;
+}
+
 export function resetSiteRuntimeHealthState(): void {
   siteModelRuntimeHealthStates.clear();
   siteRuntimeHealthLoaded = false;
@@ -1087,14 +1156,15 @@ export function isChannelRecentlyFailed(
   nowMs = Date.now(),
   avoidSec = resolveFailureBackoffSec(channel.consecutiveFailCount),
 ): boolean {
-  if (avoidSec <= 0) return false;
+  const avoidMs = clampFailureCooldownMs(avoidSec * 1000);
+  if (avoidMs <= 0) return false;
   if ((channel.consecutiveFailCount ?? 0) <= 0) return false;
   if (!channel.lastFailAt) return false;
 
   const failTs = Date.parse(channel.lastFailAt);
   if (Number.isNaN(failTs)) return false;
 
-  return nowMs - failTs < avoidSec * 1000;
+  return nowMs - failTs < avoidMs;
 }
 
 export function filterRecentlyFailedCandidates<T extends { channel: FailureAwareChannel }>(
@@ -1800,7 +1870,7 @@ export class TokenRouter {
           const target = candidateMap.get(row.channel.id);
           if (!target) continue;
           target.avoidedByRecentFailure = true;
-          target.reason = `最近失败，优先避让（${resolveFailureBackoffSec(row.channel.consecutiveFailCount)} 秒窗口）`;
+          target.reason = `最近失败，优先避让（${Math.trunc(resolveEffectiveFailureCooldownMs(row.channel.consecutiveFailCount) / 1000)} 秒窗口）`;
         }
       }
 
@@ -2055,8 +2125,7 @@ export class TokenRouter {
     } else {
       // Fix: use consecutiveFailCount instead of cumulative failCount to avoid
       // permanently snowballing cooldowns on channels with high historical fail counts.
-      const cooldownSec = resolveFailureBackoffSec(consecutiveFailCount);
-      cooldownUntil = new Date(nowMs + cooldownSec * 1000).toISOString();
+      cooldownUntil = new Date(nowMs + resolveEffectiveFailureCooldownMs(consecutiveFailCount)).toISOString();
       // Keep consecutiveFailCount alive for fibonacci escalation; it resets on success.
     }
 

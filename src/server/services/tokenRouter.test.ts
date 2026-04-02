@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { config } from '../config.js';
 import { filterRecentlyFailedCandidates, isChannelRecentlyFailed, matchesModelPattern, parseRegexModelPattern } from './tokenRouter.js';
 
 type Candidate = {
@@ -39,6 +40,28 @@ describe('filterRecentlyFailedCandidates', () => {
       consecutiveFailCount: 4,
       lastFailAt: new Date(nowMs - 200 * 1000).toISOString(),
     }, nowMs)).toBe(false);
+  });
+
+  it('caps the recent-failure read path at the configured maximum cooldown', () => {
+    const previous = (config as any).tokenRouterFailureCooldownMaxSec;
+    (config as any).tokenRouterFailureCooldownMaxSec = 20;
+
+    try {
+      const nowMs = Date.now();
+      expect(isChannelRecentlyFailed({
+        failCount: 8,
+        consecutiveFailCount: 8,
+        lastFailAt: new Date(nowMs - 30 * 1000).toISOString(),
+      }, nowMs)).toBe(false);
+
+      expect(isChannelRecentlyFailed({
+        failCount: 8,
+        consecutiveFailCount: 8,
+        lastFailAt: new Date(nowMs - 10 * 1000).toISOString(),
+      }, nowMs)).toBe(true);
+    } finally {
+      (config as any).tokenRouterFailureCooldownMaxSec = previous;
+    }
   });
 
   it('prefers healthy channels when at least one healthy channel exists', () => {

@@ -12,7 +12,13 @@ import {
   normalizeRouteRoutingStrategy,
   type RouteRoutingStrategy,
 } from '../../services/routeRoutingStrategy.js';
-import { invalidateTokenRouterCache, matchesModelPattern, tokenRouter, resetSiteRuntimeHealthForSite } from '../../services/tokenRouter.js';
+import {
+  clearSiteModelRuntimeHealthForChannels,
+  invalidateTokenRouterCache,
+  matchesModelPattern,
+  tokenRouter,
+  resetSiteRuntimeHealthForSite,
+} from '../../services/tokenRouter.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import {
   clearRouteDecisionSnapshot,
@@ -220,6 +226,34 @@ async function clearDependentExplicitGroupSnapshotsBySourceRouteIds(sourceRouteI
   const dependentRouteIds = Array.from(dependentRouteIdSet);
   if (dependentRouteIds.length === 0) return;
   await clearRouteDecisionSnapshots(dependentRouteIds);
+}
+
+async function resolveCooldownClearRouteIds(route: RouteRow): Promise<number[]> {
+  if (!isExplicitGroupRoute(route)) {
+    return [route.id];
+  }
+
+  const sourceRouteIds = Array.from(new Set(
+    route.sourceRouteIds.filter((routeId): routeId is number => Number.isFinite(routeId) && routeId > 0),
+  ));
+  if (sourceRouteIds.length === 0) return [];
+
+  const sourceRoutes = await db.select({
+    id: schema.tokenRoutes.id,
+    modelPattern: schema.tokenRoutes.modelPattern,
+    routeMode: schema.tokenRoutes.routeMode,
+    enabled: schema.tokenRoutes.enabled,
+  }).from(schema.tokenRoutes)
+    .where(inArray(schema.tokenRoutes.id, sourceRouteIds))
+    .all();
+
+  return sourceRoutes
+    .filter((sourceRoute) => (
+      sourceRoute.enabled
+      && normalizeRouteMode(sourceRoute.routeMode) !== 'explicit_group'
+      && isExactModelPattern(sourceRoute.modelPattern)
+    ))
+    .map((sourceRoute) => sourceRoute.id);
 }
 
 async function getDefaultTokenId(accountId: number): Promise<number | null> {
@@ -1346,6 +1380,59 @@ export async function tokensRoutes(app: FastifyInstance) {
     invalidateTokenRouterCache();
 
     return { success: true, message: `已清除通道 ${channelId} 的冷却状态` };
+  });
+
+  app.post<{ Params: { id: string } }>('/api/routes/:id/cooldown/clear', async (request, reply) => {
+    const routeId = parseInt(request.params.id, 10);
+    if (!Number.isFinite(routeId) || routeId <= 0) {
+      return reply.code(400).send({ success: false, message: '无效的路由 ID' });
+    }
+
+    const route = await getRouteWithSources(routeId);
+    if (!route) {
+      return reply.code(404).send({ success: false, message: '路由不存在' });
+    }
+
+    const actualRouteIds = await resolveCooldownClearRouteIds(route);
+    const channelRows = actualRouteIds.length > 0
+      ? await db.select({
+        id: schema.routeChannels.id,
+        routeId: schema.routeChannels.routeId,
+        siteId: schema.accounts.siteId,
+        sourceModel: schema.routeChannels.sourceModel,
+        routeModelPattern: schema.tokenRoutes.modelPattern,
+      }).from(schema.routeChannels)
+        .innerJoin(schema.accounts, eq(schema.routeChannels.accountId, schema.accounts.id))
+        .innerJoin(schema.tokenRoutes, eq(schema.routeChannels.routeId, schema.tokenRoutes.id))
+        .where(inArray(schema.routeChannels.routeId, actualRouteIds))
+        .all()
+      : [];
+
+    const channelIds = channelRows.map((row) => row.id);
+    if (channelIds.length > 0) {
+      await db.update(schema.routeChannels).set({
+        cooldownUntil: null,
+        cooldownLevel: 0,
+        consecutiveFailCount: 0,
+        lastFailAt: null,
+      }).where(inArray(schema.routeChannels.id, channelIds)).run();
+
+      await clearSiteModelRuntimeHealthForChannels(channelRows);
+    }
+
+    const affectedRouteIds: number[] = Array.from(new Set(
+      channelRows
+        .map((row) => row.routeId)
+        .filter((id): id is number => Number.isFinite(id) && id > 0),
+    ));
+    await clearRouteDecisionSnapshot(route.id);
+    if (affectedRouteIds.length > 0) {
+      await clearRouteDecisionSnapshots(affectedRouteIds);
+      await clearDependentExplicitGroupSnapshotsBySourceRouteIds(affectedRouteIds);
+    }
+    invalidateTokenRouterCache();
+
+    return { success: true, clearedChannels: channelIds.length, message: '已清除路由冷却状态' };
   });
 
   // Reset all channel priorities for a route to 0 (weight-based scheduling)

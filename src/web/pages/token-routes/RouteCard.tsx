@@ -49,6 +49,8 @@ type RouteCardProps = {
   onEdit: (route: RouteSummaryRow) => void;
   onDelete: (routeId: number) => void;
   onToggleEnabled: (route: RouteSummaryRow) => void;
+  onClearCooldown: (routeId: number) => void;
+  clearingCooldown: boolean;
   onRoutingStrategyChange: (route: RouteSummaryRow, strategy: RouteRoutingStrategy) => void;
   updatingRoutingStrategy: boolean;
   // Channel data (loaded on demand)
@@ -105,6 +107,8 @@ function RouteCardInner({
   onEdit,
   onDelete,
   onToggleEnabled,
+  onClearCooldown,
+  clearingCooldown,
   onRoutingStrategyChange,
   updatingRoutingStrategy,
   channels,
@@ -185,6 +189,20 @@ function RouteCardInner({
         channels: chans,
       }));
   })();
+
+  const renderClearCooldownButton = () => {
+    if (readOnlyRoute) return null;
+    return (
+      <button
+        onClick={() => onClearCooldown(route.id)}
+        disabled={clearingCooldown}
+        className="btn btn-link"
+        style={{ color: 'var(--color-info, var(--color-primary))' }}
+      >
+        {clearingCooldown ? tr('清除中...') : tr('清除冷却')}
+      </button>
+    );
+  };
 
   // Collapsed card
   if (!expanded) {
@@ -343,6 +361,7 @@ function RouteCardInner({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {renderClearCooldownButton()}
             {!readOnlyRoute && (explicitGroupRoute || !exactRoute) && (
               <button onClick={() => onEdit(route)} className="btn btn-link">{tr('编辑群组')}</button>
             )}
@@ -376,6 +395,7 @@ function RouteCardInner({
             </div>
             {!readOnlyRoute && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {renderClearCooldownButton()}
                 {!exactRoute && (
                   <button onClick={() => onEdit(route)} className="btn btn-link">{explicitGroupRoute ? tr('编辑群组') : tr('编辑路由')}</button>
                 )}

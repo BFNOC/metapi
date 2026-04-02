@@ -136,6 +136,7 @@ export default function TokenRoutes() {
   const [updatingChannel, setUpdatingChannel] = useState<Record<number, boolean>>({});
   const [savingPriorityByRoute, setSavingPriorityByRoute] = useState<Record<number, boolean>>({});
   const [resettingPriorityByRoute, setResettingPriorityByRoute] = useState<Record<number, boolean>>({});
+  const [clearingCooldownByRoute, setClearingCooldownByRoute] = useState<Record<number, boolean>>({});
   const [updatingRoutingStrategyByRoute, setUpdatingRoutingStrategyByRoute] = useState<Record<number, boolean>>({});
 
   const [decisionByRoute, setDecisionByRoute] = useState<Record<number, RouteDecision | null>>({});
@@ -1362,6 +1363,52 @@ export default function TokenRoutes() {
     [],
   );
 
+  const handleClearRouteCooldown = async (routeId: number) => {
+    if (clearingCooldownByRoute[routeId]) return;
+    setClearingCooldownByRoute((prev) => ({ ...prev, [routeId]: true }));
+    try {
+      const res = await api.clearRouteCooldown(routeId) as { message?: string };
+      try {
+        if (expandedRouteIds.includes(routeId)) {
+          await loadChannels(routeId, true);
+        } else {
+          invalidateChannels(routeId);
+        }
+
+        const route = routeSummaries.find((item) => item.id === routeId);
+        if (route) {
+          if (isRouteExactModel(route)) {
+            const decisionRes = await api.getRouteDecision(route.modelPattern);
+            setDecisionByRoute((prev) => ({
+              ...prev,
+              [routeId]: (decisionRes?.decision || null) as RouteDecision | null,
+            }));
+          } else {
+            const decisionRes = await api.getRouteWideDecisionsBatch([routeId], { persistSnapshots: true });
+            setDecisionByRoute((prev) => ({
+              ...prev,
+              [routeId]: (decisionRes?.decisions?.[String(routeId)] || null) as RouteDecision | null,
+            }));
+          }
+        }
+
+        toast.success(res.message || '已清除路由冷却');
+      } catch {
+        toast.error('已清除，但刷新失败');
+      }
+    } catch (e: unknown) {
+      toast.error((e instanceof Error ? e.message : null) || '清除路由冷却失败');
+    } finally {
+      setClearingCooldownByRoute((prev) => ({ ...prev, [routeId]: false }));
+    }
+  };
+  const handleClearRouteCooldownRef = useRef(handleClearRouteCooldown);
+  handleClearRouteCooldownRef.current = handleClearRouteCooldown;
+  const stableClearRouteCooldown = useCallback(
+    (routeId: number) => handleClearRouteCooldownRef.current(routeId),
+    [],
+  );
+
   const addChannelModalRoute = addChannelModalRouteId
     ? routeSummaries.find((r) => r.id === addChannelModalRouteId) || null
     : null;
@@ -1714,6 +1761,8 @@ export default function TokenRoutes() {
                     onEdit={stableEditRoute}
                     onDelete={stableDeleteRoute}
                     onToggleEnabled={stableToggleEnabled}
+                    onClearCooldown={stableClearRouteCooldown}
+                    clearingCooldown={!!clearingCooldownByRoute[route.id]}
                     onRoutingStrategyChange={stableRoutingStrategyChange}
                     updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
                     channels={channelsByRouteId[route.id]}
@@ -1755,6 +1804,8 @@ export default function TokenRoutes() {
               onEdit={stableEditRoute}
               onDelete={stableDeleteRoute}
               onToggleEnabled={stableToggleEnabled}
+              onClearCooldown={stableClearRouteCooldown}
+              clearingCooldown={!!clearingCooldownByRoute[route.id]}
               onRoutingStrategyChange={stableRoutingStrategyChange}
               updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
               channels={channelsByRouteId[route.id]}

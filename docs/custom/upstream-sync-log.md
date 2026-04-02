@@ -25,6 +25,7 @@
 | 上游 Commit | PR | 移植范围 | 改动 | 说明 |
 |-------------|-----|---------|------|------|
 | `596d1b9` | #330 | Phase 0-5 | 11 文件改动 + 4 新增 | 不能 cherry-pick（53 文件已分叉）。含四态探测、负载感知、stable_first 主池/观察池、自动恢复探测、后台 scheduler。公益站定制：随机真实 prompt（防 AI 封 IP）、per-site 限4h/h、负载系数 0.10/0.12/0.04、recordProbeSuccess 不污染业务统计 |
+| `532be86` | #365 | Phase A-C | 12 文件改动 (+470) | 不能 cherry-pick（路由/服务层已分叉）。含可配置 failureCooldownMaxSec（env + settings 持久化 + 读写路径统一 clamp）、route 级批量清冷却 API（visible source routes + runtime health 联动）、前端清除冷却按钮（best-effort 刷新）。本地定制：round-robin 阶梯冷却不受 cap 限制、不清 failCount 保留历史统计 |
 
 ### 跳过的 Commit（已审阅，不需要）
 
@@ -44,7 +45,7 @@
 | `3ebe851` | fix update helper health for ready failed release (#361) | Update center |
 | `aac1307` | add vendor code entry presets follow-up (#363) | 依赖 #351 |
 
-| `532be86` | add route cooldown controls (#365) | 与本地通道冷却重置功能重叠，需对比评估（见审阅报告） |
+| `532be86` | add route cooldown controls (#365) | ✅ **已手工移植**（见上方"手工移植"章节） |
 | `21d92e1` | recognize structured oauth accounts in routing (#369) | OAuth 功能 |
 | `37a86d1` | background route decision refresh (#370) | 路由决策后台刷新 |
 | `6e21f91` | add route priority left rail (#371) | 路由优先级 UI 系列 |
@@ -61,7 +62,7 @@
 ### 值得后续关注的大型 PR（已深度分析）
 
 - **#330** (主动探活+负载感知路由) — ✅ 已完成手工移植，含四态探测、负载感知、stable_first 主池/观察池、自动恢复探测
-- **#365** (路由冷却控制) — 与本地实现重叠，建议补 cooldown max cap 和 route 级批量清冷却
+- **#365** (路由冷却控制) — ✅ 已完成手工移植，含可配置冷却上限、route 级批量清冷却、前端按钮
 - **#383** (首字节超时) — 对挂死链路有效，建议在 protocol-affinity 阶段参考
 - **#373** (Site API Endpoint Pool) — 上游架构演进方向，长期跟踪
 

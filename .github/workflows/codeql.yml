@@ -1,25 +1,7 @@
 name: CodeQL
 
 on:
-  push:
-    branches: [main, master]
-    paths-ignore:
-      - 'docs/**'
-      - 'README.md'
-      - 'README_EN.md'
-      - 'CONTRIBUTING.md'
-      - 'SECURITY.md'
-      - 'CODE_OF_CONDUCT.md'
-  pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - 'README.md'
-      - 'README_EN.md'
-      - 'CONTRIBUTING.md'
-      - 'SECURITY.md'
-      - 'CODE_OF_CONDUCT.md'
-  schedule:
-    - cron: '19 18 * * 0'
+  workflow_dispatch:
 
 permissions:
   actions: read

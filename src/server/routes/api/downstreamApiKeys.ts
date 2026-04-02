@@ -565,22 +565,24 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     }
 
     const existingView = toDownstreamApiKeyPolicyView(existing);
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const hasOwn = (key: string) => Object.prototype.hasOwnProperty.call(body, key);
     let normalized: ReturnType<typeof normalizeDownstreamApiKeyPayload>;
     try {
       normalized = normalizeDownstreamApiKeyPayload({
-        name: request.body?.name ?? existing.name,
-        key: request.body?.key ?? existing.key,
-        description: request.body?.description ?? existing.description,
-        groupName: request.body?.groupName ?? existing.groupName,
-        tags: request.body?.tags ?? existingView.tags,
-        enabled: request.body?.enabled ?? existing.enabled,
-        expiresAt: request.body?.expiresAt ?? existing.expiresAt,
-        maxCost: request.body?.maxCost ?? existing.maxCost,
-        maxRequests: request.body?.maxRequests ?? existing.maxRequests,
-        supportedModels: request.body?.supportedModels ?? existingView.supportedModels,
-        allowedRouteIds: request.body?.allowedRouteIds ?? existingView.allowedRouteIds,
-        siteWeightMultipliers: request.body?.siteWeightMultipliers ?? existingView.siteWeightMultipliers,
-        excludedSiteIds: request.body?.excludedSiteIds ?? existingView.excludedSiteIds,
+        name: hasOwn('name') ? body.name : existing.name,
+        key: hasOwn('key') ? body.key : existing.key,
+        description: hasOwn('description') ? body.description : existing.description,
+        groupName: hasOwn('groupName') ? body.groupName : existing.groupName,
+        tags: hasOwn('tags') ? body.tags : existingView.tags,
+        enabled: hasOwn('enabled') ? body.enabled : existing.enabled,
+        expiresAt: hasOwn('expiresAt') ? body.expiresAt : existing.expiresAt,
+        maxCost: hasOwn('maxCost') ? body.maxCost : existing.maxCost,
+        maxRequests: hasOwn('maxRequests') ? body.maxRequests : existing.maxRequests,
+        supportedModels: hasOwn('supportedModels') ? body.supportedModels : existingView.supportedModels,
+        allowedRouteIds: hasOwn('allowedRouteIds') ? body.allowedRouteIds : existingView.allowedRouteIds,
+        siteWeightMultipliers: hasOwn('siteWeightMultipliers') ? body.siteWeightMultipliers : existingView.siteWeightMultipliers,
+        excludedSiteIds: hasOwn('excludedSiteIds') ? body.excludedSiteIds : existingView.excludedSiteIds,
       });
     } catch (error: unknown) {
       return reply.code(400).send({ success: false, message: (error as Error)?.message || '参数无效' });

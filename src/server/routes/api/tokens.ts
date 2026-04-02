@@ -1300,10 +1300,13 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
     if (body.enabled !== undefined) updates.enabled = body.enabled;
     if (body.tokenId !== undefined) {
-      // Normalize: null = follow default, positive int = specific token, 0/falsy → null
-      updates.tokenId = (typeof body.tokenId === 'number' && body.tokenId > 0) ? body.tokenId : null;
+      // Normalize: null = follow default, positive int = specific token, 0/falsy -> null
+      if (body.tokenId === null) {
+        updates.tokenId = nextTokenId;
+      } else {
+        updates.tokenId = (typeof body.tokenId === 'number' && body.tokenId > 0) ? body.tokenId : null;
+      }
     }
-
 
     await db.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, channelId)).run();
     await clearRouteDecisionSnapshot(channel.routeId);
@@ -1448,4 +1451,3 @@ export async function tokensRoutes(app: FastifyInstance) {
     return { success: true, message: `已清除站点「${site.name || siteId}」的运行时健康惩罚及通道冷却` };
   });
 }
-

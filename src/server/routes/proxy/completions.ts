@@ -1,5 +1,6 @@
 ﻿import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { fetch } from 'undici';
+import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
@@ -19,6 +20,12 @@ import { buildUpstreamUrl } from './upstreamUrl.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from './downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import {
+  fetchWithObservedFirstByte,
+  getObservedResponseMeta,
+  resolveProxyFirstByteTimeoutMs,
+} from '../../proxy-core/firstByteTimeout.js';
+import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
 
 export async function completionsProxyRoute(app: FastifyInstance) {
   app.post('/v1/completions', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -38,6 +45,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
     });
 
     const isStream = body.stream === true;
+    const firstByteTimeoutMs = resolveProxyFirstByteTimeoutMs(config.proxyFirstByteTimeoutSec);
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
@@ -69,17 +77,26 @@ export async function completionsProxyRoute(app: FastifyInstance) {
       const startTime = Date.now();
 
       try {
-        const upstream = await fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${selected.tokenValue}`,
+        const attemptStartedAtMs = Date.now();
+        const upstream = await fetchWithObservedFirstByte(
+          async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${selected.tokenValue}`,
+            },
+            body: JSON.stringify(forwardBody),
+            signal,
+          }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
+          {
+            firstByteTimeoutMs,
+            startedAtMs: attemptStartedAtMs,
           },
-          body: JSON.stringify(forwardBody),
-        }, getProxyUrlFromExtraConfig(selected.account.extraConfig)));
+        );
+        const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
 
         if (!upstream.ok) {
-          const errText = await upstream.text().catch(() => 'unknown error');
+          const errText = await readRuntimeResponseText(upstream).catch(() => 'unknown error');
           await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
             status: upstream.status,
             errorText: errText,
@@ -99,6 +116,8 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             0,
             0,
             null,
+            isStream,
+            firstByteLatencyMs,
             clientContext,
             downstreamPath,
           );
@@ -217,13 +236,15 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             resolvedUsage.totalTokens,
             estimatedCost,
             billingDetails,
+            isStream,
+            firstByteLatencyMs,
             clientContext,
             downstreamPath,
           );
           return;
         }
 
-        const rawText = await upstream.text();
+        const rawText = await readRuntimeResponseText(upstream);
         let data: any = rawText;
         try {
           data = JSON.parse(rawText);
@@ -254,6 +275,8 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             0,
             0,
             null,
+            isStream,
+            firstByteLatencyMs,
             clientContext,
             downstreamPath,
           );
@@ -314,6 +337,8 @@ export async function completionsProxyRoute(app: FastifyInstance) {
           resolvedUsage.totalTokens,
           estimatedCost,
           billingDetails,
+          isStream,
+          firstByteLatencyMs,
           clientContext,
           downstreamPath,
         );
@@ -337,6 +362,8 @@ export async function completionsProxyRoute(app: FastifyInstance) {
           0,
           0,
           0,
+          null,
+          isStream,
           null,
           clientContext,
           downstreamPath,
@@ -371,6 +398,8 @@ async function logProxy(
   totalTokens = 0,
   estimatedCost = 0,
   billingDetails: unknown = null,
+  isStream: boolean,
+  firstByteLatencyMs: number | null,
   clientContext: DownstreamClientContext | null = null,
   downstreamPath = '/v1/completions',
 ) {
@@ -394,6 +423,8 @@ async function logProxy(
       modelActual: selected.actualModel || modelRequested,
       status,
       httpStatus,
+      isStream,
+      firstByteLatencyMs,
       latencyMs,
       promptTokens,
       completionTokens,

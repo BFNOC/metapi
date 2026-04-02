@@ -334,6 +334,8 @@ export type ProxyLogListItem = {
   modelActual: string;
   status: string;
   latencyMs: number;
+  isStream?: boolean | null;
+  firstByteLatencyMs?: number | null;
   totalTokens: number | null;
   retryCount: number;
   accountId?: number | null;

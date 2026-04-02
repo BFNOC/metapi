@@ -51,6 +51,7 @@ import {
   ensureProxyLogClientColumns,
   ensureProxyLogDownstreamApiKeyIdColumn,
   ensureProxyLogBillingDetailsColumn,
+  ensureProxyLogStreamTimingColumns,
   ensureRouteGroupingCompatibilityColumns,
   ensureSiteCompatibilityColumns,
   runtimeDbDialect,
@@ -360,6 +361,7 @@ try {
   await ensureProxyFileCompatibilityColumns();
   await ensureProxyLogClientColumns();
   await ensureProxyLogDownstreamApiKeyIdColumn();
+  await ensureProxyLogStreamTimingColumns();
   const finalRows = await db.select().from(schema.settings).all();
   const finalMap = toSettingsMap(finalRows);
   applyRuntimeSettings(finalMap);

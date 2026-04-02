@@ -54,6 +54,8 @@ function buildListResponse(overrides?: Partial<{
         modelActual: 'gpt-4o',
         status: 'success',
         latencyMs: 120,
+        firstByteLatencyMs: 35,
+        isStream: true,
         promptTokens: 10,
         completionTokens: 5,
         totalTokens: 15,
@@ -105,6 +107,8 @@ describe('ProxyLogs server-driven page', () => {
       modelActual: 'gpt-4o',
       status: 'success',
       latencyMs: 120,
+      firstByteLatencyMs: 35,
+      isStream: true,
       promptTokens: 10,
       completionTokens: 5,
       totalTokens: 15,
@@ -201,6 +205,8 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('Codex');
       expect(text).toContain('推测');
       expect(text).toContain('下游 Key: 移动端灰度');
+      expect(text).toContain('流式');
+      expect(text).toContain('首字');
     } finally {
       root?.unmount();
     }

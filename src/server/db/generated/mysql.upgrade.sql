@@ -1,1 +1,2 @@
-ALTER TABLE `downstream_api_keys` ADD COLUMN `excluded_site_ids` TEXT;
+ALTER TABLE `proxy_logs` ADD COLUMN `is_stream` BOOLEAN;
+ALTER TABLE `proxy_logs` ADD COLUMN `first_byte_latency_ms` INT;

@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { fetch } from 'undici';
+import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
@@ -17,6 +18,12 @@ import { buildUpstreamUrl } from './upstreamUrl.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from './downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import {
+  fetchWithObservedFirstByte,
+  getObservedResponseMeta,
+  resolveProxyFirstByteTimeoutMs,
+} from '../../proxy-core/firstByteTimeout.js';
+import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
 
 export async function imagesProxyRoute(app: FastifyInstance) {
   ensureMultipartBufferParser(app);
@@ -33,6 +40,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       headers: request.headers as Record<string, unknown>,
       body,
     });
+    const firstByteTimeoutMs = resolveProxyFirstByteTimeoutMs(config.proxyFirstByteTimeoutSec);
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
@@ -64,16 +72,24 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       const startTime = Date.now();
 
       try {
-        const upstream = await fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${selected.tokenValue}`,
+        const attemptStartedAtMs = Date.now();
+        const upstream = await fetchWithObservedFirstByte(
+          async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${selected.tokenValue}`,
+            },
+            body: JSON.stringify(forwardBody),
+            signal,
+          }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
+          {
+            firstByteTimeoutMs,
+            startedAtMs: attemptStartedAtMs,
           },
-          body: JSON.stringify(forwardBody),
-        }, getProxyUrlFromExtraConfig(selected.account.extraConfig)));
-
-        const text = await upstream.text();
+        );
+        const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
+        const text = await readRuntimeResponseText(upstream);
         if (!upstream.ok) {
           await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
             status: upstream.status,
@@ -90,6 +106,8 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             retryCount,
             downstreamApiKeyId,
             0,
+            false,
+            firstByteLatencyMs,
             downstreamPath,
             clientContext,
           );
@@ -129,6 +147,8 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             retryCount,
             downstreamApiKeyId,
             0,
+            false,
+            firstByteLatencyMs,
             downstreamPath,
             clientContext,
           );
@@ -163,7 +183,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         await recordTokenRouterEventBestEffort('record downstream cost usage', () => (
           recordDownstreamCostUsage(request, estimatedCost)
         ));
-        logProxy(selected, requestedModel, 'success', upstream.status, latency, null, retryCount, downstreamApiKeyId, estimatedCost, downstreamPath, clientContext);
+        logProxy(selected, requestedModel, 'success', upstream.status, latency, null, retryCount, downstreamApiKeyId, estimatedCost, false, firstByteLatencyMs, downstreamPath, clientContext);
         return reply.code(upstream.status).send(data.value);
       } catch (err: any) {
         await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
@@ -181,6 +201,8 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           retryCount,
           downstreamApiKeyId,
           0,
+          false,
+          null,
           downstreamPath,
           clientContext,
         );
@@ -217,6 +239,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       headers: request.headers as Record<string, unknown>,
       body: jsonBody || Object.fromEntries(multipartForm?.entries?.() || []),
     });
+    const firstByteTimeoutMs = resolveProxyFirstByteTimeoutMs(config.proxyFirstByteTimeoutSec);
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
@@ -268,8 +291,19 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             }),
           }, getProxyUrlFromExtraConfig(selected.account.extraConfig));
 
-        const upstream = await fetch(targetUrl, requestInit);
-        const text = await upstream.text();
+        const attemptStartedAtMs = Date.now();
+        const upstream = await fetchWithObservedFirstByte(
+          async (signal) => fetch(targetUrl, {
+            ...requestInit,
+            ...(signal ? { signal } : {}),
+          }),
+          {
+            firstByteTimeoutMs,
+            startedAtMs: attemptStartedAtMs,
+          },
+        );
+        const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
+        const text = await readRuntimeResponseText(upstream);
         if (!upstream.ok) {
           await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
             status: upstream.status,
@@ -286,6 +320,8 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             retryCount,
             downstreamApiKeyId,
             0,
+            false,
+            firstByteLatencyMs,
             downstreamPath,
             clientContext,
           );
@@ -325,6 +361,8 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             retryCount,
             downstreamApiKeyId,
             0,
+            false,
+            firstByteLatencyMs,
             downstreamPath,
             clientContext,
           );
@@ -359,7 +397,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         await recordTokenRouterEventBestEffort('record downstream cost usage', () => (
           recordDownstreamCostUsage(request, estimatedCost)
         ));
-        logProxy(selected, requestedModel, 'success', upstream.status, latency, null, retryCount, downstreamApiKeyId, estimatedCost, downstreamPath, clientContext);
+        logProxy(selected, requestedModel, 'success', upstream.status, latency, null, retryCount, downstreamApiKeyId, estimatedCost, false, firstByteLatencyMs, downstreamPath, clientContext);
         return reply.code(upstream.status).send(data.value);
       } catch (err: any) {
         await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
@@ -377,6 +415,8 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           retryCount,
           downstreamApiKeyId,
           0,
+          false,
+          null,
           downstreamPath,
           clientContext,
         );
@@ -415,8 +455,10 @@ async function logProxy(
   retryCount: number,
   downstreamApiKeyId: number | null = null,
   estimatedCost = 0,
-  downstreamPath = '/v1/images/generations',
-  clientContext: DownstreamClientContext | null = null,
+  isStream: boolean,
+  firstByteLatencyMs: number | null,
+  downstreamPath: string,
+  clientContext: DownstreamClientContext | null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -438,6 +480,8 @@ async function logProxy(
       modelActual: selected.actualModel || modelRequested,
       status,
       httpStatus,
+      isStream,
+      firstByteLatencyMs,
       latencyMs,
       promptTokens: 0,
       completionTokens: 0,

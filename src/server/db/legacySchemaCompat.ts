@@ -58,6 +58,8 @@ const BOOTSTRAP_OWNED_LEGACY_COLUMNS = [
   'proxy_logs.client_app_id',
   'proxy_logs.client_app_name',
   'proxy_logs.client_confidence',
+  'proxy_logs.is_stream',
+  'proxy_logs.first_byte_latency_ms',
   'proxy_logs.downstream_api_key_id',
 ];
 

@@ -4,6 +4,7 @@ const {
   hasProxyLogBillingDetailsColumnMock,
   hasProxyLogClientColumnsMock,
   hasProxyLogDownstreamApiKeyIdColumnMock,
+  hasProxyLogStreamTimingColumnsMock,
   dbInsertMock,
   dbInsertValuesMock,
   dbInsertRunMock,
@@ -12,6 +13,7 @@ const {
   hasProxyLogBillingDetailsColumnMock: vi.fn(),
   hasProxyLogClientColumnsMock: vi.fn(),
   hasProxyLogDownstreamApiKeyIdColumnMock: vi.fn(),
+  hasProxyLogStreamTimingColumnsMock: vi.fn(),
   dbInsertMock: vi.fn(),
   dbInsertValuesMock: vi.fn(),
   dbInsertRunMock: vi.fn(),
@@ -24,6 +26,8 @@ const {
     modelActual: 'model_actual',
     status: 'status',
     httpStatus: 'http_status',
+    isStream: 'is_stream',
+    firstByteLatencyMs: 'first_byte_latency_ms',
     latencyMs: 'latency_ms',
     promptTokens: 'prompt_tokens',
     completionTokens: 'completion_tokens',
@@ -50,6 +54,7 @@ vi.mock('../db/index.js', () => ({
   hasProxyLogBillingDetailsColumn: (...args: unknown[]) => hasProxyLogBillingDetailsColumnMock(...args),
   hasProxyLogClientColumns: (...args: unknown[]) => hasProxyLogClientColumnsMock(...args),
   hasProxyLogDownstreamApiKeyIdColumn: (...args: unknown[]) => hasProxyLogDownstreamApiKeyIdColumnMock(...args),
+  hasProxyLogStreamTimingColumns: (...args: unknown[]) => hasProxyLogStreamTimingColumnsMock(...args),
 }));
 
 import { insertProxyLog, parseProxyLogBillingDetails, withProxyLogSelectFields } from './proxyLogStore.js';
@@ -59,12 +64,14 @@ describe('proxyLogStore', () => {
     hasProxyLogBillingDetailsColumnMock.mockReset();
     hasProxyLogClientColumnsMock.mockReset();
     hasProxyLogDownstreamApiKeyIdColumnMock.mockReset();
+    hasProxyLogStreamTimingColumnsMock.mockReset();
     dbInsertMock.mockReset();
     dbInsertValuesMock.mockReset();
     dbInsertRunMock.mockReset();
     hasProxyLogBillingDetailsColumnMock.mockResolvedValue(false);
     hasProxyLogClientColumnsMock.mockResolvedValue(false);
     hasProxyLogDownstreamApiKeyIdColumnMock.mockResolvedValue(false);
+    hasProxyLogStreamTimingColumnsMock.mockResolvedValue(false);
 
     dbInsertMock.mockReturnValue({
       values: (...args: unknown[]) => dbInsertValuesMock(...args),
@@ -173,6 +180,23 @@ describe('proxyLogStore', () => {
     });
   });
 
+  it('writes stream timing fields when the schema supports them', async () => {
+    hasProxyLogStreamTimingColumnsMock.mockResolvedValue(true);
+
+    await insertProxyLog({
+      modelRequested: 'gpt-5',
+      isStream: true,
+      firstByteLatencyMs: 123,
+    });
+
+    expect(dbInsertValuesMock).toHaveBeenCalledTimes(1);
+    expect(dbInsertValuesMock.mock.calls[0][0]).toMatchObject({
+      modelRequested: 'gpt-5',
+      isStream: true,
+      firstByteLatencyMs: 123,
+    });
+  });
+
   it('preserves null token fields instead of coercing unknown usage to zero', async () => {
     await insertProxyLog({
       modelRequested: 'gpt-5',
@@ -219,5 +243,30 @@ describe('proxyLogStore', () => {
     expect(dbInsertValuesMock.mock.calls[1][0].clientAppId).toBeUndefined();
     expect(dbInsertValuesMock.mock.calls[1][0].clientAppName).toBeUndefined();
     expect(dbInsertValuesMock.mock.calls[1][0].clientConfidence).toBeUndefined();
+  });
+
+  it('retries proxy log inserts without stream timing fields when those columns are missing', async () => {
+    hasProxyLogStreamTimingColumnsMock.mockResolvedValue(true);
+    dbInsertRunMock
+      .mockRejectedValueOnce(new Error('column proxy_logs.first_byte_latency_ms does not exist'))
+      .mockResolvedValueOnce(undefined);
+
+    await insertProxyLog({
+      modelRequested: 'gpt-5',
+      isStream: false,
+      firstByteLatencyMs: 45,
+    });
+
+    expect(dbInsertValuesMock).toHaveBeenCalledTimes(2);
+    expect(dbInsertValuesMock.mock.calls[0][0]).toMatchObject({
+      modelRequested: 'gpt-5',
+      isStream: false,
+      firstByteLatencyMs: 45,
+    });
+    expect(dbInsertValuesMock.mock.calls[1][0]).toMatchObject({
+      modelRequested: 'gpt-5',
+    });
+    expect(dbInsertValuesMock.mock.calls[1][0].isStream).toBeUndefined();
+    expect(dbInsertValuesMock.mock.calls[1][0].firstByteLatencyMs).toBeUndefined();
   });
 });

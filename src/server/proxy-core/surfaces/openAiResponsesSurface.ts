@@ -35,7 +35,10 @@ import {
   unwrapGeminiCliPayload,
 } from '../../routes/proxy/geminiCliCompat.js';
 import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
-import { resolveProxyFirstByteTimeoutMs } from '../firstByteTimeout.js';
+import {
+  getObservedResponseMeta,
+  resolveProxyFirstByteTimeoutMs,
+} from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { runCodexHttpSessionTask } from '../runtime/codexHttpSessionQueue.js';
 import {
@@ -486,6 +489,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             status: endpointResult.status || 502,
             errText: endpointResult.errText || 'unknown error',
             rawErrText: endpointResult.rawErrText,
+            isStream,
             latencyMs: Date.now() - startTime,
             retryCount,
           });
@@ -497,6 +501,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
         }
 
       const upstream = endpointResult.upstream;
+      const observedMeta = getObservedResponseMeta(upstream);
       const successfulUpstreamPath = endpointResult.upstreamPath;
       if (endpointResult.downgraded) {
         recordSuccessfulEndpointDowngrades({
@@ -523,6 +528,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
             requestStartedAtMs: startTime,
             latencyMs: latency,
             retryCount,
+            isStream: true,
+            firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
             upstreamPath: successfulUpstreamPath,
             logSuccess: failureToolkit.log,
             recordDownstreamCost: (estimatedCost) => {
@@ -595,6 +602,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	                  requestedModel,
                   modelName,
                   errorMessage: streamResult.errorMessage,
+                  isStream: true,
+                  firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
                   latencyMs: latency,
                   retryCount,
                   promptTokens: parsedUsage.promptTokens,
@@ -636,6 +645,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	                requestedModel,
                 modelName,
                 failure,
+                isStream: true,
+                firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
                 latencyMs: latency,
                 retryCount,
                 promptTokens: parsedUsage.promptTokens,
@@ -662,6 +673,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	                requestedModel,
                 modelName,
                 errorMessage: streamResult.errorMessage,
+                isStream: true,
+                firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
                 latencyMs: latency,
                 retryCount,
                 promptTokens: parsedUsage.promptTokens,
@@ -732,6 +745,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   requestedModel,
                   modelName,
                   errorMessage: streamResult.errorMessage,
+                  isStream: true,
+                  firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
                   latencyMs: latency,
                   retryCount,
                   promptTokens: parsedUsage.promptTokens,
@@ -791,6 +806,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	              requestedModel,
               modelName,
               errorMessage: streamResult.errorMessage,
+              isStream: true,
+              firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
               latencyMs: latency,
               retryCount,
               promptTokens: parsedUsage.promptTokens,
@@ -862,6 +879,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	            requestedModel,
             modelName,
             failure,
+            isStream: false,
+            firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
             latencyMs: latency,
             retryCount,
             promptTokens: parsedUsage.promptTokens,
@@ -896,6 +915,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
             requestStartedAtMs: startTime,
             latencyMs: latency,
             retryCount,
+            isStream: false,
+            firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
             upstreamPath: successfulUpstreamPath,
             logSuccess: failureToolkit.log,
             recordDownstreamCost: (estimatedCost) => {
@@ -923,6 +944,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	          requestedModel,
           modelName,
           errorMessage: err?.message || 'network failure',
+          isStream,
           latencyMs: Date.now() - startTime,
           retryCount,
         });

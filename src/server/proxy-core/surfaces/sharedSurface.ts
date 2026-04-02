@@ -220,6 +220,8 @@ export async function writeSurfaceProxyLog(input: {
   modelRequested: string;
   status: string;
   httpStatus: number;
+  isStream?: boolean | null;
+  firstByteLatencyMs?: number | null;
   latencyMs: number;
   errorMessage: string | null;
   retryCount: number;
@@ -256,6 +258,8 @@ export async function writeSurfaceProxyLog(input: {
       modelActual: input.selected.actualModel ?? null,
       status: input.status,
       httpStatus: input.httpStatus,
+      isStream: input.isStream ?? null,
+      firstByteLatencyMs: input.firstByteLatencyMs ?? null,
       latencyMs: input.latencyMs,
       promptTokens: input.promptTokens ?? null,
       completionTokens: input.completionTokens ?? null,
@@ -358,12 +362,16 @@ export async function recordSurfaceSuccess(input: {
   requestStartedAtMs: number;
   latencyMs: number;
   retryCount: number;
+  isStream?: boolean | null;
+  firstByteLatencyMs?: number | null;
   upstreamPath?: string | null;
   logSuccess: (args: {
     selected: SurfaceSelectedChannel;
     modelRequested: string;
     status: string;
     httpStatus: number;
+    isStream?: boolean | null;
+    firstByteLatencyMs?: number | null;
     latencyMs: number;
     errorMessage: string | null;
     retryCount: number;
@@ -457,6 +465,8 @@ export async function recordSurfaceSuccess(input: {
     modelRequested: input.requestedModel,
     status: 'success',
     httpStatus: 200,
+    isStream: input.isStream ?? null,
+    firstByteLatencyMs: input.firstByteLatencyMs ?? null,
     latencyMs: input.latencyMs,
     errorMessage: null,
     retryCount: input.retryCount,
@@ -488,6 +498,8 @@ export function createSurfaceFailureToolkit(input: {
     modelRequested: string;
     status: string;
     httpStatus: number;
+    isStream?: boolean | null;
+    firstByteLatencyMs?: number | null;
     latencyMs: number;
     errorMessage: string | null;
     retryCount: number;
@@ -504,6 +516,8 @@ export function createSurfaceFailureToolkit(input: {
       modelRequested: args.modelRequested,
       status: args.status,
       httpStatus: args.httpStatus,
+      isStream: args.isStream ?? null,
+      firstByteLatencyMs: args.firstByteLatencyMs ?? null,
       latencyMs: args.latencyMs,
       errorMessage: args.errorMessage,
       retryCount: args.retryCount,
@@ -540,6 +554,8 @@ export function createSurfaceFailureToolkit(input: {
       status: number;
       errText: string;
       rawErrText?: string | null;
+      isStream?: boolean | null;
+      firstByteLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
     }): Promise<SurfaceFailureOutcome> {
@@ -554,6 +570,8 @@ export function createSurfaceFailureToolkit(input: {
         modelRequested: args.requestedModel,
         status: 'failed',
         httpStatus: args.status,
+        isStream: args.isStream ?? null,
+        firstByteLatencyMs: args.firstByteLatencyMs ?? null,
         latencyMs: args.latencyMs,
         errorMessage: args.errText,
         retryCount: args.retryCount,
@@ -600,6 +618,8 @@ export function createSurfaceFailureToolkit(input: {
       requestedModel: string;
       modelName: string;
       failure: { status: number; reason: string };
+      isStream?: boolean | null;
+      firstByteLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
       promptTokens?: number | null;
@@ -617,6 +637,8 @@ export function createSurfaceFailureToolkit(input: {
         modelRequested: args.requestedModel,
         status: 'failed',
         httpStatus: args.failure.status,
+        isStream: args.isStream ?? null,
+        firstByteLatencyMs: args.firstByteLatencyMs ?? null,
         latencyMs: args.latencyMs,
         errorMessage: args.failure.reason,
         retryCount: args.retryCount,
@@ -653,6 +675,8 @@ export function createSurfaceFailureToolkit(input: {
       requestedModel: string;
       modelName: string;
       errorMessage: string;
+      isStream?: boolean | null;
+      firstByteLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
     }): Promise<SurfaceFailureOutcome> {
@@ -665,6 +689,8 @@ export function createSurfaceFailureToolkit(input: {
         modelRequested: args.requestedModel,
         status: 'failed',
         httpStatus: 0,
+        isStream: args.isStream ?? null,
+        firstByteLatencyMs: args.firstByteLatencyMs ?? null,
         latencyMs: args.latencyMs,
         errorMessage: args.errorMessage,
         retryCount: args.retryCount,
@@ -695,6 +721,8 @@ export function createSurfaceFailureToolkit(input: {
       requestedModel: string;
       modelName: string;
       errorMessage: string | null;
+      isStream?: boolean | null;
+      firstByteLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
       promptTokens?: number | null;
@@ -722,6 +750,8 @@ export function createSurfaceFailureToolkit(input: {
         modelRequested: args.requestedModel,
         status: 'failed',
         httpStatus: args.httpStatus ?? 200,
+        isStream: args.isStream ?? null,
+        firstByteLatencyMs: args.firstByteLatencyMs ?? null,
         latencyMs: args.latencyMs,
         errorMessage,
         retryCount: args.retryCount,

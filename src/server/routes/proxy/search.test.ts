@@ -10,14 +10,27 @@ const refreshModelsAndRebuildRoutesMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
 const estimateProxyCostMock = vi.fn(async () => 0);
+const shouldRetryProxyRequestMock = vi.fn(() => false);
+const configMock = {
+  proxyFirstByteTimeoutSec: 0,
+  proxyMaxChannelAttempts: 2,
+};
 const dbInsertMock = vi.fn((_arg?: any) => ({
   values: () => ({
     run: () => undefined,
   }),
 }));
 
-vi.mock('undici', () => ({
-  fetch: (...args: unknown[]) => fetchMock(...args),
+vi.mock('undici', async () => {
+  const actual = await vi.importActual<typeof import('undici')>('undici');
+  return {
+    ...actual,
+    fetch: (...args: unknown[]) => fetchMock(...args),
+  };
+});
+
+vi.mock('../../config.js', () => ({
+  config: configMock,
 }));
 
 vi.mock('../../services/tokenRouter.js', () => ({
@@ -47,7 +60,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
-  shouldRetryProxyRequest: () => false,
+  shouldRetryProxyRequest: (...args: unknown[]) => shouldRetryProxyRequestMock(...args),
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -57,6 +70,7 @@ vi.mock('../../db/index.js', () => ({
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
+  hasProxyLogStreamTimingColumns: async () => false,
   schema: {
     proxyLogs: {},
   },
@@ -64,6 +78,22 @@ vi.mock('../../db/index.js', () => ({
 
 describe('/v1/search route', () => {
   let app: FastifyInstance;
+
+  function buildDelayedResponse(bodyText: string, delayMs: number, status = 200): Response {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        setTimeout(() => {
+          controller.enqueue(encoder.encode(bodyText));
+          controller.close();
+        }, delayMs);
+      },
+    });
+    return new Response(body, {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
 
   beforeAll(async () => {
     const { searchProxyRoute } = await import('./search.js');
@@ -81,7 +111,11 @@ describe('/v1/search route', () => {
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
     estimateProxyCostMock.mockClear();
+    shouldRetryProxyRequestMock.mockReset();
+    shouldRetryProxyRequestMock.mockReturnValue(false);
     dbInsertMock.mockClear();
+    configMock.proxyFirstByteTimeoutSec = 0;
+    configMock.proxyMaxChannelAttempts = 2;
 
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
@@ -127,6 +161,81 @@ describe('/v1/search route', () => {
       max_results: 10,
       model: '__search',
     });
+  });
+
+  it('still succeeds when first byte arrives before the configured deadline', async () => {
+    configMock.proxyFirstByteTimeoutSec = 0.05;
+    fetchMock.mockResolvedValue(buildDelayedResponse(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'timely' }],
+    }), 10));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/search',
+      headers: {
+        authorization: 'Bearer sk-demo',
+      },
+      payload: {
+        query: 'timely',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      object: 'search.result',
+      data: [{ title: 'timely' }],
+    });
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).not.toHaveBeenCalled();
+  });
+
+  it('retries the next channel when the first attempt times out before any first byte', async () => {
+    configMock.proxyFirstByteTimeoutSec = 0.05;
+    shouldRetryProxyRequestMock.mockImplementation((status: unknown) => Number(status) === 408);
+    selectNextChannelMock.mockReturnValueOnce({
+      channel: { id: 12, routeId: 23 },
+      site: { id: 45, name: 'fallback-site', url: 'https://fallback.example.com', platform: 'openai' },
+      account: { id: 34, username: 'fallback-user' },
+      tokenName: 'fallback',
+      tokenValue: 'sk-fallback',
+      actualModel: '__search',
+    });
+    fetchMock
+      .mockResolvedValueOnce(buildDelayedResponse(JSON.stringify({
+        object: 'search.result',
+        data: [{ title: 'too-late' }],
+      }), 120))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        object: 'search.result',
+        data: [{ title: 'fallback' }],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/search',
+      headers: {
+        authorization: 'Bearer sk-demo',
+      },
+      payload: {
+        query: 'retry-me',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      object: 'search.result',
+      data: [{ title: 'fallback' }],
+    });
+    expect(selectNextChannelMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recordFailureMock).toHaveBeenCalledWith(11, expect.objectContaining({
+      status: 408,
+      modelName: '__search',
+    }));
   });
 
   it('keeps returning a successful search response when channel success bookkeeping fails', async () => {

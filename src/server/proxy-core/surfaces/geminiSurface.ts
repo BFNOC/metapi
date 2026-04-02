@@ -219,8 +219,8 @@ async function logProxy(
   promptTokens = 0,
   completionTokens = 0,
   totalTokens = 0,
-  isStream: boolean | null = null,
-  firstByteLatencyMs: number | null = null,
+  isStream: boolean | null,
+  firstByteLatencyMs: number | null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -907,6 +907,11 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             downstreamPath,
             null,
             clientContext,
+            0,
+            0,
+            0,
+            isStreamAction,
+            null,
           );
           if (canRetryProxyChannel(retryCount)) {
             retryCount += 1;
@@ -917,6 +922,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
 
         upstreamPath = endpointResult.upstreamPath;
         const upstream = endpointResult.upstream;
+        const endpointFlowObservedMeta = getObservedResponseMeta(upstream);
         const rawText = await readRuntimeResponseText(upstream);
         let upstreamData: unknown = rawText;
         try {
@@ -948,6 +954,8 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           parsedUsage.promptTokens,
           parsedUsage.completionTokens,
           parsedUsage.totalTokens,
+          isStreamAction,
+          endpointFlowObservedMeta?.firstByteLatencyMs ?? null,
         );
         const downstreamPayload = isGeminiCliDownstream
           ? { response: geminiResponse }
@@ -984,6 +992,11 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           downstreamPath,
           upstreamPath || null,
           clientContext,
+          0,
+          0,
+          0,
+          isStreamAction,
+          null,
         );
         if (canRetryProxyChannel(retryCount)) {
           retryCount += 1;

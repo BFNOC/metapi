@@ -478,11 +478,31 @@ function mapProxyLogRow(
 ) {
   const clientMeta = resolveProxyLogClientMeta(row.proxy_logs);
   const legacyMeta = parseProxyLogMessageMeta(typeof row.proxy_logs.errorMessage === 'string' ? row.proxy_logs.errorMessage : '');
+  const {
+    isStream: rawIsStream,
+    firstByteLatencyMs: rawFirstByteLatencyMs,
+    ...proxyLogRest
+  } = row.proxy_logs as Record<string, unknown> & {
+    billingDetails?: string | null;
+    isStream?: unknown;
+    firstByteLatencyMs?: unknown;
+  };
+  const normalizedIsStream = typeof rawIsStream === 'boolean'
+    ? rawIsStream
+    : (typeof rawIsStream === 'number'
+      ? rawIsStream !== 0
+      : null);
+  const normalizedFirstByteLatencyMs = typeof rawFirstByteLatencyMs === 'number'
+    && Number.isFinite(rawFirstByteLatencyMs)
+    ? rawFirstByteLatencyMs
+    : null;
   return {
-    ...row.proxy_logs,
+    ...proxyLogRest,
     ...(options?.includeBillingDetails
       ? { billingDetails: parseProxyLogBillingDetails(row.proxy_logs.billingDetails) }
       : {}),
+    isStream: normalizedIsStream,
+    firstByteLatencyMs: normalizedFirstByteLatencyMs,
     clientFamily: clientMeta.clientFamily,
     clientAppId: clientMeta.clientAppId,
     clientAppName: clientMeta.clientAppName,

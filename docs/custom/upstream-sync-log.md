@@ -26,7 +26,7 @@
 |-------------|-----|---------|------|------|
 | `596d1b9` | #330 | Phase 0-5 | 11 文件改动 + 4 新增 | 不能 cherry-pick（53 文件已分叉）。含四态探测、负载感知、stable_first 主池/观察池、自动恢复探测、后台 scheduler。公益站定制：随机真实 prompt（防 AI 封 IP）、per-site 限4h/h、负载系数 0.10/0.12/0.04、recordProbeSuccess 不污染业务统计 |
 | `532be86` | #365 | Phase A-C | 12 文件改动 (+470) | 不能 cherry-pick（路由/服务层已分叉）。含可配置 failureCooldownMaxSec（env + settings 持久化 + 读写路径统一 clamp）、route 级批量清冷却 API（visible source routes + runtime health 联动）、前端清除冷却按钮（best-effort 刷新）。本地定制：round-robin 阶梯冷却不受 cap 限制、不清 failCount 保留历史统计 |
-| `180d17a` | #383 | 第一阶段 | 18 文件改动 (+1339) | 不能 cherry-pick（43 文件已分叉）。第一阶段只做首字节超时行为层：新增 firstByteTimeout.ts 核心模块（fetchWithObservedFirstByte + AbortSignal 透传 + replay stream）、endpointFlow 集成（per-attempt 计时、超时视为 retryable）、chatSurface/openAiResponsesSurface/geminiSurface 三个 surface 接入、config + settings runtime 读写链。未含：proxy_logs schema 扩列、stats/web API 透传、UI badges、Settings 前端输入框（留后续阶段） |
+| `180d17a` | #383 | Phase 1-4 | 30+ 文件改动 | 不能 cherry-pick（43 文件已分叉）。已完成分阶段手工移植：首字节超时核心模块（fetchWithObservedFirstByte + AbortSignal 透传 + replay stream）、endpointFlow 集成（per-attempt 计时、超时视为 retryable）、chatSurface/openAiResponsesSurface/geminiSurface 三个 surface 接入、direct routes（completions/embeddings/images/search）接入、config + settings runtime 读写链、proxy_logs `is_stream/first_byte_latency_ms` schema/store/stats API、ProxyLogs badges、Settings 前端输入框。本地定制：默认值保持 `0`，按当前 fork owner 拆相位实施，不引入上游 site endpoint pool 架构 |
 
 ### 跳过的 Commit（已审阅，不需要）
 
@@ -55,7 +55,7 @@
 | `1133846` | restore route priority drag behavior (#376) | 路由优先级 UI 系列 |
 | `596d1b9` | proactive channel probes + load-aware routing (#330) | ✅ **已手工移植**（见上方“手工移植”章节） |
 | `bcd758e` | harden background task completion waits (#382) | 测试改进，依赖 #330 |
-| `180d17a` | add proxy first-byte timeout and log badges (#383) | ✅ **已手工移植第一阶段**（见上方"手工移植"章节），剩余 schema/UI 待后续阶段 |
+| `180d17a` | add proxy first-byte timeout and log badges (#383) | ✅ **已完成分阶段手工移植**（见上方"手工移植"章节） |
 | `52c6ff5` | route codex websocket through site api endpoints (#386) | 依赖 #373 |
 | `ed2783e` | fix route detail dropdown clipping (#388) | UI 小修 |
 | `1407f75` | add Fedora desktop rpm packaging (#390) | RPM 打包 |
@@ -64,7 +64,7 @@
 
 - **#330** (主动探活+负载感知路由) — ✅ 已完成手工移植，含四态探测、负载感知、stable_first 主池/观察池、自动恢复探测
 - **#365** (路由冷却控制) — ✅ 已完成手工移植，含可配置冷却上限、route 级批量清冷却、前端按钮
-- **#383** (首字节超时) — ✅ 已完成第一阶段手工移植，含超时核心模块 + 三 surface 接入 + config/settings 链；剩余 proxy_logs schema 扩列、stats API 透传、UI badges、Settings 前端输入框待后续阶段
+- **#383** (首字节超时) — ✅ 已完成分阶段手工移植，含 direct routes / proxy_logs / UI
 - **#373** (Site API Endpoint Pool) — 上游架构演进方向，长期跟踪
 
 ---
@@ -199,4 +199,3 @@
 | *(merged)* | feat: API Key 连接新增探活功能 + 探活模型选择改为多选框 |
 | *(merged)* | feat(路由健康): 站点运行时惩罚重置 + WebUI 健康 badge/操作按钮 |
 | `2bd80d1` | feat(路由健康): 通道级冷却重置 + 站点惩罚 DB 同步 + WebUI 操作按钮 |
-

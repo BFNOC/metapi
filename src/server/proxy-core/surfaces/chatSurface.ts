@@ -44,6 +44,7 @@ import {
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import {
   fetchWithObservedFirstByte,
+  getObservedResponseMeta,
   resolveProxyFirstByteTimeoutMs,
 } from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
@@ -373,6 +374,7 @@ export async function handleChatSurfaceRequest(
           status: endpointResult.status || 502,
           errText: endpointResult.errText || 'unknown error',
           rawErrText: endpointResult.rawErrText,
+          isStream,
           latencyMs: Date.now() - startTime,
           retryCount,
         });
@@ -384,6 +386,7 @@ export async function handleChatSurfaceRequest(
       }
 
       const upstream = endpointResult.upstream;
+      const observedMeta = getObservedResponseMeta(upstream);
       const successfulUpstreamPath = endpointResult.upstreamPath;
       if (endpointResult.downgraded) {
         recordSuccessfulEndpointDowngrades({
@@ -430,6 +433,8 @@ export async function handleChatSurfaceRequest(
             requestStartedAtMs: startTime,
             latencyMs,
             retryCount,
+            isStream: true,
+            firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
             upstreamPath: successfulUpstreamPath,
             logSuccess: failureToolkit.log,
             recordDownstreamCost: (estimatedCost) => {
@@ -695,6 +700,8 @@ export async function handleChatSurfaceRequest(
           requestedModel,
           modelName,
           failure,
+          isStream,
+          firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
           latencyMs: latency,
           retryCount,
           promptTokens: parsedUsage.promptTokens,
@@ -720,6 +727,8 @@ export async function handleChatSurfaceRequest(
         requestStartedAtMs: startTime,
         latencyMs: latency,
         retryCount,
+        isStream,
+        firstByteLatencyMs: observedMeta?.firstByteLatencyMs ?? null,
         upstreamPath: successfulUpstreamPath,
         logSuccess: failureToolkit.log,
         recordDownstreamCost: (estimatedCost) => {
@@ -745,6 +754,7 @@ export async function handleChatSurfaceRequest(
           requestedModel,
         modelName,
         errorMessage: err?.message || 'network failure',
+        isStream,
         latencyMs: Date.now() - startTime,
         retryCount,
       });
@@ -986,6 +996,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
           status: upstream.status,
           errText: typeof payload === 'string' ? payload : JSON.stringify(payload),
           rawErrText: typeof payload === 'string' ? payload : text,
+          isStream: false,
           latencyMs: latency,
           retryCount,
         });
@@ -1003,6 +1014,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
         modelRequested: requestedModel,
         status: 'success',
         httpStatus: upstream.status,
+        isStream: false,
         latencyMs: latency,
         errorMessage: null,
         retryCount,
@@ -1023,6 +1035,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
         requestedModel,
         modelName,
         errorMessage: error?.message || 'network failure',
+        isStream: false,
         latencyMs: Date.now() - startTime,
         retryCount,
       });

@@ -127,6 +127,13 @@
       "when": 1774770699359,
       "tag": "0018_excluded_site_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1775139429969,
+      "tag": "0019_proxy_logs_stream_timing",
+      "breakpoints": true
     }
   ]
 }

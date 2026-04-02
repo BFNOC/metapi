@@ -835,3 +835,15 @@ npm run repo:drift-check
   - 阻断有 TTL（建议 6h），过期后自动恢复候选资格
   - 手动重置可立即清除所有阻断
   - 如果协议 X 在某次请求中直接成功（TTL 过期后的重试），清零降级计数
+
+### UI 展示风险说明
+
+- 当前 WebUI 若在“使用日志详情”中展示 runtime affinity，建议**明确标注它只展示 `text_default` 作用域的学习状态**
+- 原因：
+  - 当前日志详情接口可稳定从日志本身还原 `site + model + downstreamPath`
+  - 但无法可靠还原“该次请求是否带文件 / 是否带 remote document URL / 是否带 reasoning continuity”这类 capability bucket
+  - 因此详情页若直接查询 runtime affinity，最稳妥的做法是只查 `nofiles + noremoteurl + noreasoning` 对应的 `text_default` 状态
+- 这意味着：
+  - 文本默认请求的协议学习状态可以正确展示
+  - 文件类请求、图片/音频请求、以及特殊 reasoning scope 的学习状态**可能未在该视图中展示**
+- 这不是功能错误，但属于需要在 UI 文案中主动说明的限制，避免把“未展示”误解成“未学习”

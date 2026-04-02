@@ -21,6 +21,7 @@ import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { probeModels, type ProbeResult } from '../../services/modelProbeService.js';
 import { withAccountProxyOverride, resolveChannelProxyUrl, getDispatcherForProxyUrl } from '../../services/siteProxy.js';
 import { type ModelRefreshResult } from '../../services/modelService.js';
+import { resolveProbePrompt } from '../../../shared/probePrompts.js';
 import {
   type CoverageBatchRebuildResult,
   convergeAccountMutation,
@@ -92,6 +93,98 @@ type CoverageRefreshRebuildResult = CoverageBatchRebuildResult;
 
 const TOKEN_SYNC_TIMEOUT_MS = 15_000;
 const SYNC_ALL_BATCH_SIZE = 3;
+
+function resolveAvailabilityFromProbeResult(result: ProbeResult): boolean | null {
+  if (result.status === 'supported') return true;
+  if (result.status === 'unsupported') return false;
+  return null;
+}
+
+async function persistTokenProbeResults(tokenId: number, results: ProbeResult[]): Promise<void> {
+  const now = new Date().toISOString();
+  for (const result of results) {
+    const nextAvailability = resolveAvailabilityFromProbeResult(result);
+    if (nextAvailability === null) {
+      const existing = await db.select()
+        .from(schema.tokenModelAvailability)
+        .where(and(
+          eq(schema.tokenModelAvailability.tokenId, tokenId),
+          eq(schema.tokenModelAvailability.modelName, result.modelName),
+        ))
+        .get();
+      if (!existing) {
+        await db.insert(schema.tokenModelAvailability).values({
+          tokenId,
+          modelName: result.modelName,
+          available: null,
+          latencyMs: result.ttftMs,
+          checkedAt: now,
+        }).run();
+        continue;
+      }
+      await db.update(schema.tokenModelAvailability)
+        .set({
+          latencyMs: result.ttftMs,
+          checkedAt: now,
+        })
+        .where(eq(schema.tokenModelAvailability.id, existing.id))
+        .run();
+      continue;
+    }
+
+    await db.insert(schema.tokenModelAvailability)
+      .values({
+        tokenId,
+        modelName: result.modelName,
+        available: nextAvailability,
+        latencyMs: result.ttftMs,
+        checkedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [schema.tokenModelAvailability.tokenId, schema.tokenModelAvailability.modelName],
+        set: {
+          available: nextAvailability,
+          latencyMs: result.ttftMs,
+          checkedAt: now,
+        },
+      })
+      .run();
+  }
+}
+
+async function promoteSupportedProbeResultsToAccountAvailability(
+  accountId: number,
+  results: ProbeResult[],
+): Promise<ProbeResult[]> {
+  const now = new Date().toISOString();
+  const supportedResults = results.filter((result) => result.status === 'supported');
+  for (const result of supportedResults) {
+    const existing = await db.select()
+      .from(schema.modelAvailability)
+      .where(and(
+        eq(schema.modelAvailability.accountId, accountId),
+        eq(schema.modelAvailability.modelName, result.modelName),
+      ))
+      .get();
+    if (!existing) {
+      await db.insert(schema.modelAvailability).values({
+        accountId,
+        modelName: result.modelName,
+        available: true,
+        latencyMs: result.ttftMs,
+        checkedAt: now,
+      }).run();
+      continue;
+    }
+    if (!existing.available) {
+      await db.update(schema.modelAvailability)
+        .set({ available: true, latencyMs: result.ttftMs, checkedAt: now })
+        .where(eq(schema.modelAvailability.id, existing.id))
+        .run();
+    }
+  }
+  return supportedResults;
+}
 
 function buildSyncAccountLabel(item: SyncExecutionResult): string {
   const account = (item.accountName || `#${item.accountId}`).trim();
@@ -1187,7 +1280,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         siteUrl,
         apiToken,
         modelNames,
-        prompt: request.body?.prompt || 'hi',
+        prompt: resolveProbePrompt(request.body?.prompt),
         concurrency: request.body?.concurrency || 3,
         timeoutMs: request.body?.timeoutMs || 15000,
         delayMs: request.body?.delayMs || 0,
@@ -1207,54 +1300,9 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       }
       reply.raw.end();
 
-      // Write probe results back to token_model_availability
-      const now = new Date().toISOString();
-      for (const r of allResults) {
-        await db.insert(schema.tokenModelAvailability)
-          .values({
-            tokenId,
-            modelName: r.modelName,
-            available: r.status === 'ok',
-            latencyMs: r.ttftMs,
-            checkedAt: now,
-          })
-          .onConflictDoUpdate({
-            target: [schema.tokenModelAvailability.tokenId, schema.tokenModelAvailability.modelName],
-            set: {
-              available: r.status === 'ok',
-              latencyMs: r.ttftMs,
-              checkedAt: now,
-            },
-          })
-          .run();
-      }
-
-      // Merge successful models into account-level model_availability so routes can be auto-created
       const accountId = row.accounts.id;
-      const successfulModels = allResults.filter((r) => r.status === 'ok');
-      for (const r of successfulModels) {
-        const existing = await db.select()
-          .from(schema.modelAvailability)
-          .where(and(
-            eq(schema.modelAvailability.accountId, accountId),
-            eq(schema.modelAvailability.modelName, r.modelName),
-          ))
-          .get();
-        if (!existing) {
-          await db.insert(schema.modelAvailability).values({
-            accountId,
-            modelName: r.modelName,
-            available: true,
-            latencyMs: r.ttftMs,
-            checkedAt: now,
-          }).run();
-        } else if (!existing.available) {
-          await db.update(schema.modelAvailability)
-            .set({ available: true, latencyMs: r.ttftMs, checkedAt: now })
-            .where(eq(schema.modelAvailability.id, existing.id))
-            .run();
-        }
-      }
+      await persistTokenProbeResults(tokenId, allResults);
+      const successfulModels = await promoteSupportedProbeResultsToAccountAvailability(accountId, allResults);
 
       // Trigger route rebuild so newly-discovered models get channels automatically
       if (successfulModels.length > 0) {
@@ -1268,61 +1316,16 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       siteUrl,
       apiToken,
       modelNames,
-      prompt: request.body?.prompt || 'hi',
+      prompt: resolveProbePrompt(request.body?.prompt),
       concurrency: request.body?.concurrency || 3,
       timeoutMs: request.body?.timeoutMs || 15000,
       delayMs: request.body?.delayMs || 0,
       dispatcher: probeDispatcher,
     });
 
-    // Write probe results back to token_model_availability
-    const now = new Date().toISOString();
-    for (const r of results) {
-      await db.insert(schema.tokenModelAvailability)
-        .values({
-          tokenId,
-          modelName: r.modelName,
-          available: r.status === 'ok',
-          latencyMs: r.ttftMs,
-          checkedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: [schema.tokenModelAvailability.tokenId, schema.tokenModelAvailability.modelName],
-          set: {
-            available: r.status === 'ok',
-            latencyMs: r.ttftMs,
-            checkedAt: now,
-          },
-        })
-        .run();
-    }
-
-    // Merge successful models into account-level model_availability so routes can be auto-created
     const accountId = row.accounts.id;
-    const successfulModels = results.filter((r) => r.status === 'ok');
-    for (const r of successfulModels) {
-      const existing = await db.select()
-        .from(schema.modelAvailability)
-        .where(and(
-          eq(schema.modelAvailability.accountId, accountId),
-          eq(schema.modelAvailability.modelName, r.modelName),
-        ))
-        .get();
-      if (!existing) {
-        await db.insert(schema.modelAvailability).values({
-          accountId,
-          modelName: r.modelName,
-          available: true,
-          latencyMs: r.ttftMs,
-          checkedAt: now,
-        }).run();
-      } else if (!existing.available) {
-        await db.update(schema.modelAvailability)
-          .set({ available: true, latencyMs: r.ttftMs, checkedAt: now })
-          .where(eq(schema.modelAvailability.id, existing.id))
-          .run();
-      }
-    }
+    await persistTokenProbeResults(tokenId, results);
+    const successfulModels = await promoteSupportedProbeResultsToAccountAvailability(accountId, results);
 
     // Trigger route rebuild so newly-discovered models get channels automatically
     if (successfulModels.length > 0) {

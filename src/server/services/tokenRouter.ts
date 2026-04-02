@@ -4,6 +4,7 @@ import { upsertSetting } from '../db/upsertSetting.js';
 import { config } from '../config.js';
 import { getCachedModelRoutingReferenceCost, refreshModelPricingCatalog } from './modelPricingService.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
+import { proxyChannelCoordinator } from './proxyChannelCoordinator.js';
 import {
   normalizeRouteRoutingStrategy,
   type RouteRoutingStrategy,
@@ -99,6 +100,13 @@ const SITE_RUNTIME_HEALTH_PERSIST_DEBOUNCE_MS = 500;
 const SITE_RUNTIME_HEALTH_PERSIST_STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SITE_RUNTIME_HEALTH_PERSIST_IDLE_TTL_MS = 12 * 60 * 60 * 1000;
 const SITE_RUNTIME_HEALTH_PERSIST_MIN_PENALTY = 0.02;
+const CHARITY_LOAD_ACTIVE_PENALTY = 0.10;
+const CHARITY_LOAD_WAITING_PENALTY = 0.12;
+const CHARITY_LOAD_SATURATION_PENALTY = 0.04;
+const CHARITY_LOAD_MIN_FACTOR = 0.40;
+const STABLE_FIRST_PRIMARY_SCORE_FLOOR = 0.92;
+const STABLE_FIRST_OBSERVATION_INTERVAL = 24;
+const STABLE_FIRST_OBSERVATION_SITE_COOLDOWN_MS = 30 * 60 * 1000;
 
 const SITE_PROTOCOL_FAILURE_PATTERNS: RegExp[] = [
   /unsupported\s+legacy\s+protocol/i,
@@ -201,6 +209,14 @@ type SiteRuntimeHealthDetails = {
   modelKey: string;
 };
 
+type ChannelLoadFactorDetails = {
+  factor: number;
+  activeLeaseCount: number;
+  waitingCount: number;
+  saturated: boolean;
+  sessionScoped: boolean;
+};
+
 type WeightedSelectionMode = 'weighted' | 'stable_first';
 
 // Single-bucket model: keyed by (siteId, modelName). No separate global bucket.
@@ -210,6 +226,8 @@ let siteRuntimeHealthLoadPromise: Promise<void> | null = null;
 let siteRuntimeHealthSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let siteRuntimeHealthPersistInFlight: Promise<void> | null = null;
 let siteRuntimeHealthPersistDirty = false;
+let stableFirstSelectionCount = 0;
+const stableFirstObservationSiteCooldownUntilMs = new Map<number, number>();
 
 function fibonacciNumber(index: number): number {
   if (index <= 2) return 1;
@@ -461,6 +479,19 @@ function getSiteRuntimeHealthDetails(siteId: number, modelName?: string | null, 
   };
 }
 
+function computeChannelLoadFactor(channelId: number, extraConfig?: string | null): number {
+  const snapshot = proxyChannelCoordinator.getChannelLoadSnapshot(channelId, extraConfig);
+  if (!snapshot.sessionScoped || snapshot.concurrencyLimit <= 0) return 1;
+
+  const penalty = (
+    snapshot.activeLeaseCount * CHARITY_LOAD_ACTIVE_PENALTY
+    + snapshot.waitingCount * CHARITY_LOAD_WAITING_PENALTY
+    + (snapshot.saturated ? CHARITY_LOAD_SATURATION_PENALTY : 0)
+  );
+
+  return clampNumber(1 - penalty, CHARITY_LOAD_MIN_FACTOR, 1);
+}
+
 function applyRuntimeHealthFailure(
   state: SiteRuntimeHealthState,
   context: SiteRuntimeFailureContext = {},
@@ -672,6 +703,12 @@ function recordSiteRuntimeSuccess(siteId: number, modelName: string, latencyMs: 
   scheduleSiteRuntimeHealthPersistence();
 }
 
+function recordSiteRuntimeRecoverySuccess(siteId: number, modelName: string, nowMs = Date.now()): void {
+  const state = getOrCreateSiteModelRuntimeHealthState(siteId, modelName, nowMs);
+  applyRuntimeHealthSuccess(state, state.latencyEmaMs ?? 0, nowMs);
+  scheduleSiteRuntimeHealthPersistence();
+}
+
 export function resetSiteRuntimeHealthState(): void {
   siteModelRuntimeHealthStates.clear();
   siteRuntimeHealthLoaded = false;
@@ -738,6 +775,11 @@ export async function flushSiteRuntimeHealthPersistence(): Promise<void> {
   }
 }
 
+export function resetStableFirstObservationState(): void {
+  stableFirstSelectionCount = 0;
+  stableFirstObservationSiteCooldownUntilMs.clear();
+}
+
 function buildRuntimeBreakerReason(details: SiteRuntimeHealthDetails): string {
   if (details.breakerOpen) {
     return '熔断中，优先避让';
@@ -785,6 +827,114 @@ function filterSiteRuntimeBrokenCandidatesByModel(
       candidates,
       avoided: [],
     };
+}
+
+type StableFirstSelectionPlan = {
+  selectedIndex: number;
+  primaryIndices: number[];
+  observationIndices: number[];
+  selectedPool: 'primary' | 'observation';
+  observationAttempted: boolean;
+  observationFallbackReason: 'no_observation_candidates' | 'all_sites_cooling' | null;
+};
+
+function pruneStableFirstObservationCooldown(nowMs = Date.now()): void {
+  for (const [siteId, cooldownUntilMs] of stableFirstObservationSiteCooldownUntilMs.entries()) {
+    if (cooldownUntilMs <= nowMs) {
+      stableFirstObservationSiteCooldownUntilMs.delete(siteId);
+    }
+  }
+}
+
+function buildStableFirstPoolIndices(contributions: number[], rankedIndices: number[]): {
+  primaryIndices: number[];
+  observationIndices: number[];
+} {
+  if (rankedIndices.length === 0) {
+    return {
+      primaryIndices: [],
+      observationIndices: [],
+    };
+  }
+
+  const bestContribution = contributions[rankedIndices[0] ?? 0] ?? 0;
+  if (bestContribution <= 0) {
+    return {
+      primaryIndices: [rankedIndices[0]],
+      observationIndices: rankedIndices.slice(1),
+    };
+  }
+
+  const primaryFloor = bestContribution * STABLE_FIRST_PRIMARY_SCORE_FLOOR;
+  const primaryIndices = rankedIndices.filter((candidateIndex) => (
+    (contributions[candidateIndex] ?? 0) >= primaryFloor
+  ));
+
+  return {
+    primaryIndices: primaryIndices.length > 0 ? primaryIndices : [rankedIndices[0]],
+    observationIndices: rankedIndices.filter((candidateIndex) => !primaryIndices.includes(candidateIndex)),
+  };
+}
+
+function resolveStableFirstSelectionPlan(
+  candidates: RouteChannelCandidate[],
+  contributions: number[],
+  rankedIndices: number[],
+  nowMs = Date.now(),
+  consumeObservationBudget = true,
+): StableFirstSelectionPlan {
+  const { primaryIndices, observationIndices } = buildStableFirstPoolIndices(contributions, rankedIndices);
+  const fallbackPrimaryIndex = primaryIndices[0] ?? rankedIndices[0] ?? 0;
+  const nextSelectionCount = stableFirstSelectionCount + 1;
+  const observationAttempted = observationIndices.length > 0
+    && nextSelectionCount % STABLE_FIRST_OBSERVATION_INTERVAL === 0;
+
+  if (consumeObservationBudget) {
+    stableFirstSelectionCount = nextSelectionCount;
+  }
+
+  if (!observationAttempted) {
+    return {
+      selectedIndex: fallbackPrimaryIndex,
+      primaryIndices,
+      observationIndices,
+      selectedPool: 'primary',
+      observationAttempted: false,
+      observationFallbackReason: null,
+    };
+  }
+
+  pruneStableFirstObservationCooldown(nowMs);
+  const observationCandidateIndex = observationIndices.find((candidateIndex) => {
+    const siteId = candidates[candidateIndex]?.site.id;
+    if (!siteId) return false;
+    const cooldownUntilMs = stableFirstObservationSiteCooldownUntilMs.get(siteId) ?? 0;
+    return cooldownUntilMs <= nowMs;
+  });
+
+  if (observationCandidateIndex != null) {
+    const siteId = candidates[observationCandidateIndex]?.site.id;
+    if (consumeObservationBudget && siteId) {
+      stableFirstObservationSiteCooldownUntilMs.set(siteId, nowMs + STABLE_FIRST_OBSERVATION_SITE_COOLDOWN_MS);
+    }
+    return {
+      selectedIndex: observationCandidateIndex,
+      primaryIndices,
+      observationIndices,
+      selectedPool: 'observation',
+      observationAttempted: true,
+      observationFallbackReason: null,
+    };
+  }
+
+  return {
+    selectedIndex: fallbackPrimaryIndex,
+    primaryIndices,
+    observationIndices,
+    selectedPool: 'primary',
+    observationAttempted: true,
+    observationFallbackReason: observationIndices.length > 0 ? 'all_sites_cooling' : 'no_observation_candidates',
+  };
 }
 
 type RouteRow = typeof schema.tokenRoutes.$inferSelect & {
@@ -1660,6 +1810,7 @@ export class TokenRouter {
         downstreamPolicy,
         nowMs,
         routeStrategy === 'stable_first' ? 'stable_first' : 'weighted',
+        false,
       );
       for (const detail of weighted.details) {
         const target = candidateMap.get(detail.candidate.channel.id);
@@ -1809,6 +1960,33 @@ export class TokenRouter {
     });
 
     recordSiteRuntimeSuccess(account.siteId, modelName || '', latencyMs);
+  }
+
+  async recordProbeSuccess(channelId: number, modelName?: string | null) {
+    await ensureSiteRuntimeHealthStateLoaded();
+    const row = await db.select()
+      .from(schema.routeChannels)
+      .innerJoin(schema.accounts, eq(schema.routeChannels.accountId, schema.accounts.id))
+      .where(eq(schema.routeChannels.id, channelId))
+      .get();
+    if (!row) return;
+
+    const nowIso = new Date().toISOString();
+    await db.update(schema.routeChannels).set({
+      cooldownUntil: null,
+      lastFailAt: null,
+      consecutiveFailCount: 0,
+      cooldownLevel: 0,
+    }).where(eq(schema.routeChannels.id, channelId)).run();
+
+    patchCachedChannel(channelId, (channel) => {
+      channel.cooldownUntil = null;
+      channel.lastFailAt = null;
+      channel.consecutiveFailCount = 0;
+      channel.cooldownLevel = 0;
+    });
+
+    recordSiteRuntimeRecoverySuccess(row.accounts.siteId, modelName || '', Date.now());
   }
 
   /**
@@ -1988,6 +2166,7 @@ export class TokenRouter {
           requestedByDisplayName ? runtimeModelResolver : mappedModel,
           downstreamPolicy,
           nowMs,
+          recordSelection,
         )
         : this.weightedRandomSelect(
           candidates,
@@ -2254,8 +2433,16 @@ export class TokenRouter {
     modelName: string | ((candidate: RouteChannelCandidate) => string),
     downstreamPolicy: DownstreamRoutingPolicy,
     nowMs = Date.now(),
+    consumeObservationBudget = true,
   ) {
-    return this.calculateWeightedSelection(candidates, modelName, downstreamPolicy, nowMs, 'stable_first').selected;
+    return this.calculateWeightedSelection(
+      candidates,
+      modelName,
+      downstreamPolicy,
+      nowMs,
+      'stable_first',
+      consumeObservationBudget,
+    ).selected;
   }
 
   private calculateWeightedSelection(
@@ -2264,6 +2451,7 @@ export class TokenRouter {
     downstreamPolicy: DownstreamRoutingPolicy,
     nowMs = Date.now(),
     selectionMode: WeightedSelectionMode = 'weighted',
+    consumeStableFirstObservationBudget = true,
   ) {
     if (candidates.length === 0) {
       return {
@@ -2290,6 +2478,9 @@ export class TokenRouter {
     const effectiveCosts = candidates.map((candidate) => resolveEffectiveUnitCost(candidate, resolveModelName(candidate)));
     const runtimeHealthDetails = candidates.map((candidate) => (
       getSiteRuntimeHealthDetails(candidate.site.id, resolveModelName(candidate), nowMs)
+    ));
+    const channelLoadFactors = candidates.map((candidate) => (
+      computeChannelLoadFactor(candidate.channel.id, candidate.account.extraConfig)
     ));
 
     const valueScores = candidates.map((c, i) => {
@@ -2337,6 +2528,7 @@ export class TokenRouter {
 
       contribution *= runtimeHealthDetails[i]?.multiplier ?? 1;
       contribution *= siteHistoricalHealthMetrics.get(candidate.site.id)?.multiplier ?? 1;
+      contribution *= channelLoadFactors[i] ?? 1;
 
       // If upstream price is unknown and we are using fallback unit cost,
       // apply an explicit penalty so raising fallback cost meaningfully lowers probability.
@@ -2360,6 +2552,23 @@ export class TokenRouter {
     rankedIndices.forEach((candidateIndex, rank) => {
       rankByIndex.set(candidateIndex, rank + 1);
     });
+    const stableFirstPlan = selectionMode === 'stable_first'
+      ? resolveStableFirstSelectionPlan(
+        candidates,
+        contributions,
+        rankedIndices,
+        nowMs,
+        consumeStableFirstObservationBudget,
+      )
+      : null;
+    const primaryRankByIndex = new Map<number, number>();
+    const observationRankByIndex = new Map<number, number>();
+    stableFirstPlan?.primaryIndices.forEach((candidateIndex, rank) => {
+      primaryRankByIndex.set(candidateIndex, rank + 1);
+    });
+    stableFirstPlan?.observationIndices.forEach((candidateIndex, rank) => {
+      observationRankByIndex.set(candidateIndex, rank + 1);
+    });
     const details = candidates.map((candidate, i) => {
       const probability = totalContribution > 0 ? contributions[i] / totalContribution : 0;
       const weight = candidate.channel.weight ?? 10;
@@ -2381,6 +2590,7 @@ export class TokenRouter {
       const siteRuntimeDetail = runtimeHealthDetails[i];
       const siteHistoricalHealth = siteHistoricalHealthMetrics.get(candidate.site.id);
       const siteHistoricalMultiplier = siteHistoricalHealth?.multiplier ?? 1;
+      const channelLoadFactor = channelLoadFactors[i] ?? 1;
       const historicalSuccessRateText = siteHistoricalHealth?.successRate == null
         ? '—'
         : `${(siteHistoricalHealth.successRate * 100).toFixed(1)}%`;
@@ -2388,15 +2598,36 @@ export class TokenRouter {
         ? '—'
         : `${siteHistoricalHealth.avgLatencyMs}ms`;
       const runtimeHealthText = `${siteRuntimeDetail.multiplier.toFixed(2)}`;
+      const stableFirstPool = stableFirstPlan?.primaryIndices.includes(i)
+        ? 'primary'
+        : (stableFirstPlan?.observationIndices.includes(i) ? 'observation' : 'primary');
+      const stableFirstReasonPrefix = stableFirstPool === 'observation'
+        ? `稳定优先（观察池候选第 ${observationRankByIndex.get(i) ?? 1} / ${stableFirstPlan?.observationIndices.length ?? 1}；总排名 ${rankByIndex.get(i) ?? 1} / ${candidates.length}`
+        : `稳定优先（主池第 ${primaryRankByIndex.get(i) ?? 1} / ${stableFirstPlan?.primaryIndices.length ?? 1}；总排名 ${rankByIndex.get(i) ?? 1} / ${candidates.length}`;
+      const stableFirstSelectionNote = stableFirstPlan?.selectedIndex === i
+        ? (
+          stableFirstPlan.selectedPool === 'observation'
+            ? '；本轮观察池抽样命中'
+            : (
+              stableFirstPlan.observationAttempted
+                ? (
+                  stableFirstPlan.observationFallbackReason === 'all_sites_cooling'
+                    ? '；观察站点均在冷却，回退主池'
+                    : '；观察池为空，回退主池'
+                )
+                : ''
+            )
+        )
+        : '';
       const reasonPrefix = selectionMode === 'stable_first'
-        ? `稳定优先（综合评分第 ${rankByIndex.get(i) ?? 1} / ${candidates.length}`
+        ? `${stableFirstReasonPrefix}${stableFirstSelectionNote}`
         : '按权重随机';
       return {
         candidate,
         probability,
         reason: selectionMode === 'stable_first'
-          ? `${reasonPrefix}，W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，评分占比≈${(probability * 100).toFixed(1)}%）`
-          : `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`,
+          ? `${reasonPrefix}，W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），负载倍率=${channelLoadFactor.toFixed(2)}，同站点通道=${siteChannels}，评分占比≈${(probability * 100).toFixed(1)}%）`
+          : `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），负载倍率=${channelLoadFactor.toFixed(2)}，同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`,
       };
     });
 
@@ -2411,6 +2642,8 @@ export class TokenRouter {
           break;
         }
       }
+    } else if (stableFirstPlan) {
+      selected = candidates[stableFirstPlan.selectedIndex] ?? selected;
     }
 
     return { selected, details };
@@ -2421,5 +2654,5 @@ export const tokenRouter = new TokenRouter();
 
 export const __tokenRouterTestUtils = {
   resolveMappedModel,
+  resetStableFirstObservationState,
 };
-

@@ -1,8 +1,9 @@
 import { fetch, type Dispatcher } from 'undici';
+import { pickRandomProbePrompt } from '../../shared/probePrompts.js';
 
 export type ProbeResult = {
   modelName: string;
-  status: 'ok' | 'timeout' | 'error';
+  status: 'supported' | 'unsupported' | 'inconclusive' | 'skipped';
   ttftMs: number | null;
   httpStatus: number | null;
   error: string | null;
@@ -40,6 +41,28 @@ function extractSseContentTokens(raw: string): string {
     } catch { /* skip malformed */ }
   }
   return result;
+}
+
+function isUnsupportedModelError(status: number, errorBody: string | null): boolean {
+  if (status === 404) return true;
+  if (!errorBody) return false;
+  const normalized = errorBody.toLowerCase();
+  return (
+    normalized.includes('model not found')
+    || normalized.includes('unsupported model')
+    || normalized.includes('does not exist')
+    || normalized.includes('not support this model')
+    || normalized.includes('not a supported model')
+    || normalized.includes('model_not_found')
+    || normalized.includes('unsupported_model')
+  );
+}
+
+function classifyHttpFailure(status: number, errorBody: string | null): ProbeResult['status'] {
+  if (status === 401 || status === 403 || status === 429) return 'skipped';
+  if (isUnsupportedModelError(status, errorBody)) return 'unsupported';
+  if (status >= 500) return 'inconclusive';
+  return 'inconclusive';
 }
 
 async function probeSingleModel(
@@ -126,7 +149,7 @@ async function probeSingleModel(
       } catch { /* ignore read errors */ }
       return {
         modelName,
-        status: 'error',
+        status: classifyHttpFailure(response.status, errorBody),
         ttftMs: Date.now() - startTime,
         httpStatus: response.status,
         error: errorBody || `HTTP ${response.status}`,
@@ -138,7 +161,7 @@ async function probeSingleModel(
     if (!reader) {
       return {
         modelName,
-        status: 'error',
+        status: 'inconclusive',
         ttftMs: Date.now() - startTime,
         httpStatus: response.status,
         error: 'No response body',
@@ -169,7 +192,7 @@ async function probeSingleModel(
 
     return {
       modelName,
-      status: gotData ? 'ok' : 'error',
+      status: gotData ? 'supported' : 'inconclusive',
       ttftMs,
       httpStatus: response.status,
       error: gotData ? null : 'Stream ended immediately',
@@ -181,7 +204,7 @@ async function probeSingleModel(
       if (abortedByExternal) {
         return {
           modelName,
-          status: 'error',
+          status: 'skipped',
           ttftMs: Date.now() - startTime,
           httpStatus: null,
           error: 'Client disconnected',
@@ -190,7 +213,7 @@ async function probeSingleModel(
       }
       return {
         modelName,
-        status: 'timeout',
+        status: 'inconclusive',
         ttftMs: timeoutMs,
         httpStatus: null,
         error: `Timeout after ${timeoutMs}ms`,
@@ -199,7 +222,7 @@ async function probeSingleModel(
     }
     return {
       modelName,
-      status: 'error',
+      status: 'inconclusive',
       ttftMs: Date.now() - startTime,
       httpStatus: null,
       error: error?.message || 'Unknown error',
@@ -216,7 +239,7 @@ export async function probeModels(input: ProbeInput, callbacks?: ProbeCallbacks)
     siteUrl,
     apiToken,
     modelNames,
-    prompt = 'hi',
+    prompt = pickRandomProbePrompt(),
     concurrency = 3,
     timeoutMs = 15000,
     delayMs = 0,

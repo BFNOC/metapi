@@ -24,6 +24,14 @@ type ChannelRuntimeState = {
   queue: ChannelWaiter[];
 };
 
+export type ProxyChannelLoadSnapshot = {
+  sessionScoped: boolean;
+  concurrencyLimit: number;
+  activeLeaseCount: number;
+  waitingCount: number;
+  saturated: boolean;
+};
+
 export type ProxyChannelLease = {
   channelId: number;
   isActive(): boolean;
@@ -103,8 +111,8 @@ function createNoopLease(channelId: number): ProxyChannelLease {
   return {
     channelId,
     isActive: () => false,
-    release: () => {},
-    touch: () => {},
+    release: () => { },
+    touch: () => { },
   };
 }
 
@@ -162,6 +170,31 @@ class ProxyChannelCoordinator {
       return;
     }
     stickySessionBindings.delete(normalizedKey);
+  }
+
+  getChannelLoadSnapshot(channelId: number, extraConfig?: string | null): ProxyChannelLoadSnapshot {
+    const normalizedChannelId = Math.trunc(channelId || 0);
+    const sessionScoped = isSessionScopedChannel(extraConfig);
+    const concurrencyLimit = getChannelConcurrencyLimit(extraConfig);
+    const state = normalizedChannelId > 0 ? channelRuntimeStates.get(normalizedChannelId) : null;
+    const activeLeaseCount = state?.activeLeaseIds.size ?? 0;
+    const waitingCount = state?.queue.filter((waiter) => !waiter.cancelled).length ?? 0;
+    const saturated = sessionScoped && concurrencyLimit > 0 && activeLeaseCount >= concurrencyLimit;
+
+    return {
+      sessionScoped,
+      concurrencyLimit,
+      activeLeaseCount,
+      waitingCount,
+      saturated,
+    };
+  }
+
+  getActiveChannelIds(): number[] {
+    return Array.from(channelRuntimeStates.entries())
+      .filter(([, state]) => state.activeLeaseIds.size > 0)
+      .map(([channelId]) => channelId)
+      .sort((left, right) => left - right);
   }
 
   async acquireChannelLease(input: {

@@ -32,6 +32,8 @@ import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
 import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackfill.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
 import { startSiteAnnouncementPolling } from './services/siteAnnouncementPollingService.js';
+import { startChannelRecoveryProbeService, stopChannelRecoveryProbeService } from './services/channelRecoveryProbeService.js';
+import { startModelAvailabilityScheduler, stopModelAvailabilityScheduler } from './services/modelAvailabilityScheduler.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
@@ -433,6 +435,8 @@ if (existsSync(webDir)) {
 await startScheduler();
 await reloadBackupWebdavScheduler();
 startSiteAnnouncementPolling();
+startChannelRecoveryProbeService();
+startModelAvailabilityScheduler();
 try {
   await startOAuthLoopbackCallbackServers();
 } catch (error) {
@@ -443,6 +447,8 @@ startProxyFileRetentionService();
 app.addHook('onClose', async () => {
   stopProxyFileRetentionService();
   stopProxyLogRetentionService();
+  stopChannelRecoveryProbeService();
+  stopModelAvailabilityScheduler();
   await stopOAuthLoopbackCallbackServers();
 });
 

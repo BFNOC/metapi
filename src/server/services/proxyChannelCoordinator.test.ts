@@ -146,4 +146,51 @@ describe('proxyChannelCoordinator', () => {
       second.lease.release();
     }
   });
+
+  it('reports load snapshots for session-scoped channels', async () => {
+    const first = await proxyChannelCoordinator.acquireChannelLease({
+      channelId: 21,
+      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+    });
+    expect(first.status).toBe('acquired');
+    if (first.status !== 'acquired') return;
+
+    const secondPromise = proxyChannelCoordinator.acquireChannelLease({
+      channelId: 21,
+      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+    });
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(
+      proxyChannelCoordinator.getChannelLoadSnapshot(21, JSON.stringify({ credentialMode: 'session' })),
+    ).toEqual({
+      sessionScoped: true,
+      concurrencyLimit: 1,
+      activeLeaseCount: 1,
+      waitingCount: 1,
+      saturated: true,
+    });
+    expect(proxyChannelCoordinator.getActiveChannelIds()).toEqual([21]);
+
+    first.lease.release();
+    await vi.advanceTimersByTimeAsync(0);
+    const second = await secondPromise;
+    if (second.status === 'acquired') {
+      second.lease.release();
+    }
+  });
+
+  it('reports neutral load snapshots for non-session channels', () => {
+    expect(
+      proxyChannelCoordinator.getChannelLoadSnapshot(33, JSON.stringify({ credentialMode: 'apikey' })),
+    ).toEqual({
+      sessionScoped: false,
+      concurrencyLimit: 0,
+      activeLeaseCount: 0,
+      waitingCount: 0,
+      saturated: false,
+    });
+    expect(proxyChannelCoordinator.getActiveChannelIds()).toEqual([]);
+  });
 });

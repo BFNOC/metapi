@@ -10,6 +10,7 @@ import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js
 import { getSub2ApiSubscriptionFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { probeModels, type ProbeResult } from '../../services/modelProbeService.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
+import { resolveProbePrompt } from '../../../shared/probePrompts.js';
 
 function normalizeSiteStatus(input: unknown): 'active' | 'disabled' | null {
   if (input === undefined || input === null) return null;
@@ -900,7 +901,7 @@ export async function sitesRoutes(app: FastifyInstance) {
         siteUrl: existingSite.url,
         apiToken,
         modelNames,
-        prompt: request.body?.prompt || 'hi',
+        prompt: resolveProbePrompt(request.body?.prompt),
         concurrency: request.body?.concurrency || 3,
         timeoutMs: request.body?.timeoutMs || 15000,
         delayMs: request.body?.delayMs || 0,
@@ -924,7 +925,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       siteUrl: existingSite.url,
       apiToken,
       modelNames,
-      prompt: request.body?.prompt || 'hi',
+      prompt: resolveProbePrompt(request.body?.prompt),
       concurrency: request.body?.concurrency || 3,
       timeoutMs: request.body?.timeoutMs || 15000,
       delayMs: request.body?.delayMs || 0,

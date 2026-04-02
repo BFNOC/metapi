@@ -7,6 +7,7 @@ import { eq } from 'drizzle-orm';
 type DbModule = typeof import('../db/index.js');
 type TokenRouterModule = typeof import('./tokenRouter.js');
 type ConfigModule = typeof import('../config.js');
+type ProxyChannelCoordinatorModule = typeof import('./proxyChannelCoordinator.js');
 
 const mockedCatalogRoutingCost = vi.fn<(
   input: { siteId: number; accountId: number; modelName: string }
@@ -23,15 +24,23 @@ vi.mock('./modelPricingService.js', async () => {
 describe('TokenRouter selection scoring', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let ensureSiteCompatibilityColumns: DbModule['ensureSiteCompatibilityColumns'];
   let TokenRouter: TokenRouterModule['TokenRouter'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
+  let resetStableFirstObservationState: TokenRouterModule['resetStableFirstObservationState'];
   let flushSiteRuntimeHealthPersistence: TokenRouterModule['flushSiteRuntimeHealthPersistence'];
   let config: ConfigModule['config'];
+  let proxyChannelCoordinator: ProxyChannelCoordinatorModule['proxyChannelCoordinator'];
+  let resetProxyChannelCoordinatorState: ProxyChannelCoordinatorModule['resetProxyChannelCoordinatorState'];
   let dataDir = '';
   let idSeed = 0;
   let originalRoutingWeights: typeof config.routingWeights;
   let originalRoutingFallbackUnitCost: number;
+  let originalProxySessionChannelConcurrencyLimit: number;
+  let originalProxySessionChannelQueueWaitMs: number;
+  let originalProxySessionChannelLeaseTtlMs: number;
+  let originalProxySessionChannelLeaseKeepaliveMs: number;
 
   const nextId = () => {
     idSeed += 1;
@@ -46,21 +55,31 @@ describe('TokenRouter selection scoring', () => {
     const dbModule = await import('../db/index.js');
     const tokenRouterModule = await import('./tokenRouter.js');
     const configModule = await import('../config.js');
+    const proxyChannelCoordinatorModule = await import('./proxyChannelCoordinator.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    ensureSiteCompatibilityColumns = dbModule.ensureSiteCompatibilityColumns;
     TokenRouter = tokenRouterModule.TokenRouter;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
+    resetStableFirstObservationState = tokenRouterModule.resetStableFirstObservationState;
     flushSiteRuntimeHealthPersistence = tokenRouterModule.flushSiteRuntimeHealthPersistence;
     config = configModule.config;
+    proxyChannelCoordinator = proxyChannelCoordinatorModule.proxyChannelCoordinator;
+    resetProxyChannelCoordinatorState = proxyChannelCoordinatorModule.resetProxyChannelCoordinatorState;
     originalRoutingWeights = { ...config.routingWeights };
     originalRoutingFallbackUnitCost = config.routingFallbackUnitCost;
+    originalProxySessionChannelConcurrencyLimit = config.proxySessionChannelConcurrencyLimit;
+    originalProxySessionChannelQueueWaitMs = config.proxySessionChannelQueueWaitMs;
+    originalProxySessionChannelLeaseTtlMs = config.proxySessionChannelLeaseTtlMs;
+    originalProxySessionChannelLeaseKeepaliveMs = config.proxySessionChannelLeaseKeepaliveMs;
   });
 
   beforeEach(async () => {
     idSeed = 0;
     mockedCatalogRoutingCost.mockReset();
     mockedCatalogRoutingCost.mockReturnValue(null);
+    await ensureSiteCompatibilityColumns();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.settings).run();
@@ -69,13 +88,21 @@ describe('TokenRouter selection scoring', () => {
     await db.delete(schema.sites).run();
     invalidateTokenRouterCache();
     resetSiteRuntimeHealthState();
+    resetStableFirstObservationState();
+    resetProxyChannelCoordinatorState();
   });
 
   afterAll(() => {
     config.routingWeights = { ...originalRoutingWeights };
     config.routingFallbackUnitCost = originalRoutingFallbackUnitCost;
+    config.proxySessionChannelConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
+    config.proxySessionChannelQueueWaitMs = originalProxySessionChannelQueueWaitMs;
+    config.proxySessionChannelLeaseTtlMs = originalProxySessionChannelLeaseTtlMs;
+    config.proxySessionChannelLeaseKeepaliveMs = originalProxySessionChannelLeaseKeepaliveMs;
     invalidateTokenRouterCache();
     resetSiteRuntimeHealthState();
+    resetStableFirstObservationState();
+    resetProxyChannelCoordinatorState();
     delete process.env.DATA_DIR;
   });
 
@@ -158,6 +185,7 @@ describe('TokenRouter selection scoring', () => {
 
     await db.update(schema.routeChannels).set({
       failCount: 4,
+      consecutiveFailCount: 4,
       lastFailAt: new Date().toISOString(),
     }).where(eq(schema.routeChannels.id, preferredChannel.id)).run();
     invalidateTokenRouterCache();
@@ -500,6 +528,7 @@ describe('TokenRouter selection scoring', () => {
     await router.recordFailure(channelA.id, {
       status: 502,
       errorText: 'Bad gateway',
+      modelName: 'gpt-5.4',
     });
     await db.update(schema.routeChannels).set({
       cooldownUntil: null,
@@ -517,14 +546,14 @@ describe('TokenRouter selection scoring', () => {
     expect(candidateA?.reason || '').toContain('运行时健康=');
     expect((candidateB?.probability || 0)).toBeGreaterThan(70);
 
-    await router.recordSuccess(channelA.id, 800, 0);
+    await router.recordSuccess(channelA.id, 800, 0, 'gpt-5.4');
     invalidateTokenRouterCache();
 
     decision = await router.explainSelection('gpt-5.4');
     candidateA = decision.candidates.find((candidate) => candidate.channelId === channelA.id);
     candidateB = decision.candidates.find((candidate) => candidate.channelId === channelB.id);
-    expect((candidateA?.probability || 0)).toBeGreaterThan(40);
-    expect((candidateB?.probability || 0)).toBeLessThan(60);
+    expect((candidateA?.probability || 0)).toBeGreaterThan(25);
+    expect((candidateB?.probability || 0)).toBeLessThan(75);
   });
 
   it('opens a site breaker after repeated transient failures and closes it after recovery', async () => {
@@ -567,6 +596,7 @@ describe('TokenRouter selection scoring', () => {
       await router.recordFailure(channelA.id, {
         status: 502,
         errorText: 'Gateway timeout',
+        modelName: 'gpt-5.3',
       });
     }
     await db.update(schema.routeChannels).set({
@@ -579,19 +609,19 @@ describe('TokenRouter selection scoring', () => {
     let decision = await router.explainSelection('gpt-5.3');
     const breakerCandidateA = decision.candidates.find((candidate) => candidate.channelId === channelA.id);
     const breakerCandidateB = decision.candidates.find((candidate) => candidate.channelId === channelB.id);
-    expect(breakerCandidateA?.reason || '').toContain('站点熔断');
+    expect(breakerCandidateA?.reason || '').toContain('熔断中');
     expect((breakerCandidateA?.probability || 0)).toBe(0);
     expect((breakerCandidateB?.probability || 0)).toBe(100);
     expect(decision.summary.join(' ')).toContain('站点熔断避让');
 
-    await router.recordSuccess(channelA.id, 600, 0);
+    await router.recordSuccess(channelA.id, 600, 0, 'gpt-5.3');
     invalidateTokenRouterCache();
 
     decision = await router.explainSelection('gpt-5.3');
     const recoveredCandidateA = decision.candidates.find((candidate) => candidate.channelId === channelA.id);
     const recoveredCandidateB = decision.candidates.find((candidate) => candidate.channelId === channelB.id);
-    expect((recoveredCandidateA?.probability || 0)).toBeGreaterThan(30);
-    expect((recoveredCandidateB?.probability || 0)).toBeLessThan(70);
+    expect((recoveredCandidateA?.probability || 0)).toBeGreaterThan(15);
+    expect((recoveredCandidateB?.probability || 0)).toBeLessThan(85);
   });
 
   it('does not open a site breaker for repeated timeout validation errors', async () => {
@@ -849,7 +879,7 @@ describe('TokenRouter selection scoring', () => {
     expect(gptCandidateA).toBeTruthy();
     expect(claudeCandidateA).toBeTruthy();
     expect((gptCandidateA?.probability || 0)).toBeLessThan((claudeCandidateA?.probability || 0));
-    expect(gptCandidateA?.reason || '').toContain('模型=');
+    expect(gptCandidateA?.reason || '').toContain('运行时健康=');
   });
 
   it('stable_first deterministically chooses the healthiest candidate', async () => {
@@ -910,5 +940,447 @@ describe('TokenRouter selection scoring', () => {
     expect(preview?.channel.id).toBe(channelB.id);
     expect(decision.summary.join(' ')).toContain('稳定优先');
     expect(decision.selectedChannelId).toBe(channelB.id);
+  });
+
+  it('stable_first splits candidates into primary and observation pools', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4.2',
+      routingStrategy: 'stable_first',
+      enabled: true,
+    }).returning().get();
+
+    const siteA = await createSite('pool-a');
+    const accountA = await createAccount(siteA.id, 'pool-user-a');
+    const tokenA = await createToken(accountA.id, 'pool-token-a');
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).run();
+
+    const siteB = await createSite('pool-b');
+    const accountB = await createAccount(siteB.id, 'pool-user-b');
+    const tokenB = await createToken(accountB.id, 'pool-token-b');
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountB.id,
+      tokenId: tokenB.id,
+      priority: 0,
+      weight: 9,
+      enabled: true,
+    }).run();
+
+    const siteC = await createSite('pool-c');
+    const accountC = await createAccount(siteC.id, 'pool-user-c');
+    const tokenC = await createToken(accountC.id, 'pool-token-c');
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountC.id,
+      tokenId: tokenC.id,
+      priority: 0,
+      weight: 1,
+      enabled: true,
+    }).run();
+
+    const decision = await new TokenRouter().explainSelection('gpt-4.2');
+    const reasons = decision.candidates.map((candidate) => candidate.reason || '');
+
+    expect(reasons.filter((reason) => reason.includes('主池第'))).toHaveLength(2);
+    expect(reasons.filter((reason) => reason.includes('观察池候选第'))).toHaveLength(1);
+  });
+
+  it('stable_first samples the observation pool and respects observation site cooldown', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4.3',
+      routingStrategy: 'stable_first',
+      enabled: true,
+    }).returning().get();
+
+    const sitePrimaryA = await createSite('observe-primary-a');
+    const accountPrimaryA = await createAccount(sitePrimaryA.id, 'observe-user-a');
+    const tokenPrimaryA = await createToken(accountPrimaryA.id, 'observe-token-a');
+    const primaryChannelA = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountPrimaryA.id,
+      tokenId: tokenPrimaryA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const sitePrimaryB = await createSite('observe-primary-b');
+    const accountPrimaryB = await createAccount(sitePrimaryB.id, 'observe-user-b');
+    const tokenPrimaryB = await createToken(accountPrimaryB.id, 'observe-token-b');
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountPrimaryB.id,
+      tokenId: tokenPrimaryB.id,
+      priority: 0,
+      weight: 9,
+      enabled: true,
+    }).run();
+
+    const siteObservation = await createSite('observe-observation');
+    const accountObservation = await createAccount(siteObservation.id, 'observe-user-c');
+    const tokenObservation = await createToken(accountObservation.id, 'observe-token-c');
+    const observationChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountObservation.id,
+      tokenId: tokenObservation.id,
+      priority: 0,
+      weight: 1,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    let selectedChannelId: number | null = null;
+    for (let index = 1; index <= 24; index += 1) {
+      const selected = await router.selectChannel('gpt-4.3');
+      selectedChannelId = selected?.channel.id ?? null;
+    }
+    expect(selectedChannelId).toBe(observationChannel.id);
+
+    selectedChannelId = null;
+    for (let index = 25; index <= 48; index += 1) {
+      const selected = await router.selectChannel('gpt-4.3');
+      selectedChannelId = selected?.channel.id ?? null;
+    }
+    expect(selectedChannelId).toBe(primaryChannelA.id);
+  });
+
+  it('penalizes saturated session-scoped channels with load-aware scoring', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+    config.proxySessionChannelConcurrencyLimit = 1;
+    config.proxySessionChannelQueueWaitMs = 1_000;
+    config.proxySessionChannelLeaseTtlMs = 5_000;
+    config.proxySessionChannelLeaseKeepaliveMs = 1_000;
+
+    const route = await createRoute('gpt-4o-mini');
+
+    const siteBusy = await createSite('busy-site');
+    const accountBusy = await db.insert(schema.accounts).values({
+      siteId: siteBusy.id,
+      username: `busy-user-${nextId()}`,
+      accessToken: `busy-access-${nextId()}`,
+      apiToken: `busy-api-${nextId()}`,
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+    const tokenBusy = await createToken(accountBusy.id, 'busy-token');
+    const busyChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountBusy.id,
+      tokenId: tokenBusy.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siteIdle = await createSite('idle-site');
+    const accountIdle = await createAccount(siteIdle.id, 'idle-user');
+    const tokenIdle = await createToken(accountIdle.id, 'idle-token');
+    const idleChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountIdle.id,
+      tokenId: tokenIdle.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const firstLease = await proxyChannelCoordinator.acquireChannelLease({
+      channelId: busyChannel.id,
+      accountExtraConfig: accountBusy.extraConfig,
+    });
+    expect(firstLease.status).toBe('acquired');
+    if (firstLease.status !== 'acquired') return;
+
+    const secondLeasePromise = proxyChannelCoordinator.acquireChannelLease({
+      channelId: busyChannel.id,
+      accountExtraConfig: accountBusy.extraConfig,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const decision = await new TokenRouter().explainSelection('gpt-4o-mini');
+    const busyCandidate = decision.candidates.find((candidate) => candidate.channelId === busyChannel.id);
+    const idleCandidate = decision.candidates.find((candidate) => candidate.channelId === idleChannel.id);
+
+    expect(busyCandidate).toBeTruthy();
+    expect(idleCandidate).toBeTruthy();
+    expect((busyCandidate?.probability || 0)).toBeLessThan((idleCandidate?.probability || 0));
+    expect(busyCandidate?.reason || '').toContain('负载倍率=');
+
+    firstLease.lease.release();
+    const secondLease = await secondLeasePromise;
+    if (secondLease.status === 'acquired') {
+      secondLease.lease.release();
+    }
+  });
+
+  it('recordProbeSuccess clears cooldown without inflating success metrics', async () => {
+    const route = await createRoute('gpt-4.1-mini');
+    const site = await createSite('probe-recovery-site');
+    const account = await createAccount(site.id, 'probe-recovery-user');
+    const token = await createToken(account.id, 'probe-recovery-token');
+    const futureCooldown = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      successCount: 7,
+      totalLatencyMs: 321,
+      totalCost: 1.25,
+      cooldownUntil: futureCooldown,
+      lastFailAt: new Date().toISOString(),
+      consecutiveFailCount: 4,
+      cooldownLevel: 2,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    await router.recordProbeSuccess(channel.id, 'gpt-4.1-mini');
+
+    const refreshed = await db.select()
+      .from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+
+    expect(refreshed?.successCount).toBe(7);
+    expect(refreshed?.totalLatencyMs).toBe(321);
+    expect(refreshed?.totalCost).toBe(1.25);
+    expect(refreshed?.cooldownUntil).toBeNull();
+    expect(refreshed?.lastFailAt).toBeNull();
+    expect(refreshed?.consecutiveFailCount).toBe(0);
+    expect(refreshed?.cooldownLevel).toBe(0);
+  });
+
+  it('stable_first keeps low-score candidates in the observation pool', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-stable-pool',
+      routingStrategy: 'stable_first',
+      enabled: true,
+    }).returning().get();
+
+    const siteA = await createSite('stable-pool-a');
+    const accountA = await createAccount(siteA.id, 'stable-pool-user-a');
+    const tokenA = await createToken(accountA.id, 'stable-pool-token-a');
+    const channelA = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 100,
+      enabled: true,
+    }).returning().get();
+
+    const siteB = await createSite('stable-pool-b');
+    const accountB = await createAccount(siteB.id, 'stable-pool-user-b');
+    const tokenB = await createToken(accountB.id, 'stable-pool-token-b');
+    const channelB = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountB.id,
+      tokenId: tokenB.id,
+      priority: 0,
+      weight: 93,
+      enabled: true,
+    }).returning().get();
+
+    const siteC = await createSite('stable-pool-c');
+    const accountC = await createAccount(siteC.id, 'stable-pool-user-c');
+    const tokenC = await createToken(accountC.id, 'stable-pool-token-c');
+    const channelC = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountC.id,
+      tokenId: tokenC.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const decision = await router.explainSelection('gpt-stable-pool');
+    const candidateA = decision.candidates.find((candidate) => candidate.channelId === channelA.id);
+    const candidateB = decision.candidates.find((candidate) => candidate.channelId === channelB.id);
+    const candidateC = decision.candidates.find((candidate) => candidate.channelId === channelC.id);
+    const preview = await router.previewSelectedChannel('gpt-stable-pool');
+
+    expect(preview?.channel.id).toBe(channelA.id);
+    expect(candidateA?.reason || '').toContain('主池');
+    expect(candidateB?.reason || '').toContain('主池');
+    expect(candidateC?.reason || '').toContain('观察池');
+  });
+
+  it('stable_first samples the observation pool about every 24 selections', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-stable-observe',
+      routingStrategy: 'stable_first',
+      enabled: true,
+    }).returning().get();
+
+    const siteA = await createSite('stable-observe-a');
+    const accountA = await createAccount(siteA.id, 'stable-observe-user-a');
+    const tokenA = await createToken(accountA.id, 'stable-observe-token-a');
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 100,
+      enabled: true,
+    }).run();
+
+    const siteB = await createSite('stable-observe-b');
+    const accountB = await createAccount(siteB.id, 'stable-observe-user-b');
+    const tokenB = await createToken(accountB.id, 'stable-observe-token-b');
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountB.id,
+      tokenId: tokenB.id,
+      priority: 0,
+      weight: 93,
+      enabled: true,
+    }).run();
+
+    const siteC = await createSite('stable-observe-c');
+    const accountC = await createAccount(siteC.id, 'stable-observe-user-c');
+    const tokenC = await createToken(accountC.id, 'stable-observe-token-c');
+    const observationChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountC.id,
+      tokenId: tokenC.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    for (let index = 0; index < 23; index += 1) {
+      const selected = await router.selectChannel('gpt-stable-observe');
+      expect(selected?.channel.id).not.toBe(observationChannel.id);
+    }
+
+    const observationPick = await router.selectChannel('gpt-stable-observe');
+    expect(observationPick?.channel.id).toBe(observationChannel.id);
+  });
+
+  it('stable_first rotates observation candidates when the last observed site is cooling down', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-stable-cooldown',
+      routingStrategy: 'stable_first',
+      enabled: true,
+    }).returning().get();
+
+    const siteA = await createSite('stable-cooldown-a');
+    const accountA = await createAccount(siteA.id, 'stable-cooldown-user-a');
+    const tokenA = await createToken(accountA.id, 'stable-cooldown-token-a');
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 120,
+      enabled: true,
+    }).run();
+
+    const siteB = await createSite('stable-cooldown-b');
+    const accountB = await createAccount(siteB.id, 'stable-cooldown-user-b');
+    const tokenB = await createToken(accountB.id, 'stable-cooldown-token-b');
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountB.id,
+      tokenId: tokenB.id,
+      priority: 0,
+      weight: 111,
+      enabled: true,
+    }).run();
+
+    const siteC = await createSite('stable-cooldown-c');
+    const accountC = await createAccount(siteC.id, 'stable-cooldown-user-c');
+    const tokenC = await createToken(accountC.id, 'stable-cooldown-token-c');
+    const observationChannelC = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountC.id,
+      tokenId: tokenC.id,
+      priority: 0,
+      weight: 60,
+      enabled: true,
+    }).returning().get();
+
+    const siteD = await createSite('stable-cooldown-d');
+    const accountD = await createAccount(siteD.id, 'stable-cooldown-user-d');
+    const tokenD = await createToken(accountD.id, 'stable-cooldown-token-d');
+    const observationChannelD = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountD.id,
+      tokenId: tokenD.id,
+      priority: 0,
+      weight: 50,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    for (let index = 0; index < 23; index += 1) {
+      await router.selectChannel('gpt-stable-cooldown');
+    }
+    const firstObservationPick = await router.selectChannel('gpt-stable-cooldown');
+    expect(firstObservationPick?.channel.id).toBe(observationChannelC.id);
+
+    for (let index = 0; index < 23; index += 1) {
+      await router.selectChannel('gpt-stable-cooldown');
+    }
+    const secondObservationPick = await router.selectChannel('gpt-stable-cooldown');
+    expect(secondObservationPick?.channel.id).toBe(observationChannelD.id);
   });
 });

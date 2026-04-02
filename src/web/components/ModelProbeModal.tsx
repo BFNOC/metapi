@@ -1,25 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import CenteredModal from '../components/CenteredModal.js';
 import { api } from '../api.js';
+import { pickRandomProbePrompt } from '../../shared/probePrompts.js';
 
-const RANDOM_PROMPTS = [
-  '请用一句话解释什么是量子计算，要求非常的清晰，非常准确，最好能一针见血，我打算用一句话来唬住学生！',
-  'JavaScript 的 Promise 和 async/await 有什么区别？我不想听长篇大论，请用最精炼的语言回答我！要有那种一瞬间让我醍醐灌顶的感觉！!',
-  '帮我写一个 Rust 的 简单代码，要能体现出 Rust 的特性，比如所有权、生命周期等',
-  '什么是 RESTful API？简单说明，最好能告诉我它和GraphQL的区别，以及各自的优缺点，用三句话告诉我，你能做到吗？',
-  '计算 237 乘以 128 等于多少',
-  '请列举三种常见的排序算法，并告诉我他们之前适用的场景，让我用来做课件的起步！',
-  'CSS 中 flex 和 grid 的区别是什么，用最精炼的话告诉我，而且为什么会有table布局这种奇葩玩意？',
-  '简单介绍一下 TCP 三次握手，为什么需要这么多次握手，不能一次性握手吗？UDP为什么又不用握手，我希望听到你的一针见血而又简洁的回答！'
-];
-
-function pickRandomPrompt(): string {
-  return RANDOM_PROMPTS[Math.floor(Math.random() * RANDOM_PROMPTS.length)];
-}
+type ProbeTerminalStatus = 'supported' | 'unsupported' | 'inconclusive' | 'skipped';
 
 type ProbeResult = {
   modelName: string;
-  status: 'ok' | 'timeout' | 'error';
+  status: ProbeTerminalStatus;
   ttftMs: number | null;
   httpStatus: number | null;
   error: string | null;
@@ -28,7 +16,7 @@ type ProbeResult = {
 
 type ModelRow = {
   name: string;
-  status: 'pending' | 'probing' | 'ok' | 'timeout' | 'error';
+  status: 'pending' | 'probing' | ProbeTerminalStatus;
   ttftMs: number | null;
   httpStatus: number | null;
   error: string | null;
@@ -52,7 +40,7 @@ type Props = {
 type SortMode = 'latency' | 'name' | 'status';
 
 export default function ModelProbeModal({ open, onClose, siteId, siteName, initialModels, tokenId, accountId }: Props) {
-  const [prompt, setPrompt] = useState(pickRandomPrompt);
+  const [prompt, setPrompt] = useState(pickRandomProbePrompt);
   const [concurrency, setConcurrency] = useState(1);
   const [timeoutMs, setTimeoutMs] = useState(15000);
   const [delayMs, setDelayMs] = useState(2000);
@@ -77,7 +65,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
   useEffect(() => {
     if (!open) return;
 
-    setPrompt(pickRandomPrompt());
+    setPrompt(pickRandomProbePrompt());
     setRows([]);
     setError(null);
     setModelSearch('');
@@ -267,7 +255,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
 
     const probeData = {
       modelNames: models,
-      prompt: prompt.trim() || 'hi',
+      prompt: prompt.trim() || pickRandomProbePrompt(),
       concurrency: Math.max(1, Math.min(10, concurrency)),
       timeoutMs: Math.max(1000, Math.min(60000, timeoutMs)),
       delayMs: Math.max(0, Math.min(10000, delayMs)),
@@ -277,12 +265,8 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
     const batchSize = Math.max(1, Math.min(10, concurrency));
     setRows((prev) => prev.map((r, i) => i < batchSize ? { ...r, status: 'probing' } : r));
 
-    // Track which models have been resolved so we can mark next batch as probing
-    let resolvedCount = 0;
-
     const onResult = (result: unknown) => {
       const r = result as ProbeResult;
-      resolvedCount++;
       setRows((prev) => {
         const next = prev.map((row) =>
           row.name === r.modelName
@@ -320,25 +304,26 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
       }
     } finally {
       setProbing(false);
-      // Mark any remaining probing/pending rows as error (in case stream ended early)
+      // Stream 提前结束时，将未完成行标记为待定，避免误报为明确失败。
       setRows((prev) => prev.map((row) =>
         row.status === 'probing' || row.status === 'pending'
-          ? { ...row, status: 'error', error: 'Stream ended unexpectedly' }
+          ? { ...row, status: 'inconclusive', error: 'Stream ended unexpectedly' }
           : row,
       ));
     }
   }, [resolveProbeModels, prompt, concurrency, timeoutMs, delayMs, tokenId, siteId]);
 
   const finishedRows = rows.filter((r) => r.status !== 'pending' && r.status !== 'probing');
-  const okRows = finishedRows.filter((r) => r.status === 'ok');
-  const failRows = finishedRows.filter((r) => r.status === 'error');
-  const timeoutRows = finishedRows.filter((r) => r.status === 'timeout');
+  const supportedRows = finishedRows.filter((r) => r.status === 'supported');
+  const unsupportedRows = finishedRows.filter((r) => r.status === 'unsupported');
+  const inconclusiveRows = finishedRows.filter((r) => r.status === 'inconclusive');
+  const skippedRows = finishedRows.filter((r) => r.status === 'skipped');
 
   // Stats
-  const okLatencies = okRows.map((r) => r.ttftMs || 0).filter((v) => v > 0);
-  const avgLatency = okLatencies.length > 0 ? Math.round(okLatencies.reduce((a, b) => a + b, 0) / okLatencies.length) : 0;
-  const minLatency = okLatencies.length > 0 ? Math.min(...okLatencies) : 0;
-  const maxLatency = okLatencies.length > 0 ? Math.max(...okLatencies) : 0;
+  const supportedLatencies = supportedRows.map((r) => r.ttftMs || 0).filter((v) => v > 0);
+  const avgLatency = supportedLatencies.length > 0 ? Math.round(supportedLatencies.reduce((a, b) => a + b, 0) / supportedLatencies.length) : 0;
+  const minLatency = supportedLatencies.length > 0 ? Math.min(...supportedLatencies) : 0;
+  const maxLatency = supportedLatencies.length > 0 ? Math.max(...supportedLatencies) : 0;
   const maxBarLatency = Math.max(maxLatency, timeoutMs, 5000);
 
   // Sort: only sort finished rows, keep probing/pending at original position
@@ -351,12 +336,19 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
     if (!bFinished) return -1;
 
     if (sortMode === 'latency') {
-      if (a.status === 'ok' && b.status !== 'ok') return -1;
-      if (a.status !== 'ok' && b.status === 'ok') return 1;
+      if (a.status === 'supported' && b.status !== 'supported') return -1;
+      if (a.status !== 'supported' && b.status === 'supported') return 1;
       return (a.ttftMs || Infinity) - (b.ttftMs || Infinity);
     }
     if (sortMode === 'name') return a.name.localeCompare(b.name);
-    const statusOrder = { ok: 0, timeout: 1, error: 2, probing: 3, pending: 4 };
+    const statusOrder = {
+      supported: 0,
+      unsupported: 1,
+      inconclusive: 2,
+      skipped: 3,
+      probing: 4,
+      pending: 5,
+    } satisfies Record<ModelRow['status'], number>;
     const diff = statusOrder[a.status] - statusOrder[b.status];
     return diff !== 0 ? diff : (a.ttftMs || 0) - (b.ttftMs || 0);
   });
@@ -374,20 +366,38 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
     return '#ef4444';
   };
 
-  const getStatusIcon = (status: ModelRow['status']) => {
-    if (status === 'ok') return '\u2713';
-    if (status === 'timeout') return 'T';
-    if (status === 'probing') return '';
-    if (status === 'pending') return '';
-    return '\u2717';
-  };
-
   const getStatusColor = (status: ModelRow['status']) => {
-    if (status === 'ok') return '#22c55e';
-    if (status === 'timeout') return '#eab308';
+    if (status === 'supported') return '#22c55e';
+    if (status === 'unsupported') return '#ef4444';
+    if (status === 'inconclusive') return '#eab308';
+    if (status === 'skipped') return '#94a3b8';
     if (status === 'probing') return 'var(--color-primary)';
     if (status === 'pending') return 'var(--color-text-muted)';
-    return '#ef4444';
+    return 'var(--color-text-muted)';
+  };
+
+  const getStatusIcon = (status: ModelRow['status']) => {
+    if (status === 'supported') return '\u2713';
+    if (status === 'unsupported') return '\u2717';
+    if (status === 'inconclusive') return '!';
+    if (status === 'skipped') return '\u00bb';
+    return '';
+  };
+
+  const getStatusLabel = (status: ModelRow['status']) => {
+    if (status === 'supported') return '支持';
+    if (status === 'unsupported') return '不支持';
+    if (status === 'inconclusive') return '待定';
+    if (status === 'skipped') return '跳过';
+    if (status === 'probing') return '探活中';
+    return '待开始';
+  };
+
+  const getStatusDetail = (row: ModelRow) => {
+    if (row.status === 'supported' || row.status === 'pending' || row.status === 'probing') return '';
+    if (row.httpStatus !== null && row.error) return `HTTP ${row.httpStatus} · ${row.error}`;
+    if (row.httpStatus !== null) return `HTTP ${row.httpStatus}`;
+    return row.error || '';
   };
 
   const inputStyle = {
@@ -603,9 +613,10 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
             gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
             gap: 8,
           }}>
-            <StatCard label="成功" value={okRows.length} color="#22c55e" />
-            <StatCard label="超时" value={timeoutRows.length} color="#eab308" />
-            <StatCard label="失败" value={failRows.length} color="#ef4444" />
+            <StatCard label="支持" value={supportedRows.length} color="#22c55e" />
+            <StatCard label="不支持" value={unsupportedRows.length} color="#ef4444" />
+            <StatCard label="待定" value={inconclusiveRows.length} color="#eab308" />
+            <StatCard label="跳过" value={skippedRows.length} color="#94a3b8" />
             {avgLatency > 0 && <StatCard label="平均延迟" value={formatMs(avgLatency)} color="#6366f1" />}
             {minLatency > 0 && <StatCard label="最快" value={formatMs(minLatency)} color="#22c55e" />}
             {maxLatency > 0 && <StatCard label="最慢" value={formatMs(maxLatency)} color="#f97316" />}
@@ -723,9 +734,9 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
                         <div style={{
                           height: '100%',
                           width: `${Math.min(100, Math.max(2, (r.ttftMs / maxBarLatency) * 100))}%`,
-                          background: r.status === 'ok'
+                          background: r.status === 'supported'
                             ? `linear-gradient(90deg, ${getLatencyColor(r.ttftMs)}, ${getLatencyColor(r.ttftMs)}cc)`
-                            : r.status === 'timeout' ? '#eab30866' : '#ef444466',
+                            : `${getStatusColor(r.status)}66`,
                           borderRadius: 8,
                           transition: 'width 0.4s ease',
                         }} />
@@ -745,19 +756,19 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
 
                     {/* Error detail */}
                     <span
-                      title={r.error || undefined}
+                      title={getStatusDetail(r) || undefined}
                       style={{
                         fontSize: 10,
                         color: 'var(--color-text-muted)',
-                        maxWidth: 80,
+                        maxWidth: 120,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
                         minWidth: 0,
                       }}
                     >
-                      {r.error && r.status !== 'ok' && r.status !== 'probing' && r.status !== 'pending'
-                        ? (r.httpStatus ? `HTTP ${r.httpStatus}` : r.error)
+                      {r.status !== 'pending' && r.status !== 'probing'
+                        ? getStatusDetail(r) || getStatusLabel(r.status)
                         : ''}
                     </span>
 
@@ -784,9 +795,12 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
                       lineHeight: 1.6,
                     }}>
                       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: (r.responseText || r.error) ? 6 : 0 }}>
+                        <span style={{ color: 'var(--color-text-muted)' }}>
+                          状态 <strong style={{ color: getStatusColor(r.status) }}>{getStatusLabel(r.status)}</strong>
+                        </span>
                         {r.httpStatus !== null && (
                           <span style={{ color: 'var(--color-text-muted)' }}>
-                            HTTP <strong style={{ color: r.httpStatus >= 200 && r.httpStatus < 300 ? '#22c55e' : '#ef4444' }}>{r.httpStatus}</strong>
+                            HTTP <strong style={{ color: getStatusColor(r.status) }}>{r.httpStatus}</strong>
                           </span>
                         )}
                         {r.ttftMs !== null && (
@@ -795,24 +809,24 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
                           </span>
                         )}
                       </div>
-                      {(r.responseText || (r.error && r.status !== 'ok')) ? (
+                      {(r.responseText || (r.error && r.status !== 'supported')) ? (
                         <div style={{
                           fontFamily: 'monospace',
                           fontSize: 11,
                           padding: '6px 10px',
-                          background: r.status !== 'ok' ? '#ef44440a' : 'var(--color-bg)',
-                          border: `1px solid ${r.status !== 'ok' ? '#ef444433' : 'var(--color-border)'}`,
+                          background: r.status !== 'supported' ? `${getStatusColor(r.status)}12` : 'var(--color-bg)',
+                          border: `1px solid ${r.status !== 'supported' ? `${getStatusColor(r.status)}55` : 'var(--color-border)'}`,
                           borderRadius: 'var(--radius-sm)',
                           whiteSpace: 'pre-wrap',
                           wordBreak: 'break-word',
-                          color: r.status !== 'ok' ? '#ef4444' : 'var(--color-text-primary)',
+                          color: r.status !== 'supported' ? getStatusColor(r.status) : 'var(--color-text-primary)',
                           maxHeight: 120,
                           overflow: 'auto',
                         }}>
                           {r.responseText || r.error}
                         </div>
                       ) : (
-                        r.status === 'ok' && (
+                        r.status === 'supported' && (
                           <span style={{ color: 'var(--color-text-muted)', fontSize: 11, fontStyle: 'italic' }}>（无回复内容）</span>
                         )
                       )}

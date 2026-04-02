@@ -11,3 +11,4 @@
 | [deployment-notes.md](./deployment-notes.md) | 自定义镜像部署注意事项 |
 | [upstream-sync-log.md](./upstream-sync-log.md) | 上游同步记录 |
 | [fork-survey.md](./fork-survey.md) | Fork 生态扫描报告（2026-03-29） |
+| [plans/330-proactive-probes-load-aware-routing-current-state.md](./plans/330-proactive-probes-load-aware-routing-current-state.md) | #330 主动探活 + 负载感知路由的当前仓库校正版实施顺序 |

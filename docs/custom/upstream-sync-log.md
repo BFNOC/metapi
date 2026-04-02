@@ -20,6 +20,12 @@
 | `ace5ddd` | fix: edit payload clearing boundaries (#381) | ⚠️ 5处冲突：accountsRoutePayloads.ts/monitor.test.ts（modify/delete，接受上游重建）+ tokens.ts/downstreamApiKeys.ts/test 内容冲突 |
 | `1e0dffe` | fix: mysql insert boundary handling (#364) | ⚠️ 7处冲突：accountTokens.ts/sites.ts/tokens.ts/downstreamApiKeys.ts 内容冲突 + oauthSiteRegistry.ts/proxyDebugTraceStore.ts（modify/delete，接受上游）|
 
+### 手工移植的 PR（非 cherry-pick，按能力拆相位逐步实现）
+
+| 上游 Commit | PR | 移植范围 | 改动 | 说明 |
+|-------------|-----|---------|------|------|
+| `596d1b9` | #330 | Phase 0-5 | 11 文件改动 + 4 新增 | 不能 cherry-pick（53 文件已分叉）。含四态探测、负载感知、stable_first 主池/观察池、自动恢复探测、后台 scheduler。公益站定制：随机真实 prompt（防 AI 封 IP）、per-site 限4h/h、负载系数 0.10/0.12/0.04、recordProbeSuccess 不污染业务统计 |
+
 ### 跳过的 Commit（已审阅，不需要）
 
 | Commit | 说明 | 跳过原因 |
@@ -45,7 +51,7 @@
 | `76c85d0` | split site API endpoint pool (#373) | 体量巨大(+7220)，上游架构演进方向，暂不合入 |
 | `ce77bde` | align route priority drag preview (#375) | 路由优先级 UI 系列 |
 | `1133846` | restore route priority drag behavior (#376) | 路由优先级 UI 系列 |
-| `596d1b9` | proactive channel probes + load-aware routing (#330) | 最大 PR(+6366)，三个模式值得学习但不直接合入（见审阅报告） |
+| `596d1b9` | proactive channel probes + load-aware routing (#330) | ✅ **已手工移植**（见上方“手工移植”章节） |
 | `bcd758e` | harden background task completion waits (#382) | 测试改进，依赖 #330 |
 | `180d17a` | add proxy first-byte timeout and log badges (#383) | 含 schema 变更(migration 0019)，值得后续单独引入 |
 | `52c6ff5` | route codex websocket through site api endpoints (#386) | 依赖 #373 |
@@ -54,7 +60,7 @@
 
 ### 值得后续关注的大型 PR（已深度分析）
 
-- **#330** (主动探活+负载感知路由) — 三个可借鉴模式：四态探测判定、恢复闭环、负载乘子
+- **#330** (主动探活+负载感知路由) — ✅ 已完成手工移植，含四态探测、负载感知、stable_first 主池/观察池、自动恢复探测
 - **#365** (路由冷却控制) — 与本地实现重叠，建议补 cooldown max cap 和 route 级批量清冷却
 - **#383** (首字节超时) — 对挂死链路有效，建议在 protocol-affinity 阶段参考
 - **#373** (Site API Endpoint Pool) — 上游架构演进方向，长期跟踪

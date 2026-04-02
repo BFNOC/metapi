@@ -490,12 +490,6 @@ export async function handleChatSurfaceRequest(
                 totalTokens: parsedUsage.totalTokens,
                 upstreamPath: successfulUpstreamPath,
               });
-              await finalizeDebugFailure(502, {
-                error: {
-                  message: streamResult.errorMessage,
-                  type: 'stream_error',
-                },
-              }, successfulUpstreamPath);
               if (!streamStarted) {
                 return reply.code(502).send({
                   error: {
@@ -507,17 +501,6 @@ export async function handleChatSurfaceRequest(
               return;
             }
             await recordStreamSuccess(latency);
-            await finalizeDebugSuccess(
-              200,
-              successfulUpstreamPath,
-              buildSurfaceProxyDebugResponseHeaders(upstream),
-              debugTrace?.options.captureStreamChunks
-                ? fallbackText
-                : {
-                  stream: true,
-                  usage: parsedUsage,
-                },
-            );
             bindSurfaceStickyChannel({
               stickySessionKey,
               selected,
@@ -580,12 +563,6 @@ export async function handleChatSurfaceRequest(
               upstreamPath: successfulUpstreamPath,
               runtimeFailureStatus: 502,
             });
-            await finalizeDebugFailure(502, {
-              error: {
-                message: streamResult.errorMessage,
-                type: 'stream_error',
-              },
-            }, successfulUpstreamPath);
             if (!streamStarted) {
               return reply.code(502).send({
                 error: {
@@ -597,17 +574,6 @@ export async function handleChatSurfaceRequest(
             return;
           }
           await recordStreamSuccess(latency);
-            await finalizeDebugSuccess(
-              200,
-              successfulUpstreamPath,
-              buildSurfaceProxyDebugResponseHeaders(upstream),
-              debugTrace?.options.captureStreamChunks
-              ? fallbackText
-              : {
-                stream: true,
-                usage: parsedUsage,
-              },
-          );
           bindSurfaceStickyChannel({
             stickySessionKey,
             selected,
@@ -658,12 +624,6 @@ export async function handleChatSurfaceRequest(
               upstreamPath: successfulUpstreamPath,
               runtimeFailureStatus: 502,
             });
-            await finalizeDebugFailure(502, {
-              error: {
-                message: streamResult.errorMessage,
-                type: 'stream_error',
-              },
-            }, successfulUpstreamPath);
             if (!streamStarted) {
               return reply.code(502).send({
                 error: {
@@ -683,17 +643,6 @@ export async function handleChatSurfaceRequest(
 
         const latency = Date.now() - startTime;
         await recordStreamSuccess(latency);
-        await finalizeDebugSuccess(
-          200,
-          successfulUpstreamPath,
-          buildSurfaceProxyDebugResponseHeaders(upstream),
-          debugTrace?.options.captureStreamChunks
-            ? rawText
-            : {
-              stream: true,
-              usage: parsedUsage,
-            },
-        );
         bindSurfaceStickyChannel({
           stickySessionKey,
           selected,

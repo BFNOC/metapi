@@ -2,6 +2,68 @@
 
 > 记录每次从上游 `cita-777/metapi` 同步的变更。
 
+## 2026-04-02 同步
+
+**上游已审阅到**：`1407f75`（upstream/main HEAD）
+
+### Cherry-pick 的 Commit
+
+| Commit | 说明 | 冲突 |
+|--------|------|------|
+| `e8921e6` | fix: orphaned responses tool outputs in messages fallback (#342) | ✅ 无冲突 |
+| `4ca88d0` | fix: responses-to-chat tool stream fidelity (#378) | ✅ 无冲突（auto-merge chatFormatsCore.ts） |
+| `e2d9481` | fix: anyrouter balance refresh challenge errors (#368) | ✅ 无冲突 |
+| `8675ff3` | fix: cap weighted route backoff overflow crash (手动移植 #354) | ⚠️ tokenRouter.ts 已分叉，手动移植 3 行（Math.min cap） |
+| `5fffcb6` | feat: support CIDR admin allowlists (#377) | ✅ 无冲突 |
+| `8739065` | fix: add searchable token account selectors (#347) | ✅ 无冲突 |
+
+### 尝试但中止的 Commit
+
+| Commit | 说明 | 中止原因 |
+|--------|------|----------|
+| `ace5ddd` | fix: edit payload clearing boundaries (#381) | 5 文件冲突：accountsRoutePayloads.ts/monitor.test.ts 本地已删除（modify/delete），tokens.ts/downstreamApiKeys.ts/tokens.route-update-rebuild.test.ts 内容冲突 |
+
+### 跳过的 Commit（已审阅，不需要）
+
+| Commit | 说明 | 跳过原因 |
+|--------|------|----------|
+| `6e04db6` | fix: site-created dialog cancel cleanup (#341) | SiteCreatedModal 本地已重构为 CenteredModal，补丁无法 apply |
+| `6b19d06` | fix: empty stream success handling (#343) | 24 文件中 2 个 surface 文件冲突，需专项移植（后续处理） |
+| `3ce5179` | fix: detect latest digest updates in update center (#344) | Update center 基础设施 |
+| `d930b87` | fix: Anyrouter model sync shield handling (#348) | Anyrouter 专用修复 |
+| `baa11d7` | cache update center status snapshots (#349) | Update center 基础设施 |
+| `e74e113` | add route priority bucket editor (#350) | 路由优先级桶编辑器，改动较大 |
+| `0de9c5e` | add coding plan site initialization flow (#351) | Codex/CodingPlan 初始化流程 |
+| `bafceb8` | add model tester fixed-channel selection (#352) | 27 文件 +1331 行，tester 特殊逻辑渗入生产路径，可后续单独引入 |
+| `4096c75` | fix anyrouter checkin session failure classification (#353) | Anyrouter 专用 |
+| `6206c5b` | preserve both site-created next steps (#357) | 依赖 #351 |
+| `8c3be1a` | add zod payload contracts for admin API (#358) | 适合分模块渐进引入，不适合一次吞 |
+| `3ebe851` | fix update helper health for ready failed release (#361) | Update center |
+| `aac1307` | add vendor code entry presets follow-up (#363) | 依赖 #351 |
+| `1e0dffe` | fix mysql insert boundary handling (#364) | 20 文件 +544 行，tokens.ts/backupService.ts 等 6 文件拒绝，需专项移植 |
+| `532be86` | add route cooldown controls (#365) | 与本地通道冷却重置功能重叠，需对比评估（见审阅报告） |
+| `21d92e1` | recognize structured oauth accounts in routing (#369) | OAuth 功能 |
+| `37a86d1` | background route decision refresh (#370) | 路由决策后台刷新 |
+| `6e21f91` | add route priority left rail (#371) | 路由优先级 UI 系列 |
+| `76c85d0` | split site API endpoint pool (#373) | 体量巨大(+7220)，上游架构演进方向，暂不合入 |
+| `ce77bde` | align route priority drag preview (#375) | 路由优先级 UI 系列 |
+| `1133846` | restore route priority drag behavior (#376) | 路由优先级 UI 系列 |
+| `596d1b9` | proactive channel probes + load-aware routing (#330) | 最大 PR(+6366)，三个模式值得学习但不直接合入（见审阅报告） |
+| `bcd758e` | harden background task completion waits (#382) | 测试改进，依赖 #330 |
+| `180d17a` | add proxy first-byte timeout and log badges (#383) | 含 schema 变更(migration 0019)，值得后续单独引入 |
+| `52c6ff5` | route codex websocket through site api endpoints (#386) | 依赖 #373 |
+| `ed2783e` | fix route detail dropdown clipping (#388) | UI 小修 |
+| `1407f75` | add Fedora desktop rpm packaging (#390) | RPM 打包 |
+
+### 值得后续关注的大型 PR（已深度分析）
+
+- **#330** (主动探活+负载感知路由) — 三个可借鉴模式：四态探测判定、恢复闭环、负载乘子
+- **#365** (路由冷却控制) — 与本地实现重叠，建议补 cooldown max cap 和 route 级批量清冷却
+- **#383** (首字节超时) — 对挂死链路有效，建议在 protocol-affinity 阶段参考
+- **#373** (Site API Endpoint Pool) — 上游架构演进方向，长期跟踪
+
+---
+
 ## 2026-03-31 同步
 
 **上游已审阅到**：`618ca0b`（upstream/main HEAD）

@@ -57,6 +57,7 @@ describe('settings and auth events', () => {
     config.proxySessionChannelConcurrencyLimit = 2;
     config.proxySessionChannelQueueWaitMs = 1500;
     config.routingFallbackUnitCost = 1;
+    (config as any).proxyFirstByteTimeoutSec = 0;
     (config as any).tokenRouterFailureCooldownMaxSec = 30 * 24 * 60 * 60;
     (config as any).telegramEnabled = false;
     (config as any).telegramApiBaseUrl = 'https://api.telegram.org';
@@ -361,6 +362,34 @@ describe('settings and auth events', () => {
     expect(getResponse.statusCode).toBe(200);
     const runtime = getResponse.json() as { routingFallbackUnitCost?: number };
     expect(runtime.routingFallbackUnitCost).toBe(0.25);
+  });
+
+  it('persists and returns proxy first-byte timeout from runtime settings', async () => {
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        proxyFirstByteTimeoutSec: 45,
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json() as { proxyFirstByteTimeoutSec?: number };
+    expect(updated.proxyFirstByteTimeoutSec).toBe(45);
+    expect((config as any).proxyFirstByteTimeoutSec).toBe(45);
+
+    const saved = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'proxy_first_byte_timeout_sec'))
+      .get();
+    expect(saved?.value).toBe(JSON.stringify(45));
+
+    const getResponse = await app.inject({
+      method: 'GET',
+      url: '/api/settings/runtime',
+    });
+    expect(getResponse.statusCode).toBe(200);
+    const runtime = getResponse.json() as { proxyFirstByteTimeoutSec?: number };
+    expect(runtime.proxyFirstByteTimeoutSec).toBe(45);
   });
 
   it('persists and returns token router failure cooldown max from runtime settings', async () => {

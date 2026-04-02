@@ -283,10 +283,12 @@ export function createSurfaceDispatchRequest(input: {
   return (
     request: BuiltEndpointRequest,
     targetUrl?: string,
+    signal?: AbortSignal,
   ) => (
     dispatchRuntimeRequest({
       siteUrl: input.site.url,
       targetUrl,
+      signal,
       request,
       buildInit: (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(input.site, {
         method: 'POST',

@@ -1,5 +1,6 @@
 import { TextDecoder } from 'node:util';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { config } from '../../config.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
 import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
@@ -34,6 +35,7 @@ import {
   unwrapGeminiCliPayload,
 } from '../../routes/proxy/geminiCliCompat.js';
 import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
+import { resolveProxyFirstByteTimeoutMs } from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { runCodexHttpSessionTask } from '../runtime/codexHttpSessionQueue.js';
 import {
@@ -373,17 +375,19 @@ export async function handleOpenAiResponsesSurfaceRequest(
         site: selected.site,
         accountExtraConfig: selected.account.extraConfig,
       });
+      const firstByteTimeoutMs = resolveProxyFirstByteTimeoutMs(config.proxyFirstByteTimeoutSec);
       const dispatchRequest = (
         endpointRequest: BuiltEndpointRequest,
         targetUrl?: string,
+        signal?: AbortSignal,
       ) => {
         if (!isCodexSite || endpointRequest.path !== '/responses') {
-          return baseDispatchRequest(endpointRequest, targetUrl);
+          return baseDispatchRequest(endpointRequest, targetUrl, signal);
         }
         const sessionId = getCodexSessionHeaderValue(endpointRequest.headers);
         return runCodexHttpSessionTask(
           sessionId,
-          () => baseDispatchRequest(endpointRequest, targetUrl),
+          () => baseDispatchRequest(endpointRequest, targetUrl, signal),
         );
       };
       const endpointStrategy = openAiResponsesTransformer.compatibility.createEndpointStrategy({
@@ -451,6 +455,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,
+          firstByteTimeoutMs,
           tryRecover,
           onAttemptFailure: (ctx) => {
             recordUpstreamEndpointFailure({

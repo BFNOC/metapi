@@ -1,5 +1,9 @@
 import { fetch } from 'undici';
 import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
+import {
+  fetchWithObservedFirstByte,
+  isObservedFirstByteTimeoutResponse,
+} from '../../proxy-core/firstByteTimeout.js';
 import { withSiteProxyRequestInit } from '../../services/siteProxy.js';
 import { summarizeUpstreamError } from './upstreamError.js';
 import type { UpstreamEndpoint } from './upstreamEndpoint.js';
@@ -84,7 +88,9 @@ type ExecuteEndpointFlowInput = {
   dispatchRequest?: (
     request: BuiltEndpointRequest,
     targetUrl: string,
+    signal?: AbortSignal,
   ) => Promise<Awaited<ReturnType<typeof fetch>>>;
+  firstByteTimeoutMs?: number;
   tryRecover?: (ctx: EndpointAttemptContext) => Promise<EndpointRecoverResult>;
   shouldDowngrade?: (ctx: EndpointAttemptContext) => boolean;
   onDowngrade?: (ctx: EndpointAttemptContext & { errText: string }) => void | Promise<void>;
@@ -131,13 +137,23 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       ? buildUpstreamUrl(input.proxyUrl, request.path)
       : defaultTarget;
 
-    let response = input.dispatchRequest
-      ? await input.dispatchRequest(request, targetUrl)
-      : await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
-        method: 'POST',
-        headers: request.headers,
-        body: JSON.stringify(request.body),
-      }));
+    const attemptStartedAtMs = Date.now();
+    let response = await fetchWithObservedFirstByte(
+      async (signal) => (
+        input.dispatchRequest
+          ? await input.dispatchRequest(request, targetUrl, signal)
+          : await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
+            method: 'POST',
+            headers: request.headers,
+            body: JSON.stringify(request.body),
+            signal,
+          }))
+      ),
+      {
+        firstByteTimeoutMs: input.firstByteTimeoutMs,
+        startedAtMs: attemptStartedAtMs,
+      },
+    );
 
     if (response.ok) {
       attempts.push({
@@ -173,6 +189,28 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       response,
       rawErrText,
     };
+    const isLastEndpoint = endpointIndex >= endpointCount - 1;
+
+    if (isObservedFirstByteTimeoutResponse(response) && !isLastEndpoint) {
+      const errText = rawErrText.trim() || 'first byte timeout';
+      await runEndpointFlowHook(input.onAttemptFailure, {
+        ...baseContext,
+        errText,
+      }, 'onAttemptFailure');
+      attempts.push({
+        endpoint: baseContext.request.endpoint,
+        path: baseContext.request.path,
+        targetUrl: baseContext.targetUrl,
+        status: response.status || 408,
+        rawErrText,
+        errText,
+        downgraded: true,
+      });
+      finalStatus = response.status || 408;
+      finalErrText = errText;
+      finalRawErrText = rawErrText;
+      continue;
+    }
 
     if (input.tryRecover) {
       const recovered = await input.tryRecover(baseContext);
@@ -228,7 +266,6 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       errText,
     }, 'onAttemptFailure');
 
-    const isLastEndpoint = endpointIndex >= endpointCount - 1;
     const shouldDowngrade = !isLastEndpoint && !!input.shouldDowngrade?.(baseContext);
     attempts.push({
       endpoint: baseContext.request.endpoint,

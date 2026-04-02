@@ -35,6 +35,7 @@ export type RuntimeDispatchInput = {
   siteUrl: string;
   request: ProxyRuntimeRequest;
   targetUrl?: string;
+  signal?: AbortSignal;
   buildInit: (requestUrl: string, request: ProxyRuntimeRequest) => Promise<UndiciRequestInit> | UndiciRequestInit;
 };
 
@@ -72,7 +73,38 @@ export async function performFetch(
   requestUrl = input.targetUrl || buildUpstreamUrl(input.siteUrl, request.path),
 ): Promise<RuntimeResponse> {
   const init = await input.buildInit(requestUrl, request);
-  return fetch(requestUrl, init);
+  const mergedSignal = mergeAbortSignals(
+    input.signal,
+    init.signal as AbortSignal | undefined,
+  );
+  return fetch(requestUrl, {
+    ...init,
+    ...(mergedSignal ? { signal: mergedSignal } : {}),
+  });
+}
+
+function mergeAbortSignals(
+  ...signals: Array<AbortSignal | undefined>
+): AbortSignal | undefined {
+  const activeSignals = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+  if (activeSignals.length <= 0) return undefined;
+  if (activeSignals.length === 1) return activeSignals[0];
+
+  const controller = new AbortController();
+  const abortFrom = (source: AbortSignal) => {
+    if (controller.signal.aborted) return;
+    controller.abort((source as AbortSignal & { reason?: unknown }).reason);
+  };
+
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      abortFrom(signal);
+      break;
+    }
+    signal.addEventListener('abort', () => abortFrom(signal), { once: true });
+  }
+
+  return controller.signal;
 }
 
 function hasZstdContentEncoding(contentEncoding: string | null): boolean {

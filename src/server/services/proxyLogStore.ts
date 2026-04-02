@@ -15,6 +15,8 @@ export type ProxyLogInsertInput = {
   modelActual?: string | null;
   status?: string | null;
   httpStatus?: number | null;
+  isStream?: boolean | null;
+  firstByteLatencyMs?: number | null;
   latencyMs?: number | null;
   promptTokens?: number | null;
   completionTokens?: number | null;

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const reportProxyAllFailedMock = vi.fn();
+const hasProxyUsagePayloadMock = vi.fn(() => false);
 const parseProxyUsageMock = vi.fn(() => ({
   promptTokens: 0,
   completionTokens: 0,
@@ -60,6 +61,7 @@ vi.mock('../../services/alertService.js', () => ({
 }));
 
 vi.mock('../../services/proxyUsageParser.js', () => ({
+  hasProxyUsagePayload: (...args: unknown[]) => hasProxyUsagePayloadMock(...args),
   mergeProxyUsage: (...args: unknown[]) => mergeProxyUsageMock(...args),
   parseProxyUsage: (...args: unknown[]) => parseProxyUsageMock(...args),
 }));
@@ -181,6 +183,8 @@ vi.mock('./sharedSurface.js', () => ({
 describe('handleOpenAiResponsesSurfaceRequest', () => {
   beforeEach(() => {
     reportProxyAllFailedMock.mockReset();
+    hasProxyUsagePayloadMock.mockReset();
+    hasProxyUsagePayloadMock.mockReturnValue(false);
     parseProxyUsageMock.mockClear();
     mergeProxyUsageMock.mockClear();
     transformRequestMock.mockReset();
@@ -276,9 +280,21 @@ describe('handleOpenAiResponsesSurfaceRequest', () => {
     });
     createSurfaceFailureToolkitMock.mockReturnValue({
       log: vi.fn().mockResolvedValue(undefined),
-      handleUpstreamFailure: vi.fn(),
-      handleDetectedFailure: vi.fn(),
-      handleExecutionError: vi.fn(),
+      handleUpstreamFailure: vi.fn().mockResolvedValue({
+        action: 'respond',
+        status: 502,
+        payload: { error: { message: 'upstream failed', type: 'upstream_error' } },
+      }),
+      handleDetectedFailure: vi.fn().mockResolvedValue({
+        action: 'respond',
+        status: 502,
+        payload: { error: { message: 'detected failure', type: 'upstream_error' } },
+      }),
+      handleExecutionError: vi.fn().mockResolvedValue({
+        action: 'respond',
+        status: 502,
+        payload: { error: { message: 'execution failed', type: 'upstream_error' } },
+      }),
       recordStreamFailure: vi.fn(),
     });
     createSurfaceDispatchRequestMock.mockReturnValue(vi.fn());

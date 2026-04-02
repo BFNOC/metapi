@@ -72,6 +72,7 @@ interface RuntimeSettingsBody {
   notifyCooldownSec?: number;
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
+  proxyFirstByteTimeoutSec?: number;
   tokenRouterFailureCooldownMaxSec?: number;
   routingWeights?: Partial<RoutingWeights>;
   proxyErrorKeywords?: string[] | string;
@@ -563,6 +564,12 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.routingFallbackUnitCost = Math.max(1e-6, n);
       return;
     }
+    case 'proxy_first_byte_timeout_sec': {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) return;
+      config.proxyFirstByteTimeoutSec = Math.max(0, Math.trunc(n));
+      return;
+    }
     case 'token_router_failure_cooldown_max_sec': {
       const normalized = normalizeTokenRouterFailureCooldownMaxSec(value);
       if (normalized == null) return;
@@ -588,6 +595,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
     proxySessionChannelQueueWaitMs: config.proxySessionChannelQueueWaitMs,
     routingFallbackUnitCost: config.routingFallbackUnitCost,
+    proxyFirstByteTimeoutSec: config.proxyFirstByteTimeoutSec,
     tokenRouterFailureCooldownMaxSec: config.tokenRouterFailureCooldownMaxSec,
     routingWeights: config.routingWeights,
     webhookUrl: config.webhookUrl,
@@ -1304,6 +1312,19 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.routingFallbackUnitCost = normalized;
       upsertSetting('routing_fallback_unit_cost', normalized);
+    }
+
+    if (body.proxyFirstByteTimeoutSec !== undefined) {
+      const nextProxyFirstByteTimeoutSec = Number(body.proxyFirstByteTimeoutSec);
+      if (!Number.isFinite(nextProxyFirstByteTimeoutSec) || nextProxyFirstByteTimeoutSec < 0) {
+        return reply.code(400).send({ success: false, message: '首字节超时必须是大于等于 0 的整数秒' });
+      }
+      const normalized = Math.max(0, Math.trunc(nextProxyFirstByteTimeoutSec));
+      if (normalized !== config.proxyFirstByteTimeoutSec) {
+        changedLabels.push(`首字节超时（${config.proxyFirstByteTimeoutSec}s -> ${normalized}s）`);
+      }
+      config.proxyFirstByteTimeoutSec = normalized;
+      upsertSetting('proxy_first_byte_timeout_sec', normalized);
     }
 
     if (body.tokenRouterFailureCooldownMaxSec !== undefined) {

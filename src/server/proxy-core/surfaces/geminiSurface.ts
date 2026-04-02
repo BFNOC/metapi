@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { TextDecoder } from 'node:util';
 import { fetch } from 'undici';
 import { and, eq } from 'drizzle-orm';
+import { config } from '../../config.js';
 import { db, schema } from '../../db/index.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { parseProxyUsage } from '../../services/proxyUsageParser.js';
@@ -36,6 +37,11 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
+import {
+  fetchWithObservedFirstByte,
+  getObservedResponseMeta,
+  resolveProxyFirstByteTimeoutMs,
+} from '../firstByteTimeout.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 const GEMINI_MODEL_PROBES = [
   'gemini-2.5-flash',
@@ -213,6 +219,8 @@ async function logProxy(
   promptTokens = 0,
   completionTokens = 0,
   totalTokens = 0,
+  isStream: boolean | null = null,
+  firstByteLatencyMs: number | null = null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -234,6 +242,8 @@ async function logProxy(
       modelActual: selected.actualModel || modelRequested,
       status,
       httpStatus,
+      isStream,
+      firstByteLatencyMs,
       latencyMs,
       promptTokens,
       completionTokens,
@@ -425,6 +435,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
       const isInternalGemini = isInternalGeminiPlatform(selected.site.platform);
       const isDirectGeminiFamily = isDirectGeminiFamilyPlatform(selected.site.platform);
       const startTime = Date.now();
+      const firstByteTimeoutMs = resolveProxyFirstByteTimeoutMs(config.proxyFirstByteTimeoutSec);
       let upstreamPath = '';
 
       try {
@@ -493,39 +504,55 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 query,
               );
 
-            return isInternalGemini
-              ? dispatchRuntimeRequest({
-                siteUrl: selected.site.url,
-                targetUrl,
-                request: {
-                  endpoint: 'chat',
-                  path: upstreamPath,
-                  headers: requestHeaders,
-                  body: requestBody as Record<string, unknown>,
-                  runtime: {
-                    executor: isGeminiCli ? 'gemini-cli' : 'antigravity',
-                    modelName: actualModel,
-                    stream: isStreamAction,
-                    oauthProjectId: oauth?.projectId || null,
-                    action: isCountTokensAction
-                      ? 'countTokens'
-                      : (isStreamAction ? 'streamGenerateContent' : 'generateContent'),
-                  },
-                },
-                buildInit: async (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(selected.site, {
-                  method: 'POST',
-                  headers: requestForFetch.headers,
-                  body: JSON.stringify(requestForFetch.body),
-                }, channelProxyUrl),
-              })
-              : fetch(targetUrl, {
-                method: 'POST',
-                headers: requestHeaders,
-                body: JSON.stringify(requestBody),
-              });
+            const attemptStartedAtMs = Date.now();
+            const upstream = await fetchWithObservedFirstByte(
+              (signal) => (
+                isInternalGemini
+                  ? dispatchRuntimeRequest({
+                    siteUrl: selected.site.url,
+                    targetUrl,
+                    signal,
+                    request: {
+                      endpoint: 'chat',
+                      path: upstreamPath,
+                      headers: requestHeaders,
+                      body: requestBody as Record<string, unknown>,
+                      runtime: {
+                        executor: isGeminiCli ? 'gemini-cli' : 'antigravity',
+                        modelName: actualModel,
+                        stream: isStreamAction,
+                        oauthProjectId: oauth?.projectId || null,
+                        action: isCountTokensAction
+                          ? 'countTokens'
+                          : (isStreamAction ? 'streamGenerateContent' : 'generateContent'),
+                      },
+                    },
+                    buildInit: async (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(selected.site, {
+                      method: 'POST',
+                      headers: requestForFetch.headers,
+                      body: JSON.stringify(requestForFetch.body),
+                    }, channelProxyUrl),
+                  })
+                  : fetch(targetUrl, {
+                    method: 'POST',
+                    headers: requestHeaders,
+                    body: JSON.stringify(requestBody),
+                    signal,
+                  })
+              ),
+              {
+                firstByteTimeoutMs,
+                startedAtMs: attemptStartedAtMs,
+              },
+            );
+
+            return {
+              upstream,
+              firstByteLatencyMs: getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null,
+            };
           };
 
-          let upstream = await dispatchSelectedRequest();
+          let { upstream, firstByteLatencyMs } = await dispatchSelectedRequest();
           let contentType = upstream.headers.get('content-type') || 'application/json';
           if (upstream.status === 401 && oauth) {
             try {
@@ -537,7 +564,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 extraConfig: refreshed.extraConfig ?? selected.account.extraConfig,
               };
               oauth = getOauthInfoFromAccount(selected.account);
-              upstream = await dispatchSelectedRequest();
+              ({ upstream, firstByteLatencyMs } = await dispatchSelectedRequest());
               contentType = upstream.headers.get('content-type') || 'application/json';
             } catch {
               // Preserve the original 401 response when refresh fails.
@@ -562,6 +589,11 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               downstreamPath,
               upstreamPath,
               clientContext,
+              0,
+              0,
+              0,
+              isStreamAction,
+              firstByteLatencyMs,
             );
             if (canRetryProxyChannel(retryCount)) {
               retryCount += 1;
@@ -597,6 +629,11 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 downstreamPath,
                 upstreamPath,
                 clientContext,
+                0,
+                0,
+                0,
+                isStreamAction,
+                firstByteLatencyMs,
               );
               reply.raw.end();
               return;
@@ -650,6 +687,8 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               parsedUsage.promptTokens,
               parsedUsage.completionTokens,
               parsedUsage.totalTokens,
+              isStreamAction,
+              firstByteLatencyMs,
             );
             return;
           }
@@ -686,6 +725,8 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               parsedUsage.promptTokens,
               parsedUsage.completionTokens,
               parsedUsage.totalTokens,
+              isStreamAction,
+              firstByteLatencyMs,
             );
             return reply.code(upstream.status).send(
               isGeminiCliDownstream && !isCountTokensAction
@@ -706,6 +747,11 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               downstreamPath,
               upstreamPath,
               clientContext,
+              0,
+              0,
+              0,
+              isStreamAction,
+              firstByteLatencyMs,
             );
             return reply.code(upstream.status).type(contentType || 'application/json').send(text);
           }
@@ -784,10 +830,15 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           };
         };
         const channelProxyUrl = resolveChannelProxyUrl(selected.site, selected.account.extraConfig);
-        const dispatchRequest = (compatibilityRequest: BuiltEndpointRequest, targetUrl?: string) => (
+        const dispatchRequest = (
+          compatibilityRequest: BuiltEndpointRequest,
+          targetUrl?: string,
+          signal?: AbortSignal,
+        ) => (
           dispatchRuntimeRequest({
             siteUrl: selected.site.url,
             targetUrl,
+            signal,
             request: compatibilityRequest,
             buildInit: async (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(selected.site, {
               method: 'POST',
@@ -814,6 +865,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,
+          firstByteTimeoutMs,
           tryRecover: endpointStrategy.tryRecover,
           onAttemptFailure: (ctx) => {
             recordUpstreamEndpointFailure({

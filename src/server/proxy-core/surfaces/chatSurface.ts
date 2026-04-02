@@ -1,5 +1,6 @@
 import { TextDecoder } from 'node:util';
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
 import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
@@ -41,6 +42,10 @@ import {
   unwrapGeminiCliPayload,
 } from '../../routes/proxy/geminiCliCompat.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
+import {
+  fetchWithObservedFirstByte,
+  resolveProxyFirstByteTimeoutMs,
+} from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { detectDownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
@@ -176,6 +181,7 @@ export async function handleChatSurfaceRequest(
 
   const excludeChannelIds: number[] = [];
   let retryCount = 0;
+  const firstByteTimeoutMs = resolveProxyFirstByteTimeoutMs(config.proxyFirstByteTimeoutSec);
 
   while (retryCount <= maxRetries) {
     const selected = await selectSurfaceChannelForAttempt({
@@ -336,6 +342,7 @@ export async function handleChatSurfaceRequest(
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,
+          firstByteTimeoutMs,
           tryRecover,
           onAttemptFailure: (ctx) => {
             recordUpstreamEndpointFailure({
@@ -824,6 +831,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
   });
   const excludeChannelIds: number[] = [];
   let retryCount = 0;
+  const firstByteTimeoutMs = resolveProxyFirstByteTimeoutMs(config.proxyFirstByteTimeoutSec);
 
   while (retryCount <= maxRetries) {
     const selected = await selectSurfaceChannelForAttempt({
@@ -925,7 +933,13 @@ export async function handleClaudeCountTokensSurfaceRequest(
         site: selected.site,
         accountExtraConfig: selected.account.extraConfig,
       });
-      let upstream = await dispatchRequest(upstreamRequest);
+      let upstream = await fetchWithObservedFirstByte(
+        (signal) => dispatchRequest(upstreamRequest, undefined, signal),
+        {
+          firstByteTimeoutMs,
+          startedAtMs: Date.now(),
+        },
+      );
 
       if ((upstream.status === 401 || upstream.status === 403) && oauth) {
         const recoverContext = {

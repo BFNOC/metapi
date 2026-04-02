@@ -43,17 +43,33 @@ export type EndpointRecoverResult = {
   targetUrl?: string;
 } | null;
 
+export type EndpointFlowAttempt = {
+  endpoint: UpstreamEndpoint;
+  path: string;
+  targetUrl: string;
+  status: number;
+  rawErrText?: string;
+  errText?: string;
+  downgraded: boolean;
+};
+
 export type EndpointFlowResult =
   | {
     ok: true;
     upstream: Awaited<ReturnType<typeof fetch>>;
     upstreamPath: string;
+    successfulEndpoint: UpstreamEndpoint;
+    attempts: EndpointFlowAttempt[];
+    downgraded: boolean;
   }
   | {
     ok: false;
     status: number;
     errText: string;
     rawErrText?: string;
+    terminalEndpoint: UpstreamEndpoint | null;
+    attempts: EndpointFlowAttempt[];
+    downgraded: boolean;
   };
 
 export function withUpstreamPath(path: string, message: string): string {
@@ -95,12 +111,17 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       ok: false,
       status: 502,
       errText: 'Upstream request failed',
+      terminalEndpoint: null,
+      attempts: [],
+      downgraded: false,
     };
   }
 
   let finalStatus = 0;
   let finalErrText = 'unknown error';
   let finalRawErrText: string | undefined;
+  let terminalEndpoint: UpstreamEndpoint | null = null;
+  const attempts: EndpointFlowAttempt[] = [];
 
   for (let endpointIndex = 0; endpointIndex < endpointCount; endpointIndex += 1) {
     const endpoint = input.endpointCandidates[endpointIndex] as UpstreamEndpoint;
@@ -119,6 +140,13 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       }));
 
     if (response.ok) {
+      attempts.push({
+        endpoint: request.endpoint,
+        path: request.path,
+        targetUrl,
+        status: response.status,
+        downgraded: false,
+      });
       await runEndpointFlowHook(input.onAttemptSuccess, {
         endpointIndex,
         endpointCount,
@@ -130,6 +158,9 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
         ok: true,
         upstream: response,
         upstreamPath: request.path,
+        successfulEndpoint: request.endpoint,
+        attempts,
+        downgraded: endpointIndex > 0,
       };
     }
 
@@ -152,6 +183,21 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
             ? buildUpstreamUrl(input.proxyUrl, recovered.upstreamPath)
             : buildUpstreamUrl(input.siteUrl, recovered.upstreamPath)
         );
+        attempts.push({
+          endpoint: baseContext.request.endpoint,
+          path: baseContext.request.path,
+          targetUrl: baseContext.targetUrl,
+          status: baseContext.response.status,
+          rawErrText: baseContext.rawErrText,
+          downgraded: false,
+        });
+        attempts.push({
+          endpoint: recoveredRequest.endpoint,
+          path: recovered.upstreamPath,
+          targetUrl: recoveredTargetUrl,
+          status: recovered.upstream.status,
+          downgraded: false,
+        });
         await runEndpointFlowHook(input.onAttemptSuccess, {
           endpointIndex,
           endpointCount,
@@ -163,6 +209,9 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
           ok: true,
           upstream: recovered.upstream,
           upstreamPath: recovered.upstreamPath,
+          successfulEndpoint: recoveredRequest.endpoint,
+          attempts,
+          downgraded: endpointIndex > 0,
         };
       }
     }
@@ -181,6 +230,15 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
 
     const isLastEndpoint = endpointIndex >= endpointCount - 1;
     const shouldDowngrade = !isLastEndpoint && !!input.shouldDowngrade?.(baseContext);
+    attempts.push({
+      endpoint: baseContext.request.endpoint,
+      path: baseContext.request.path,
+      targetUrl: baseContext.targetUrl,
+      status: response.status,
+      rawErrText,
+      errText,
+      downgraded: shouldDowngrade,
+    });
     if (shouldDowngrade) {
       await runEndpointFlowHook(input.onDowngrade, {
         ...baseContext,
@@ -192,6 +250,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     finalStatus = response.status;
     finalErrText = errText;
     finalRawErrText = rawErrText;
+    terminalEndpoint = baseContext.request.endpoint;
     break;
   }
 
@@ -200,5 +259,8 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     status: finalStatus || 502,
     errText: finalErrText || 'unknown error',
     rawErrText: finalRawErrText,
+    terminalEndpoint,
+    attempts,
+    downgraded: attempts.some((attempt) => attempt.downgraded),
   };
 }

@@ -257,6 +257,82 @@ describe('stats proxy logs routes', () => {
     });
   });
 
+  it('returns runtime endpoint affinity for proxy log detail when runtime learning exists', async () => {
+    const upstreamEndpointModule = await import('../proxy/upstreamEndpoint.js');
+    upstreamEndpointModule.resetUpstreamEndpointRuntimeState();
+
+    const site = await db.insert(schema.sites).values({
+      name: 'runtime-site',
+      url: 'https://runtime-site.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'runtime-user',
+      accessToken: 'runtime-token',
+      status: 'active',
+    }).returning().get();
+
+    const inserted = await db.insert(schema.proxyLogs).values({
+      accountId: account.id,
+      modelRequested: 'gpt-5.4',
+      modelActual: 'gpt-5.4',
+      status: 'success',
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+      estimatedCost: 0.02,
+      errorMessage: '[downstream:/v1/responses] [upstream:/v1/chat/completions]',
+      createdAt: formatUtcSqlDateTime(new Date('2026-03-09T08:06:00.000Z')),
+    }).run();
+
+    upstreamEndpointModule.recordUpstreamEndpointDowngrade({
+      siteId: site.id,
+      failedEndpoint: 'responses',
+      recoveredEndpoint: 'chat',
+      downstreamFormat: 'responses',
+      modelName: 'gpt-5.4',
+    });
+    upstreamEndpointModule.recordUpstreamEndpointDowngrade({
+      siteId: site.id,
+      failedEndpoint: 'responses',
+      recoveredEndpoint: 'chat',
+      downstreamFormat: 'responses',
+      modelName: 'gpt-5.4',
+    });
+
+    const logId = Number(inserted.lastInsertRowid || 0);
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/stats/proxy-logs/${logId}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      runtimeEndpointAffinity?: {
+        isRuntimeOnly: boolean;
+        scope: string;
+        downstreamFormat: string;
+        preferredEndpoint: string | null;
+        blockedEndpoints: Array<{ endpoint: string; remainingMs: number }>;
+      } | null;
+    };
+
+    expect(body.runtimeEndpointAffinity).toMatchObject({
+      isRuntimeOnly: true,
+      scope: 'text_default',
+      downstreamFormat: 'responses',
+      preferredEndpoint: 'chat',
+    });
+    expect(body.runtimeEndpointAffinity?.blockedEndpoints).toEqual([
+      expect.objectContaining({
+        endpoint: 'responses',
+        remainingMs: expect.any(Number),
+      }),
+    ]);
+  });
+
   it('supports searching proxy logs by downstream key metadata', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'meta-site',

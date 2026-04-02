@@ -150,6 +150,19 @@ describe('ProxyLogs server-driven page', () => {
           promptTokensIncludeCache: false,
         },
       },
+      runtimeEndpointAffinity: {
+        isRuntimeOnly: true,
+        scope: 'text_default',
+        downstreamFormat: 'responses',
+        preferredEndpoint: 'chat',
+        blockedEndpoints: [
+          {
+            endpoint: 'responses',
+            blockedUntilMs: Date.now() + 300_000,
+            remainingMs: 300_000,
+          },
+        ],
+      },
     });
   });
 
@@ -379,6 +392,41 @@ describe('ProxyLogs server-driven page', () => {
 
       expect(apiMock.getProxyLogDetail).toHaveBeenCalledTimes(1);
       expect(apiMock.getProxyLogDetail).toHaveBeenCalledWith(101);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('renders runtime endpoint affinity in the expanded detail view', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root!.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-101'
+      ));
+
+      await act(async () => {
+        row.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root!.root);
+      expect(text).toContain('协议学习');
+      expect(text).toContain('当前首选协议: chat');
+      expect(text).toContain('作用范围: responses / text_default');
+      expect(text).toContain('临时跳过协议: responses');
+      expect(text).toContain('仅当前进程有效，重启后清空');
     } finally {
       root?.unmount();
     }

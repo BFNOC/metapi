@@ -359,6 +359,17 @@ export type ProxyLogDetail = ProxyLogListItem & {
   channelId?: number | null;
   httpStatus?: number | null;
   billingDetails?: ProxyLogBillingDetails;
+  runtimeEndpointAffinity?: {
+    isRuntimeOnly: true;
+    scope: 'text_default';
+    downstreamFormat: 'openai' | 'claude' | 'responses';
+    preferredEndpoint: 'chat' | 'messages' | 'responses' | null;
+    blockedEndpoints: Array<{
+      endpoint: 'chat' | 'messages' | 'responses';
+      blockedUntilMs: number;
+      remainingMs: number;
+    }>;
+  } | null;
 };
 
 export type ProxyLogsSummary = {

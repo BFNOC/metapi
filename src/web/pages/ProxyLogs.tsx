@@ -26,6 +26,7 @@ type ProxyLogRenderItem = ProxyLogListItem & {
   siteName?: string | null;
   siteUrl?: string | null;
   errorMessage?: string | null;
+  runtimeEndpointAffinity?: ProxyLogDetail['runtimeEndpointAffinity'];
 };
 
 type ProxyLogDetailState = {
@@ -101,6 +102,58 @@ function renderDownstreamKeySummary(log: ProxyLogRenderItem) {
     Array.isArray(log.downstreamKeyTags) && log.downstreamKeyTags.length > 0 ? `标签: ${log.downstreamKeyTags.join(' / ')}` : null,
   ].filter(Boolean);
   return parts.length > 0 ? parts.join('，') : null;
+}
+
+function formatRuntimeAffinityRemainingMs(value: number) {
+  const totalSeconds = Math.max(0, Math.ceil(value / 1000));
+  if (totalSeconds <= 0) return '即将到期';
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function renderRuntimeEndpointAffinity(log: ProxyLogRenderItem) {
+  const affinity = log.runtimeEndpointAffinity;
+  if (!affinity) return null;
+
+  return (
+    <div style={{ display: 'flex', gap: 6 }}>
+      <span style={{ fontWeight: 600, color: 'var(--color-info)', flexShrink: 0 }}>协议学习</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span>
+          当前首选协议:
+          {' '}
+          <strong style={{ color: 'var(--color-text-primary)' }}>{affinity.preferredEndpoint || '无'}</strong>
+        </span>
+        <span>
+          作用范围:
+          {' '}
+          <strong style={{ color: 'var(--color-text-primary)' }}>
+            {affinity.downstreamFormat} / {affinity.scope}
+          </strong>
+        </span>
+        {affinity.blockedEndpoints.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {affinity.blockedEndpoints.map((item) => (
+              <span key={`${item.endpoint}-${item.blockedUntilMs}`}>
+                临时跳过协议:
+                {' '}
+                <strong style={{ color: 'var(--color-warning)' }}>{item.endpoint}</strong>
+                {' '}
+                ({formatRuntimeAffinityRemainingMs(item.remainingMs)})
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span style={{ color: 'var(--color-text-muted)' }}>当前没有被临时跳过的协议</span>
+        )}
+        <span style={{ color: 'var(--color-text-muted)' }}>仅当前进程有效，重启后清空</span>
+      </div>
+    </div>
+  );
 }
 
 function buildBillingProcessLines(log: ProxyLogRenderItem) {
@@ -779,6 +832,7 @@ export default function ProxyLogs() {
                       {billingDetailSummary && <div style={{ color: 'var(--color-text-muted)' }}>{billingDetailSummary}</div>}
                       <MobileField label="客户端详情" value={renderProxyLogClientCell(detailLog, { includeGeneric: true })} />
                       {downstreamKeySummary && <div style={{ color: 'var(--color-text-muted)' }}>{downstreamKeySummary}</div>}
+                      {renderRuntimeEndpointAffinity(detailLog)}
                       {billingProcessLines.length > 0 && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                           {billingProcessLines.map((line, index) => (
@@ -944,6 +998,7 @@ export default function ProxyLogs() {
                                     {downstreamKeySummary && (
                                       <div style={{ color: 'var(--color-text-muted)' }}>{downstreamKeySummary}</div>
                                     )}
+                                    {renderRuntimeEndpointAffinity(detailLog)}
                                   </div>
                                 </div>
 

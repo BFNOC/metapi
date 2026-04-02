@@ -5,6 +5,13 @@ import {
 } from '../../proxy-core/capabilities/conversationFileCapabilities.js';
 import { resolveProviderProfile } from '../../proxy-core/providers/registry.js';
 import { config } from '../../config.js';
+import {
+  applyEndpointAffinityRuntimePreference,
+  recordEndpointAffinityRuntimeDowngrade,
+  recordEndpointAffinityRuntimeSuccess,
+  resetEndpointAffinityRuntimeState,
+  type EndpointAffinityRuntimeEndpoint,
+} from '../../services/endpointAffinityRuntime.js';
 import { fetchModelPricingCatalog } from '../../services/modelPricingService.js';
 import { applyPayloadRules } from '../../services/payloadRules.js';
 import type { DownstreamFormat } from '../../transformers/shared/normalized.js';
@@ -54,13 +61,6 @@ type EndpointCapabilityProfile = {
   wantsNativeResponsesReasoning: boolean;
 };
 
-type EndpointRuntimeState = {
-  preferredEndpoint: UpstreamEndpoint | null;
-  preferredUpdatedAtMs: number;
-  lastTouchedAtMs: number;
-  blockedUntilMsByEndpoint: Partial<Record<UpstreamEndpoint, number>>;
-};
-
 type ChannelContext = {
   site: {
     id: number;
@@ -75,12 +75,8 @@ type ChannelContext = {
   };
 };
 
-const ENDPOINT_RUNTIME_PREFERRED_TTL_MS = 24 * 60 * 60 * 1000;
-const ENDPOINT_RUNTIME_BLOCK_TTL_MS = 6 * 60 * 60 * 1000;
-const MAX_ENDPOINT_RUNTIME_STATES = 512;
 export const MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH = 64;
 export const MODEL_KEY_HASH_SUFFIX_LENGTH = 8;
-const endpointRuntimeStates = new Map<string, EndpointRuntimeState>();
 
 export function boundEndpointRuntimeModelKey(value: string): string {
   if (value.length <= MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH) {
@@ -568,149 +564,8 @@ function buildEndpointRuntimeStateKey(input: {
   ].join(':');
 }
 
-function getOrCreateEndpointRuntimeState(key: string, nowMs = Date.now()): EndpointRuntimeState {
-  sweepEndpointRuntimeStates(nowMs);
-  const existing = endpointRuntimeStates.get(key);
-  if (existing) {
-    existing.lastTouchedAtMs = nowMs;
-    return existing;
-  }
-
-  const initial: EndpointRuntimeState = {
-    preferredEndpoint: null,
-    preferredUpdatedAtMs: nowMs,
-    lastTouchedAtMs: nowMs,
-    blockedUntilMsByEndpoint: {},
-  };
-  endpointRuntimeStates.set(key, initial);
-  enforceEndpointRuntimeStateLimit();
-  return initial;
-}
-
-function maybeDeleteEndpointRuntimeState(key: string, nowMs = Date.now()): void {
-  const state = endpointRuntimeStates.get(key);
-  if (!state) return;
-
-  const hasActiveBlock = Object.values(state.blockedUntilMsByEndpoint).some((untilMs) => (
-    typeof untilMs === 'number' && untilMs > nowMs
-  ));
-  const preferredFresh = (
-    !!state.preferredEndpoint
-    && (state.preferredUpdatedAtMs + ENDPOINT_RUNTIME_PREFERRED_TTL_MS) > nowMs
-  );
-  if (!hasActiveBlock && !preferredFresh) {
-    endpointRuntimeStates.delete(key);
-  }
-}
-
-function applyEndpointRuntimePreference(
-  candidates: UpstreamEndpoint[],
-  key: string,
-  nowMs = Date.now(),
-): UpstreamEndpoint[] {
-  const state = endpointRuntimeStates.get(key);
-  if (!state || candidates.length <= 1) return candidates;
-  state.lastTouchedAtMs = nowMs;
-
-  const blocked = new Set<UpstreamEndpoint>();
-  for (const endpoint of candidates) {
-    const untilMs = state.blockedUntilMsByEndpoint[endpoint];
-    if (typeof untilMs === 'number' && untilMs > nowMs) {
-      blocked.add(endpoint);
-    }
-  }
-
-  let next = candidates.filter((endpoint) => !blocked.has(endpoint));
-  if (next.length === 0) {
-    next = [...candidates];
-  }
-
-  const preferredFresh = (
-    !!state.preferredEndpoint
-    && (state.preferredUpdatedAtMs + ENDPOINT_RUNTIME_PREFERRED_TTL_MS) > nowMs
-  );
-  if (preferredFresh && state.preferredEndpoint && next.includes(state.preferredEndpoint)) {
-    next = [
-      state.preferredEndpoint,
-      ...next.filter((endpoint) => endpoint !== state.preferredEndpoint),
-    ];
-  }
-
-  maybeDeleteEndpointRuntimeState(key, nowMs);
-  return next;
-}
-
-function sweepEndpointRuntimeStates(nowMs = Date.now()): void {
-  for (const [key, state] of endpointRuntimeStates.entries()) {
-    const hasActiveBlock = Object.values(state.blockedUntilMsByEndpoint).some((untilMs) => (
-      typeof untilMs === 'number' && untilMs > nowMs
-    ));
-    const preferredFresh = (
-      !!state.preferredEndpoint
-      && (state.preferredUpdatedAtMs + ENDPOINT_RUNTIME_PREFERRED_TTL_MS) > nowMs
-    );
-    const recentlyTouched = (state.lastTouchedAtMs + ENDPOINT_RUNTIME_PREFERRED_TTL_MS) > nowMs;
-    if (!hasActiveBlock && !preferredFresh && !recentlyTouched) {
-      endpointRuntimeStates.delete(key);
-    }
-  }
-}
-
-function enforceEndpointRuntimeStateLimit(): void {
-  if (endpointRuntimeStates.size <= MAX_ENDPOINT_RUNTIME_STATES) return;
-
-  const entries = [...endpointRuntimeStates.entries()]
-    .sort((left, right) => left[1].lastTouchedAtMs - right[1].lastTouchedAtMs);
-  const overflowCount = endpointRuntimeStates.size - MAX_ENDPOINT_RUNTIME_STATES;
-  for (const [key] of entries.slice(0, overflowCount)) {
-    endpointRuntimeStates.delete(key);
-  }
-}
-
-function inferSuggestedEndpointFromError(errorText?: string | null): UpstreamEndpoint | null {
-  const text = (errorText || '').toLowerCase();
-  if (!text) return null;
-  if (text.includes('/v1/responses')) return 'responses';
-  if (text.includes('/v1/messages')) return 'messages';
-  if (text.includes('/v1/chat/completions')) return 'chat';
-  return null;
-}
-
-function shouldBlockEndpointByError(status: number, errorText?: string | null): boolean {
-  if (isEndpointDispatchDeniedError(status, errorText)) return true;
-  if (status === 404 || status === 405 || status === 415 || status === 501) return true;
-  if (isUnsupportedMediaTypeError(status, errorText)) return true;
-
-  const text = (errorText || '').toLowerCase();
-  return (
-    text.includes('convert_request_failed')
-    || text.includes('endpoint_not_found')
-    || text.includes('unknown_endpoint')
-    || text.includes('unsupported_endpoint')
-    || text.includes('unsupported_path')
-    || text.includes('not_found_error')
-    || text.includes('unsupported legacy protocol')
-    || text.includes('please use /v1/')
-    || text.includes('does not allow /v1/')
-    || text.includes('unknown endpoint')
-    || text.includes('unsupported endpoint')
-    || text.includes('unsupported path')
-    || text.includes('unrecognized request url')
-    || text.includes('no route matched')
-    || text.includes('does not exist')
-  );
-}
-
-function shouldRememberSuccessfulEndpoint(input: {
-  endpoint: UpstreamEndpoint;
-  downstreamFormat: EndpointPreference;
-}): boolean {
-  if (input.downstreamFormat !== 'responses') return true;
-  return input.endpoint === 'responses';
-}
-
 export function resetUpstreamEndpointRuntimeState(): void {
-  endpointRuntimeStates.clear();
+  resetEndpointAffinityRuntimeState();
 }
 
 export function recordUpstreamEndpointSuccess(input: {
@@ -731,18 +586,15 @@ export function recordUpstreamEndpointSuccess(input: {
     requestCapabilities: input.requestCapabilities,
   });
   if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return;
-  if (!shouldRememberSuccessfulEndpoint(input)) return;
-
-  const nowMs = Date.now();
   const key = buildEndpointRuntimeStateKey({
     siteId: input.siteId,
     downstreamFormat: input.downstreamFormat,
     capabilityProfile,
   });
-  const state = getOrCreateEndpointRuntimeState(key, nowMs);
-  state.preferredEndpoint = input.endpoint;
-  state.preferredUpdatedAtMs = nowMs;
-  delete state.blockedUntilMsByEndpoint[input.endpoint];
+  recordEndpointAffinityRuntimeSuccess({
+    key,
+    endpoint: input.endpoint as EndpointAffinityRuntimeEndpoint,
+  });
 }
 
 export function recordUpstreamEndpointFailure(input: {
@@ -765,23 +617,37 @@ export function recordUpstreamEndpointFailure(input: {
     requestCapabilities: input.requestCapabilities,
   });
   if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return;
-  if (!shouldBlockEndpointByError(input.status, input.errorText)) return;
+}
 
-  const nowMs = Date.now();
+export function recordUpstreamEndpointDowngrade(input: {
+  siteId: number;
+  failedEndpoint: UpstreamEndpoint;
+  recoveredEndpoint: UpstreamEndpoint;
+  downstreamFormat: EndpointPreference;
+  modelName?: string;
+  requestedModelHint?: string;
+  requestCapabilities?: {
+    hasNonImageFileInput?: boolean;
+    conversationFileSummary?: ConversationFileInputSummary;
+    wantsNativeResponsesReasoning?: boolean;
+  };
+}): void {
+  const capabilityProfile = buildEndpointCapabilityProfile({
+    modelName: input.modelName,
+    requestedModelHint: input.requestedModelHint,
+    requestCapabilities: input.requestCapabilities,
+  });
+  if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return;
   const key = buildEndpointRuntimeStateKey({
     siteId: input.siteId,
     downstreamFormat: input.downstreamFormat,
     capabilityProfile,
   });
-  const state = getOrCreateEndpointRuntimeState(key, nowMs);
-  state.blockedUntilMsByEndpoint[input.endpoint] = nowMs + ENDPOINT_RUNTIME_BLOCK_TTL_MS;
-
-  const suggestedEndpoint = inferSuggestedEndpointFromError(input.errorText);
-  if (suggestedEndpoint && suggestedEndpoint !== input.endpoint) {
-    state.preferredEndpoint = suggestedEndpoint;
-    state.preferredUpdatedAtMs = nowMs;
-    delete state.blockedUntilMsByEndpoint[suggestedEndpoint];
-  }
+  recordEndpointAffinityRuntimeDowngrade({
+    key,
+    failedEndpoint: input.failedEndpoint as EndpointAffinityRuntimeEndpoint,
+    recoveredEndpoint: input.recoveredEndpoint as EndpointAffinityRuntimeEndpoint,
+  });
 }
 
 function preferredEndpointOrder(
@@ -873,7 +739,10 @@ export async function resolveUpstreamEndpointCandidates(
   });
   const applyRuntimePreference = (candidates: UpstreamEndpoint[]) => (
     shouldUseEndpointRuntimeMemory(capabilityProfile)
-      ? applyEndpointRuntimePreference(candidates, runtimeStateKey)
+      ? applyEndpointAffinityRuntimePreference(
+        candidates as EndpointAffinityRuntimeEndpoint[],
+        runtimeStateKey,
+      ) as UpstreamEndpoint[]
       : candidates
   );
   const conversationFileSummary = requestCapabilities?.conversationFileSummary ?? {

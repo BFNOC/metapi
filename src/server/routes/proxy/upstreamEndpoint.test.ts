@@ -12,6 +12,7 @@ import {
   buildUpstreamEndpointRequest,
   isUnsupportedMediaTypeError,
   isEndpointDowngradeError,
+  recordUpstreamEndpointDowngrade,
   recordUpstreamEndpointFailure,
   recordUpstreamEndpointSuccess,
   resetUpstreamEndpointRuntimeState,
@@ -37,6 +38,7 @@ const baseContext = {
 
 describe('resolveUpstreamEndpointCandidates', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     fetchModelPricingCatalogMock.mockReset();
     fetchModelPricingCatalogMock.mockResolvedValue(null);
     resetUpstreamEndpointRuntimeState();
@@ -378,7 +380,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
     expect(order).toEqual(['responses']);
   });
 
-  it('does not remember messages fallback success for generic /v1/responses requests', async () => {
+  it('remembers fallback success for generic /v1/responses requests', async () => {
     recordUpstreamEndpointSuccess({
       siteId: baseContext.site.id,
       endpoint: 'messages',
@@ -395,7 +397,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       'responses',
     );
 
-    expect(order).toEqual(['responses', 'chat', 'messages']);
+    expect(order).toEqual(['messages', 'responses', 'chat']);
   });
 
   it('does not block generic /v1/responses endpoints on transient upstream errors', async () => {
@@ -420,14 +422,20 @@ describe('resolveUpstreamEndpointCandidates', () => {
     expect(order).toEqual(['responses', 'chat', 'messages']);
   });
 
-  it('learns a better endpoint from explicit upstream protocol errors', async () => {
-    recordUpstreamEndpointFailure({
+  it('blocks a repeatedly downgraded endpoint after fallback success', async () => {
+    recordUpstreamEndpointDowngrade({
       siteId: baseContext.site.id,
-      endpoint: 'chat',
-      downstreamFormat: 'openai',
+      failedEndpoint: 'responses',
+      recoveredEndpoint: 'chat',
+      downstreamFormat: 'responses',
       modelName: 'gpt-5.3',
-      status: 400,
-      errorText: 'Unsupported legacy protocol: /v1/chat/completions is not supported. Please use /v1/responses.',
+    });
+    recordUpstreamEndpointDowngrade({
+      siteId: baseContext.site.id,
+      failedEndpoint: 'responses',
+      recoveredEndpoint: 'chat',
+      downstreamFormat: 'responses',
+      modelName: 'gpt-5.3',
     });
 
     const order = await resolveUpstreamEndpointCandidates(
@@ -436,10 +444,42 @@ describe('resolveUpstreamEndpointCandidates', () => {
         site: { ...baseContext.site, platform: 'new-api' },
       },
       'gpt-5.3',
-      'openai',
+      'responses',
     );
 
-    expect(order).toEqual(['responses', 'messages']);
+    expect(order).toEqual(['chat', 'messages']);
+  });
+
+  it('restores blocked endpoints after runtime ttl expires', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-02T00:00:00Z'));
+    recordUpstreamEndpointDowngrade({
+      siteId: baseContext.site.id,
+      failedEndpoint: 'responses',
+      recoveredEndpoint: 'chat',
+      downstreamFormat: 'responses',
+      modelName: 'gpt-5.3',
+    });
+    recordUpstreamEndpointDowngrade({
+      siteId: baseContext.site.id,
+      failedEndpoint: 'responses',
+      recoveredEndpoint: 'chat',
+      downstreamFormat: 'responses',
+      modelName: 'gpt-5.3',
+    });
+
+    vi.setSystemTime(new Date('2026-04-02T07:00:00Z'));
+
+    const order = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'new-api' },
+      },
+      'gpt-5.3',
+      'responses',
+    );
+
+    expect(order).toEqual(['chat', 'responses', 'messages']);
   });
 
   it('keeps claude models messages-first even when openai platform catalog prefers chat', async () => {

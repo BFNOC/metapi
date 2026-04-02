@@ -7,6 +7,7 @@ import { type DownstreamFormat } from '../../transformers/shared/normalized.js';
 import {
   buildClaudeCountTokensUpstreamRequest,
   buildUpstreamEndpointRequest,
+  recordUpstreamEndpointDowngrade,
   recordUpstreamEndpointFailure,
   recordUpstreamEndpointSuccess,
   resolveUpstreamEndpointCandidates,
@@ -73,6 +74,40 @@ function prioritizeEndpointCandidate(
     preferred,
     ...candidates.filter((candidate) => candidate !== preferred),
   ];
+}
+
+function recordSuccessfulEndpointDowngrades(input: {
+  attempts: Array<{
+    endpoint: 'chat' | 'messages' | 'responses';
+    status: number;
+  }>;
+  successfulEndpoint: 'chat' | 'messages' | 'responses';
+  siteId: number;
+  downstreamFormat: DownstreamFormat | 'responses';
+  modelName: string;
+  requestedModelHint?: string;
+  requestCapabilities?: {
+    hasNonImageFileInput?: boolean;
+    conversationFileSummary?: ReturnType<typeof summarizeConversationFileInputsInOpenAiBody>;
+    wantsNativeResponsesReasoning?: boolean;
+  };
+}) {
+  const seenFailedEndpoints = new Set<'chat' | 'messages' | 'responses'>();
+  for (const attempt of input.attempts) {
+    if (attempt.endpoint === input.successfulEndpoint) continue;
+    if (attempt.status < 400) continue;
+    if (seenFailedEndpoints.has(attempt.endpoint)) continue;
+    seenFailedEndpoints.add(attempt.endpoint);
+    recordUpstreamEndpointDowngrade({
+      siteId: input.siteId,
+      failedEndpoint: attempt.endpoint,
+      recoveredEndpoint: input.successfulEndpoint,
+      downstreamFormat: input.downstreamFormat,
+      modelName: input.modelName,
+      requestedModelHint: input.requestedModelHint,
+      requestCapabilities: input.requestCapabilities,
+    });
+  }
 }
 
 export async function handleChatSurfaceRequest(
@@ -317,17 +352,6 @@ export async function handleChatSurfaceRequest(
             });
           },
           shouldDowngrade: endpointStrategy.shouldDowngrade,
-          onDowngrade: (ctx) => {
-            return failureToolkit.log({
-              selected,
-              modelRequested: requestedModel,
-              status: 'failed',
-              httpStatus: ctx.response.status,
-              latencyMs: Date.now() - startTime,
-              errorMessage: ctx.errText,
-              retryCount,
-            });
-          },
         });
 
       if (!endpointResult.ok) {
@@ -354,6 +378,17 @@ export async function handleChatSurfaceRequest(
 
       const upstream = endpointResult.upstream;
       const successfulUpstreamPath = endpointResult.upstreamPath;
+      if (endpointResult.downgraded) {
+        recordSuccessfulEndpointDowngrades({
+          attempts: endpointResult.attempts,
+          successfulEndpoint: endpointResult.successfulEndpoint,
+          siteId: endpointRuntimeContext.siteId,
+          downstreamFormat,
+          modelName,
+          requestedModelHint: requestedModel,
+          requestCapabilities: endpointRuntimeContext.requestCapabilities,
+        });
+      }
 
       if (isStream) {
         const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();

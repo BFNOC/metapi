@@ -53,6 +53,16 @@ describe('executeEndpointFlow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.upstreamPath).toBe('/v1/responses');
+      expect(result.successfulEndpoint).toBe('responses');
+      expect(result.downgraded).toBe(false);
+      expect(result.attempts).toEqual([
+        expect.objectContaining({
+          endpoint: 'responses',
+          path: '/v1/responses',
+          status: 200,
+          downgraded: false,
+        }),
+      ]);
     }
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.com/v1/responses');
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -151,6 +161,22 @@ describe('executeEndpointFlow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.upstreamPath).toBe('/v1/chat/completions');
+      expect(result.successfulEndpoint).toBe('chat');
+      expect(result.downgraded).toBe(true);
+      expect(result.attempts).toEqual([
+        expect.objectContaining({
+          endpoint: 'responses',
+          path: '/v1/responses',
+          status: 404,
+          downgraded: true,
+        }),
+        expect.objectContaining({
+          endpoint: 'chat',
+          path: '/v1/chat/completions',
+          status: 200,
+          downgraded: false,
+        }),
+      ]);
     }
     expect(downgradedPaths).toEqual(['/v1/responses']);
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -216,6 +242,25 @@ describe('executeEndpointFlow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.upstreamPath).toBe('/v1/responses');
+      expect(result.successfulEndpoint).toBe('responses');
+      expect(result.downgraded).toBe(false);
+      expect(result.attempts).toEqual([
+        expect.objectContaining({
+          endpoint: 'responses',
+          path: '/v1/responses',
+          status: 400,
+          rawErrText: JSON.stringify({
+            error: { message: 'upstream_error', type: 'upstream_error' },
+          }),
+          downgraded: false,
+        }),
+        expect.objectContaining({
+          endpoint: 'responses',
+          path: '/v1/responses',
+          status: 200,
+          downgraded: false,
+        }),
+      ]);
     }
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -330,8 +375,64 @@ describe('executeEndpointFlow', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.status).toBe(400);
+      expect(result.terminalEndpoint).toBe('responses');
+      expect(result.downgraded).toBe(false);
       expect(result.errText).toContain('[upstream:/v1/responses]');
       expect(result.errText).toContain('Upstream returned HTTP 400');
+      expect(result.attempts).toEqual([
+        expect.objectContaining({
+          endpoint: 'responses',
+          path: '/v1/responses',
+          status: 400,
+          downgraded: false,
+        }),
+      ]);
+    }
+  });
+
+  it('returns failed only after all candidates are exhausted', async () => {
+    fetchMock
+      .mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({
+        error: { message: 'unsupported endpoint', type: 'invalid_request_error' },
+      }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      })))
+      .mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({
+        error: { message: 'still failing', type: 'upstream_error' },
+      }), {
+        status: 502,
+        headers: { 'content-type': 'application/json' },
+      })));
+
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses', 'chat'],
+      buildRequest: (endpoint) => endpoint === 'responses'
+        ? requestFor('/v1/responses')
+        : { ...requestFor('/v1/chat/completions'), endpoint },
+      shouldDowngrade: () => true,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(502);
+      expect(result.terminalEndpoint).toBe('chat');
+      expect(result.downgraded).toBe(true);
+      expect(result.attempts).toEqual([
+        expect.objectContaining({
+          endpoint: 'responses',
+          path: '/v1/responses',
+          status: 404,
+          downgraded: true,
+        }),
+        expect.objectContaining({
+          endpoint: 'chat',
+          path: '/v1/chat/completions',
+          status: 502,
+          downgraded: false,
+        }),
+      ]);
     }
   });
 });

@@ -5,6 +5,7 @@ import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParse
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
 import {
   buildUpstreamEndpointRequest,
+  recordUpstreamEndpointDowngrade,
   recordUpstreamEndpointFailure,
   recordUpstreamEndpointSuccess,
   resolveUpstreamEndpointCandidates,
@@ -147,6 +148,39 @@ function carriesResponsesFileUrlInput(value: unknown): boolean {
   if (normalizedFile?.fileUrl) return true;
 
   return Object.values(value).some((entry) => carriesResponsesFileUrlInput(entry));
+}
+
+function recordSuccessfulEndpointDowngrades(input: {
+  attempts: Array<{
+    endpoint: 'chat' | 'messages' | 'responses';
+    status: number;
+  }>;
+  successfulEndpoint: 'chat' | 'messages' | 'responses';
+  siteId: number;
+  modelName: string;
+  requestedModelHint?: string;
+  requestCapabilities?: {
+    hasNonImageFileInput?: boolean;
+    conversationFileSummary?: ReturnType<typeof summarizeConversationFileInputsInResponsesBody>;
+    wantsNativeResponsesReasoning?: boolean;
+  };
+}) {
+  const seenFailedEndpoints = new Set<'chat' | 'messages' | 'responses'>();
+  for (const attempt of input.attempts) {
+    if (attempt.endpoint === input.successfulEndpoint) continue;
+    if (attempt.status < 400) continue;
+    if (seenFailedEndpoints.has(attempt.endpoint)) continue;
+    seenFailedEndpoints.add(attempt.endpoint);
+    recordUpstreamEndpointDowngrade({
+      siteId: input.siteId,
+      failedEndpoint: attempt.endpoint,
+      recoveredEndpoint: input.successfulEndpoint,
+      downstreamFormat: 'responses',
+      modelName: input.modelName,
+      requestedModelHint: input.requestedModelHint,
+      requestCapabilities: input.requestCapabilities,
+    });
+  }
 }
 
 function shouldRefreshOauthResponsesRequest(input: {
@@ -433,17 +467,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
             });
           },
           shouldDowngrade: endpointStrategy.shouldDowngrade,
-          onDowngrade: (ctx) => {
-            return failureToolkit.log({
-              selected,
-              modelRequested: requestedModel,
-              status: 'failed',
-              httpStatus: ctx.response.status,
-              latencyMs: Date.now() - startTime,
-              errorMessage: ctx.errText,
-              retryCount,
-            });
-          },
         });
 
 	        if (!endpointResult.ok) {
@@ -470,6 +493,16 @@ export async function handleOpenAiResponsesSurfaceRequest(
 
       const upstream = endpointResult.upstream;
       const successfulUpstreamPath = endpointResult.upstreamPath;
+      if (endpointResult.downgraded) {
+        recordSuccessfulEndpointDowngrades({
+          attempts: endpointResult.attempts,
+          successfulEndpoint: endpointResult.successfulEndpoint,
+          siteId: endpointRuntimeContext.siteId,
+          modelName,
+          requestedModelHint: requestedModel,
+          requestCapabilities: endpointRuntimeContext.requestCapabilities,
+        });
+      }
       const finalizeStreamSuccess = async (parsedUsage: UsageSummary, latency: number) => {
         try {
           await recordSurfaceSuccess({

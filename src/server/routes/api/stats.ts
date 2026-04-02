@@ -14,9 +14,11 @@ import {
   parseProxyLogBillingDetails,
   withProxyLogSelectFields,
 } from '../../services/proxyLogStore.js';
+import { getEndpointAffinityRuntimeView } from '../../services/endpointAffinityRuntime.js';
 import { parseProxyLogMessageMeta } from '../proxy/logPathMeta.js';
 import { requiresManagedAccountTokens } from '../../services/accountExtraConfig.js';
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from '../../services/accountTokenService.js';
+import { boundEndpointRuntimeModelKey } from '../proxy/upstreamEndpoint.js';
 import {
   formatLocalDateTime,
   formatUtcSqlDateTime,
@@ -487,6 +489,63 @@ function mapProxyLogRow(
   };
 }
 
+function resolveRuntimeAffinityDownstreamFormat(
+  downstreamPath: string | null | undefined,
+): 'openai' | 'claude' | 'responses' {
+  const normalized = String(downstreamPath || '').trim().toLowerCase();
+  if (!normalized) return 'openai';
+  if (normalized.startsWith('/v1/messages')) return 'claude';
+  if (normalized.startsWith('/v1/responses')) return 'responses';
+  return 'openai';
+}
+
+function buildRuntimeAffinityStateKey(input: {
+  siteId: number;
+  modelActual?: unknown;
+  modelRequested?: unknown;
+  downstreamPath?: string | null;
+}) {
+  const modelKeySource = String(input.modelActual || '').trim()
+    || String(input.modelRequested || '').trim()
+    || 'unknown-model';
+  const modelKey = boundEndpointRuntimeModelKey(modelKeySource.toLowerCase());
+  const downstreamFormat = resolveRuntimeAffinityDownstreamFormat(input.downstreamPath);
+  return {
+    key: [
+      String(input.siteId),
+      downstreamFormat,
+      modelKey,
+      'nofiles',
+      'noremoteurl',
+      'noreasoning',
+    ].join(':'),
+    downstreamFormat,
+  };
+}
+
+function resolveProxyLogRuntimeEndpointAffinity(
+  proxyLog: Record<string, unknown>,
+  siteId: number | null,
+) {
+  if (!siteId || siteId <= 0) return null;
+  const meta = parseProxyLogMessageMeta(typeof proxyLog.errorMessage === 'string' ? proxyLog.errorMessage : '');
+  const { key, downstreamFormat } = buildRuntimeAffinityStateKey({
+    siteId,
+    modelActual: proxyLog.modelActual,
+    modelRequested: proxyLog.modelRequested,
+    downstreamPath: meta.downstreamPath,
+  });
+  const runtimeView = getEndpointAffinityRuntimeView(key);
+  if (!runtimeView) return null;
+  return {
+    isRuntimeOnly: true as const,
+    scope: 'text_default' as const,
+    downstreamFormat,
+    preferredEndpoint: runtimeView.preferredEndpoint,
+    blockedEndpoints: runtimeView.blockedEndpoints,
+  };
+}
+
 export async function statsRoutes(app: FastifyInstance) {
   const proxyLogBaseFields = getProxyLogBaseSelectFields();
 
@@ -817,7 +876,14 @@ export async function statsRoutes(app: FastifyInstance) {
       return reply.code(404).send({ message: 'proxy log not found' });
     }
 
-    return mapProxyLogRow(row, { includeBillingDetails: true });
+    const mapped = mapProxyLogRow(row, { includeBillingDetails: true });
+    return {
+      ...mapped,
+      runtimeEndpointAffinity: resolveProxyLogRuntimeEndpointAffinity(
+        row.proxy_logs,
+        row.sites?.id || null,
+      ),
+    };
   });
 
   // Models marketplace - refresh upstream models and aggregate.

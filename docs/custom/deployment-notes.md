@@ -210,11 +210,11 @@ ALTER TABLE account_tokens ADD COLUMN filtered_models text;
 | 操作 | 是否被 probeDisabled 阻止 |
 |------|--------------------------|
 | 自动定时模型发现 | ✅ 阻止 |
-| 站点探活 (`/api/sites/:id/probe-models`) | ✅ 阻止 |
-| 令牌探活 (`/api/account-tokens/:id/probe-models`) | ✅ 阻止 |
+| 站点探活 (`/api/sites/:id/probe-models`) | ❌ 放行 |
+| 令牌探活 (`/api/account-tokens/:id/probe-models`) | ❌ 放行 |
 | **手动刷新模型列表** (`/api/models/check/:accountId`) | ❌ **放行** |
 
-**设计理由**：`probeDisabled` 的初衷是防止自动任务的高频请求触发上游防火墙封 IP。手动刷新模型列表是低频用户操作，且用户明确期望获取结果，不应被阻止。
+**设计理由**：`probeDisabled` 的初衷是防止自动任务的高频请求触发上游防火墙封 IP。站点/令牌手动探活与手动刷新模型列表都属于用户显式触发的低频操作，应该放行；真正受限的是后台自动模型发现和后台恢复探测。
 
 ### 涉及文件
 

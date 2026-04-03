@@ -1,7 +1,7 @@
-import { useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { SortableChannelRowProps } from './types.js';
+import type { ChannelProbeResult, SortableChannelRowProps } from './types.js';
 import {
   describeTokenBinding,
   resolveTokenBindingConnectionMode,
@@ -31,11 +31,12 @@ const PILL_VARIANT_STYLES: Record<ActionPillVariant, {
 };
 
 function ActionPillButton(
-  { variant, label, tooltip, ariaLabel, onClick }: {
+  { variant, label, tooltip, ariaLabel, disabled = false, onClick }: {
     variant: ActionPillVariant;
-    label: string;
+    label: ReactNode;
     tooltip: string;
     ariaLabel?: string;
+    disabled?: boolean;
     onClick: (e: React.MouseEvent) => void;
   },
 ) {
@@ -48,17 +49,23 @@ function ActionPillButton(
         fontSize: 10,
         fontWeight: 600,
         padding: '3px 8px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
         background: v.bg,
         color: v.color,
         border: v.border,
-        cursor: 'pointer',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.75 : 1,
         transition: 'all 0.2s ease',
         letterSpacing: 0.2,
       }}
       aria-label={ariaLabel}
       data-tooltip={tooltip}
-      onClick={(e) => { e.stopPropagation(); onClick(e); }}
+      disabled={disabled}
+      onClick={(e) => { e.stopPropagation(); if (!disabled) onClick(e); }}
       onMouseEnter={(e) => {
+        if (disabled) return;
         e.currentTarget.style.transform = 'translateY(-1px)';
         e.currentTarget.style.boxShadow = v.shadow;
       }}
@@ -70,6 +77,58 @@ function ActionPillButton(
       {label}
     </button>
   );
+}
+
+function formatProbeLatency(ttftMs: number | null): string {
+  if (ttftMs == null || !Number.isFinite(ttftMs)) return '--';
+  if (ttftMs >= 1000) return `${(ttftMs / 1000).toFixed(1)}s`;
+  return `${Math.round(ttftMs)}ms`;
+}
+
+function getProbeResultBadge(probeResult?: ChannelProbeResult): {
+  label: string;
+  style: CSSProperties;
+  tooltip: string;
+} | null {
+  if (!probeResult) return null;
+  const probeError = (probeResult.error || '').trim();
+  if (probeResult.status === 'supported') {
+    return {
+      label: `✅ ${formatProbeLatency(probeResult.ttftMs)}`,
+      style: {
+        fontSize: 10,
+        background: 'color-mix(in srgb, var(--color-success) 12%, transparent)',
+        color: 'var(--color-success)',
+      },
+      tooltip: `探活成功${probeResult.ttftMs != null ? `，TTFT ${Math.round(probeResult.ttftMs)}ms` : ''}`,
+    };
+  }
+
+  const failureLabel = probeResult.httpStatus != null
+    ? String(probeResult.httpStatus)
+    : (probeError || probeResult.status).slice(0, 20);
+
+  if (probeResult.status === 'unsupported' || (probeResult.status === 'skipped' && probeResult.httpStatus != null)) {
+    return {
+      label: `❌ ${failureLabel}`,
+      style: {
+        fontSize: 10,
+        background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)',
+        color: 'var(--color-danger)',
+      },
+      tooltip: probeError || `探活失败：${failureLabel}`,
+    };
+  }
+
+  return {
+    label: `❓ ${(probeError || probeResult.status).slice(0, 20)}`,
+    style: {
+      fontSize: 10,
+      background: 'color-mix(in srgb, var(--color-text-muted) 16%, transparent)',
+      color: 'var(--color-text-muted)',
+    },
+    tooltip: probeError || `探活结果：${probeResult.status}`,
+  };
 }
 
 type RuntimeHealthBadgesProps = {
@@ -201,6 +260,9 @@ export function SortableChannelRow({
   onSiteBlockModel,
   onResetSiteHealth,
   onResetChannelCooldown,
+  onProbeChannel,
+  probingChannel = false,
+  probeResult,
 }: SortableChannelRowProps) {
   const {
     attributes,
@@ -247,6 +309,7 @@ export function SortableChannelRow({
 
   const isCoolingDown = decisionState.reasonText === '冷却中'
     || (!!channel.cooldownUntil && channel.cooldownUntil > new Date().toISOString());
+  const probeBadge = getProbeResultBadge(probeResult);
 
   // Shared action buttons rendered inside ChannelSettingsPanel
   const actionButtons = (
@@ -426,6 +489,27 @@ export function SortableChannelRow({
               </div>
 
               <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} siteId={channel.site?.id} onResetHealth={onResetSiteHealth} />
+
+              {onProbeChannel && (
+                <ActionPillButton
+                  variant="info"
+                  label={probingChannel ? <><span className="spinner spinner-sm" /> 探活中</> : '探活'}
+                  tooltip={probingChannel ? '正在探活该通道' : '对该通道执行一次即时探活'}
+                  ariaLabel="探活该通道"
+                  disabled={probingChannel}
+                  onClick={() => onProbeChannel(channel.id)}
+                />
+              )}
+
+              {probeBadge ? (
+                <span
+                  className="badge"
+                  style={probeBadge.style}
+                  data-tooltip={probeBadge.tooltip}
+                >
+                  {probeBadge.label}
+                </span>
+              ) : null}
 
               {isCoolingDown && onResetChannelCooldown && (
                 <ActionPillButton
@@ -613,6 +697,27 @@ export function SortableChannelRow({
           </span>
 
           <RuntimeHealthBadges health={decisionCandidate?.runtimeHealth} siteId={channel.site?.id} onResetHealth={onResetSiteHealth} />
+
+          {onProbeChannel && (
+            <ActionPillButton
+              variant="info"
+              label={probingChannel ? <><span className="spinner spinner-sm" /> 探活中</> : '探活'}
+              tooltip={probingChannel ? '正在探活该通道' : '对该通道执行一次即时探活'}
+              ariaLabel="探活该通道"
+              disabled={probingChannel}
+              onClick={() => onProbeChannel(channel.id)}
+            />
+          )}
+
+          {probeBadge ? (
+            <span
+              className="badge"
+              style={probeBadge.style}
+              data-tooltip={probeBadge.tooltip}
+            >
+              {probeBadge.label}
+            </span>
+          ) : null}
 
           {isCoolingDown && onResetChannelCooldown && (
             <ActionPillButton

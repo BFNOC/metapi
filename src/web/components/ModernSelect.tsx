@@ -16,6 +16,8 @@ type ModernSelectProps = {
   onChange: (value: string) => void;
   options: ModernSelectOption[];
   placeholder?: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
   disabled?: boolean;
   emptyLabel?: string;
   menuMaxHeight?: number;
@@ -28,6 +30,8 @@ export default function ModernSelect({
   onChange,
   options,
   placeholder = 'Select',
+  searchable = false,
+  searchPlaceholder = '搜索选项',
   disabled = false,
   emptyLabel = 'No options',
   menuMaxHeight = 280,
@@ -35,14 +39,25 @@ export default function ModernSelect({
   size = 'md',
 }: ModernSelectProps) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const selected = useMemo(
     () => options.find((item) => item.value === value),
     [options, value],
   );
+  const filteredOptions = useMemo(() => {
+    if (!searchable) return options;
+    const query = search.trim().toLowerCase();
+    if (!query) return options;
+    return options.filter((item) => {
+      const haystacks = [item.label, item.description || ''];
+      return haystacks.some((part) => part.toLowerCase().includes(query));
+    });
+  }, [options, search, searchable]);
 
   // Calculate panel position based on trigger element
   const updatePanelPosition = useCallback(() => {
@@ -58,6 +73,7 @@ export default function ModernSelect({
   // Update position when open changes or on scroll/resize
   useLayoutEffect(() => {
     if (!open) return;
+    if (typeof window === 'undefined') return;
     updatePanelPosition();
 
     const handleScrollOrResize = () => updatePanelPosition();
@@ -94,6 +110,16 @@ export default function ModernSelect({
   useEffect(() => {
     if (disabled) setOpen(false);
   }, [disabled]);
+  useEffect(() => {
+    if (!open) {
+      setSearch('');
+    }
+  }, [open]);
+  useEffect(() => {
+    if (!open || !searchable) return;
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, [open, searchable]);
 
   const renderOptionIcon = (item: ModernSelectOption) => {
     if (item.iconNode) {
@@ -108,7 +134,8 @@ export default function ModernSelect({
     return null;
   };
 
-  const panelContent = open && panelPos ? createPortal(
+  const canRenderPortal = typeof document !== 'undefined';
+  const panelContent = open && panelPos && canRenderPortal ? createPortal(
     <div
       ref={panelRef}
       className="modern-select-panel is-portal-open"
@@ -121,10 +148,23 @@ export default function ModernSelect({
         zIndex: 9999,
       }}
     >
-      {options.length === 0 ? (
+      {searchable ? (
+        <div style={{ padding: 8, borderBottom: '1px solid var(--color-border)' }}>
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={searchPlaceholder}
+            className="input"
+            style={{ width: '100%', minHeight: size === 'sm' ? 34 : 38 }}
+          />
+        </div>
+      ) : null}
+      {filteredOptions.length === 0 ? (
         <div className="modern-select-empty">{emptyLabel}</div>
       ) : (
-        options.map((item) => {
+        filteredOptions.map((item) => {
           const active = item.value === value;
           return (
             <button

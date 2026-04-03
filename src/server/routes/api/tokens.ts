@@ -26,6 +26,16 @@ import {
   parseRouteDecisionSnapshot,
   saveRouteDecisionSnapshots,
 } from '../../services/routeDecisionSnapshotStore.js';
+import {
+  applyChannelPriorityUpdates,
+  clearDependentExplicitGroupSnapshotsBySourceRouteIds,
+} from '../../services/channelPriorityHelper.js';
+import {
+  loadChannelProbeEntry,
+  loadRouteChannelProbeEntries,
+  probeChannelEntry,
+  probeRouteChannelEntries,
+} from '../../services/channelProbeService.js';
 import { normalizeTokenRouteMode, type RouteMode } from '../../../shared/tokenRouteContract.js';
 
 function isExactModelPattern(modelPattern: string): boolean {
@@ -204,28 +214,6 @@ async function syncExplicitGroupSourceRouteStrategies(input: {
   }).where(inArray(schema.tokenRoutes.id, updatableRouteIds)).run();
 
   return updatableRouteIds;
-}
-
-async function clearDependentExplicitGroupSnapshotsBySourceRouteIds(sourceRouteIds: number[]): Promise<void> {
-  const normalizedSourceRouteIds = Array.from(new Set(
-    sourceRouteIds.filter((routeId): routeId is number => Number.isFinite(routeId) && routeId > 0),
-  ));
-  if (normalizedSourceRouteIds.length === 0) return;
-
-  const rows = await db.select({ groupRouteId: schema.routeGroupSources.groupRouteId })
-    .from(schema.routeGroupSources)
-    .where(inArray(schema.routeGroupSources.sourceRouteId, normalizedSourceRouteIds))
-    .all();
-  const dependentRouteIdSet = new Set<number>();
-  for (const row of rows) {
-    const routeId = Number(row.groupRouteId);
-    if (Number.isFinite(routeId) && routeId > 0) {
-      dependentRouteIdSet.add(routeId);
-    }
-  }
-  const dependentRouteIds = Array.from(dependentRouteIdSet);
-  if (dependentRouteIds.length === 0) return;
-  await clearRouteDecisionSnapshots(dependentRouteIds);
 }
 
 async function resolveCooldownClearRouteIds(route: RouteRow): Promise<number[]> {
@@ -470,6 +458,17 @@ type BatchRouteWideDecisionRouteIds = {
   persistSnapshots?: boolean;
 };
 
+type ProbeRankingStatus = 'supported' | 'unsupported' | 'inconclusive' | 'skipped';
+
+type ProbeRankingPayloadItem = {
+  channelId: number;
+  ttftMs: number | null;
+  status: ProbeRankingStatus;
+  httpStatus: number | null;
+};
+
+const PROBE_RANKING_ERROR_HTTP_STATUS = new Set([401, 403, 429]);
+
 function parseBatchChannelUpdates(input: unknown): { ok: true; updates: BatchChannelPriorityUpdate[] } | { ok: false; message: string } {
   if (!input || typeof input !== 'object') {
     return { ok: false, message: '请求体必须是对象' };
@@ -507,6 +506,126 @@ function parseBatchChannelUpdates(input: unknown): { ok: true; updates: BatchCha
   }
 
   return { ok: true, updates: normalized };
+}
+
+function parseApplyProbeRankingInput(
+  input: unknown,
+): { ok: true; ranking: ProbeRankingPayloadItem[] } | { ok: false; message: string } {
+  if (!input || typeof input !== 'object') {
+    return { ok: false, message: '请求体必须是对象' };
+  }
+
+  const ranking = (input as { ranking?: unknown }).ranking;
+  if (!Array.isArray(ranking) || ranking.length === 0) {
+    return { ok: false, message: 'ranking 必须是非空数组' };
+  }
+
+  const normalized: ProbeRankingPayloadItem[] = [];
+  const seenIds = new Set<number>();
+  for (let index = 0; index < ranking.length; index += 1) {
+    const item = ranking[index];
+    if (!item || typeof item !== 'object') {
+      return { ok: false, message: `ranking[${index}] 必须是对象` };
+    }
+
+    const channelIdRaw = (item as { channelId?: unknown }).channelId;
+    const ttftMsRaw = (item as { ttftMs?: unknown }).ttftMs;
+    const statusRaw = (item as { status?: unknown }).status;
+    const httpStatusRaw = (item as { httpStatus?: unknown }).httpStatus;
+    if (typeof channelIdRaw !== 'number' || !Number.isFinite(channelIdRaw)) {
+      return { ok: false, message: `ranking[${index}].channelId 必须是有限数字` };
+    }
+    if (
+      ttftMsRaw !== null
+      && (typeof ttftMsRaw !== 'number' || !Number.isFinite(ttftMsRaw))
+    ) {
+      return { ok: false, message: `ranking[${index}].ttftMs 必须是数字或 null` };
+    }
+    if (
+      statusRaw !== 'supported'
+      && statusRaw !== 'unsupported'
+      && statusRaw !== 'inconclusive'
+      && statusRaw !== 'skipped'
+    ) {
+      return { ok: false, message: `ranking[${index}].status 非法` };
+    }
+    if (
+      httpStatusRaw !== null
+      && (typeof httpStatusRaw !== 'number' || !Number.isFinite(httpStatusRaw))
+    ) {
+      return { ok: false, message: `ranking[${index}].httpStatus 必须是数字或 null` };
+    }
+
+    const channelId = Math.trunc(channelIdRaw);
+    if (channelId <= 0) {
+      return { ok: false, message: `ranking[${index}].channelId 必须大于 0` };
+    }
+    if (seenIds.has(channelId)) {
+      return { ok: false, message: `ranking[${index}].channelId 重复` };
+    }
+    seenIds.add(channelId);
+
+    normalized.push({
+      channelId,
+      ttftMs: ttftMsRaw === null ? null : Math.max(0, Math.trunc(ttftMsRaw)),
+      status: statusRaw,
+      httpStatus: httpStatusRaw === null ? null : Math.trunc(httpStatusRaw),
+    });
+  }
+
+  return { ok: true, ranking: normalized };
+}
+
+function sortChannelsByCurrentPriority(channels: Array<typeof schema.routeChannels.$inferSelect>) {
+  return [...channels].sort((left, right) => {
+    const leftPriority = left.priority ?? 0;
+    const rightPriority = right.priority ?? 0;
+    if (leftPriority === rightPriority) return left.id - right.id;
+    return leftPriority - rightPriority;
+  });
+}
+
+function buildProbeRankingPriorityUpdates(
+  channels: Array<typeof schema.routeChannels.$inferSelect>,
+  ranking: ProbeRankingPayloadItem[],
+): BatchChannelPriorityUpdate[] {
+  const rankingByChannelId = new Map(ranking.map((item) => [item.channelId, item]));
+  const fast: Array<typeof schema.routeChannels.$inferSelect> = [];
+  const normal: Array<typeof schema.routeChannels.$inferSelect> = [];
+  const slow: Array<typeof schema.routeChannels.$inferSelect> = [];
+  const uncertain: Array<typeof schema.routeChannels.$inferSelect> = [];
+  const unhealthy: Array<typeof schema.routeChannels.$inferSelect> = [];
+
+  for (const channel of sortChannelsByCurrentPriority(channels)) {
+    const item = rankingByChannelId.get(channel.id);
+    if (!item) continue;
+
+    if (item.status === 'unsupported' || (item.httpStatus != null && PROBE_RANKING_ERROR_HTTP_STATUS.has(item.httpStatus))) {
+      unhealthy.push(channel);
+      continue;
+    }
+
+    if (item.status === 'supported') {
+      if (item.ttftMs == null) {
+        uncertain.push(channel);
+      } else if (item.ttftMs < 1000) {
+        fast.push(channel);
+      } else if (item.ttftMs < 3000) {
+        normal.push(channel);
+      } else {
+        slow.push(channel);
+      }
+      continue;
+    }
+
+    uncertain.push(channel);
+  }
+
+  return [...fast, ...normal, ...slow, ...uncertain, ...unhealthy]
+    .map((channel, priority) => ({
+      id: channel.id,
+      priority,
+    }));
 }
 
 function parseBatchRouteDecisionModels(
@@ -1260,21 +1379,157 @@ export async function tokensRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: `通道不存在: ${missingId}` });
     }
 
+    const existingChannelById = new Map<number, typeof existingChannels[number]>(
+      existingChannels.map((channel) => [channel.id, channel]),
+    );
+    const updatesByRouteId = new Map<number, Array<{ id: number; priority: number }>>();
     for (const update of parsed.updates) {
-      await db.update(schema.routeChannels).set({
-        priority: update.priority,
-        manualOverride: true,
-      }).where(eq(schema.routeChannels.id, update.id)).run();
+      const routeId = existingChannelById.get(update.id)?.routeId;
+      if (!routeId) continue;
+      if (!updatesByRouteId.has(routeId)) updatesByRouteId.set(routeId, []);
+      updatesByRouteId.get(routeId)!.push(update);
     }
 
-    const updatedChannels = await db.select().from(schema.routeChannels)
-      .where(inArray(schema.routeChannels.id, channelIds))
-      .all();
-    await clearRouteDecisionSnapshots(existingChannels.map((channel) => channel.routeId));
-    await clearDependentExplicitGroupSnapshotsBySourceRouteIds(existingChannels.map((channel) => channel.routeId));
-    invalidateTokenRouterCache();
+    const updatedChannels: Array<typeof schema.routeChannels.$inferSelect> = [];
+    for (const [routeId, updates] of updatesByRouteId.entries()) {
+      const routeChannels = existingChannels.filter((channel) => channel.routeId === routeId);
+      const result = await applyChannelPriorityUpdates({ existingChannels: routeChannels, updates });
+      updatedChannels.push(...result);
+    }
     return { success: true, channels: updatedChannels };
   });
+
+  app.post<{ Params: { channelId: string } }>('/api/channels/:channelId/probe', async (request, reply) => {
+    const channelId = parseInt(request.params.channelId, 10);
+    if (!Number.isFinite(channelId) || channelId <= 0) {
+      return reply.code(400).send({ success: false, message: '无效的通道 ID' });
+    }
+
+    const entry = await loadChannelProbeEntry(channelId);
+    if (!entry) {
+      return reply.code(404).send({ success: false, message: '通道不存在' });
+    }
+
+    const result = await probeChannelEntry(entry);
+    if (result.status === 'supported' && entry.candidate) {
+      await tokenRouter.recordProbeSuccess(entry.channelId, entry.candidate.modelName);
+    }
+    return { success: true, result };
+  });
+
+  app.post<{ Params: { routeId: string } }>('/api/routes/:routeId/channels/probe', async (request, reply) => {
+    const routeId = parseInt(request.params.routeId, 10);
+    if (!Number.isFinite(routeId) || routeId <= 0) {
+      return reply.code(400).send({ success: false, message: '无效的路由 ID' });
+    }
+
+    const route = await getRouteWithSources(routeId);
+    if (!route) {
+      return reply.code(404).send({ success: false, message: '路由不存在' });
+    }
+    if (isExplicitGroupRoute(route)) {
+      return reply.code(400).send({ success: false, message: '显式群组不支持批量探活排序' });
+    }
+
+    const entries = await loadRouteChannelProbeEntries(routeId);
+    if (entries.length === 0) {
+      return reply.code(400).send({ success: false, message: '该路由暂无可探活通道' });
+    }
+
+    const probeController = new AbortController();
+    request.raw.on('close', () => probeController.abort());
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    reply.raw.flushHeaders?.();
+    reply.raw.write(`data: ${JSON.stringify({ type: 'start', totalCount: entries.length })}\n\n`);
+
+    await probeRouteChannelEntries(entries, {
+      concurrency: 5,
+      signal: probeController.signal,
+      onResult: async ({ channelId, result }) => {
+        if (result.status === 'supported') {
+          await tokenRouter.recordProbeSuccess(channelId, result.modelName || null);
+        }
+        if (probeController.signal.aborted) return;
+        reply.raw.write(`data: ${JSON.stringify({
+          type: 'result',
+          channelId,
+          status: result.status,
+          ttftMs: result.ttftMs,
+          httpStatus: result.httpStatus,
+          error: result.error,
+        })}\n\n`);
+      },
+    });
+
+    if (!probeController.signal.aborted) {
+      reply.raw.write('data: [DONE]\n\n');
+    }
+    reply.raw.end();
+    return reply;
+  });
+
+  app.post<{ Params: { routeId: string }; Body: { ranking?: ProbeRankingPayloadItem[] } }>(
+    '/api/routes/:routeId/channels/apply-probe-ranking',
+    async (request, reply) => {
+      const routeId = parseInt(request.params.routeId, 10);
+      if (!Number.isFinite(routeId) || routeId <= 0) {
+        return reply.code(400).send({ success: false, message: '无效的路由 ID' });
+      }
+
+      const route = await getRouteWithSources(routeId);
+      if (!route) {
+        return reply.code(404).send({ success: false, message: '路由不存在' });
+      }
+      if (isExplicitGroupRoute(route)) {
+        return reply.code(400).send({ success: false, message: '显式群组不支持探活排序' });
+      }
+
+      const parsed = parseApplyProbeRankingInput(request.body);
+      if (!parsed.ok) {
+        return reply.code(400).send({ success: false, message: parsed.message });
+      }
+
+      const enabledChannels = await db.select().from(schema.routeChannels)
+        .where(and(
+          eq(schema.routeChannels.routeId, routeId),
+          eq(schema.routeChannels.enabled, true),
+        ))
+        .all();
+      if (enabledChannels.length === 0) {
+        return reply.code(400).send({ success: false, message: '该路由暂无可排序通道' });
+      }
+
+      const enabledChannelIds = enabledChannels.map((channel) => Number(channel.id));
+      const enabledChannelIdSet = new Set<number>(enabledChannelIds);
+      const submittedChannelIds: number[] = parsed.ranking.map((item) => item.channelId);
+      const submittedChannelIdSet = new Set<number>(submittedChannelIds);
+
+      const foreignChannelId = submittedChannelIds.find((channelId) => !enabledChannelIdSet.has(channelId));
+      if (foreignChannelId) {
+        return reply.code(400).send({ success: false, message: `通道 ${foreignChannelId} 不属于该路由` });
+      }
+      if (submittedChannelIdSet.size !== enabledChannelIdSet.size) {
+        return reply.code(400).send({ success: false, message: '通道列表已变更，请重新探活' });
+      }
+      for (const channelId of enabledChannelIdSet) {
+        if (!submittedChannelIdSet.has(channelId)) {
+          return reply.code(400).send({ success: false, message: '通道列表已变更，请重新探活' });
+        }
+      }
+
+      const updates = buildProbeRankingPriorityUpdates(enabledChannels, parsed.ranking);
+      const result = await applyChannelPriorityUpdates({ existingChannels: enabledChannels, updates });
+      return {
+        success: true,
+        updatedCount: result.length,
+      };
+    },
+  );
 
   // Update a channel
   app.put<{ Params: { channelId: string }; Body: any }>('/api/channels/:channelId', async (request, reply) => {

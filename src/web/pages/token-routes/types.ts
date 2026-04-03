@@ -46,6 +46,24 @@ export type RouteChannel = {
   } | null;
 };
 
+export type ChannelProbeStatus = 'supported' | 'unsupported' | 'inconclusive' | 'skipped';
+
+export type ChannelProbeResult = {
+  channelId: number;
+  status: ChannelProbeStatus;
+  ttftMs: number | null;
+  httpStatus: number | null;
+  error: string | null;
+};
+
+export type RouteProbeSession = {
+  controller: AbortController;
+  expectedCount: number;
+  completedCount: number;
+  done: boolean;
+  results: Record<number, ChannelProbeResult>;
+};
+
 export type RouteRow = {
   id: number;
   modelPattern: string;
@@ -139,6 +157,9 @@ export type SortableChannelRowProps = {
   onSiteBlockModel?: () => void;
   onResetSiteHealth?: (siteId: number) => void;
   onResetChannelCooldown?: (channelId: number) => void;
+  onProbeChannel?: (channelId: number) => void;
+  probingChannel?: boolean;
+  probeResult?: ChannelProbeResult;
 };
 
 export type GroupRouteItem = {

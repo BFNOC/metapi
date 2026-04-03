@@ -226,6 +226,16 @@ export type ProxyTestRequestEnvelope = {
   multipartFiles?: ProxyTestMultipartFile[];
 };
 
+type ChannelProbeResultPayload = {
+  channelId: number;
+  status: 'supported' | 'unsupported' | 'inconclusive' | 'skipped';
+  ttftMs: number | null;
+  httpStatus: number | null;
+  error: string | null;
+};
+
+type ApplyProbeRankingItem = Pick<ChannelProbeResultPayload, 'channelId' | 'ttftMs' | 'status' | 'httpStatus'>;
+
 const DEFAULT_PROXY_TEST_TIMEOUT_MS = 30_000;
 const LONG_RUNNING_PROXY_TEST_TIMEOUT_MS = 150_000;
 
@@ -584,6 +594,15 @@ export const api = {
   getRoutesLite: () => request('/api/routes/lite'),
   getRoutesSummary: () => request('/api/routes/summary'),
   getRouteChannels: (routeId: number) => request(`/api/routes/${routeId}/channels`),
+  probeChannel: (channelId: number) =>
+    request(`/api/channels/${channelId}/probe`, { method: 'POST', timeoutMs: 30_000 }) as Promise<{ success: boolean; result: ChannelProbeResultPayload }>,
+  probeRouteChannelsStream: (routeId: number, onResult: (r: unknown) => void, signal?: AbortSignal) =>
+    streamProbeResults(`/api/routes/${routeId}/channels/probe`, {}, onResult, signal),
+  applyProbeRanking: (routeId: number, ranking: ApplyProbeRankingItem[]) =>
+    request(`/api/routes/${routeId}/channels/apply-probe-ranking`, {
+      method: 'POST',
+      body: JSON.stringify({ ranking }),
+    }) as Promise<{ success: boolean; updatedCount: number }>,
   batchAddChannels: (routeId: number, channels: Array<{ accountId: number; tokenId?: number; sourceModel?: string }>) =>
     request(`/api/routes/${routeId}/channels/batch`, { method: 'POST', body: JSON.stringify({ channels }) }),
   addRoute: (data: any) => request('/api/routes', { method: 'POST', body: JSON.stringify(data) }),

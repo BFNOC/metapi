@@ -3,10 +3,9 @@ import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { pickRandomProbePrompt } from '../../shared/probePrompts.js';
 import { probeModels } from './modelProbeService.js';
-import { isUsableAccountToken } from './accountTokenService.js';
-import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { getDispatcherForProxyUrl, resolveChannelProxyUrl } from './siteProxy.js';
 import { tokenRouter } from './tokenRouter.js';
+import { resolveChannelProbeModelName, resolveChannelProbeTokenValue } from './channelProbeService.js';
 
 const CHANNEL_RECOVERY_PROBE_MAX_PER_SWEEP = 2;
 const CHANNEL_RECOVERY_PROBE_TIMEOUT_MS = 15_000;
@@ -54,36 +53,6 @@ function shouldRetryChannel(channelId: number, nowMs = Date.now()): boolean {
   return (nowMs - lastProbeAtMs) >= CHANNEL_RECOVERY_PROBE_MIN_INTERVAL_MS;
 }
 
-function resolveRecoveryProbeTokenValue(row: {
-  channel: typeof schema.routeChannels.$inferSelect;
-  account: typeof schema.accounts.$inferSelect;
-  token: typeof schema.accountTokens.$inferSelect | null;
-}): string | null {
-  if (row.channel.tokenId) {
-    if (!row.token || !isUsableAccountToken(row.token)) return null;
-    const tokenValue = row.token.token?.trim();
-    return tokenValue || null;
-  }
-
-  if (getOauthInfoFromAccount(row.account)) {
-    const accessToken = row.account.accessToken?.trim();
-    return accessToken || null;
-  }
-
-  const apiToken = row.account.apiToken?.trim();
-  return apiToken || null;
-}
-
-function resolveRecoveryProbeModelName(row: {
-  channel: typeof schema.routeChannels.$inferSelect;
-  route: typeof schema.tokenRoutes.$inferSelect;
-}): string | null {
-  const sourceModel = row.channel.sourceModel?.trim();
-  if (sourceModel) return sourceModel;
-  const routeModel = row.route.modelPattern?.trim();
-  return routeModel || null;
-}
-
 async function loadCoolingChannelCandidates(nowMs = Date.now()): Promise<RecoveryProbeCandidate[]> {
   const rows = await db.select()
     .from(schema.routeChannels)
@@ -100,12 +69,12 @@ async function loadCoolingChannelCandidates(nowMs = Date.now()): Promise<Recover
     .filter((row) => !row.sites.probeDisabled)
     .filter((row) => typeof row.route_channels.cooldownUntil === 'string' && row.route_channels.cooldownUntil > new Date(nowMs).toISOString())
     .map((row) => {
-      const apiToken = resolveRecoveryProbeTokenValue({
+      const apiToken = resolveChannelProbeTokenValue({
         channel: row.route_channels,
         account: row.accounts,
         token: row.account_tokens,
       });
-      const modelName = resolveRecoveryProbeModelName({
+      const modelName = resolveChannelProbeModelName({
         channel: row.route_channels,
         route: row.token_routes,
       });

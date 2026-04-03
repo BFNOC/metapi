@@ -18,12 +18,14 @@ import ModernSelect from '../../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../../components/useAnimatedVisibility.js';
 import { tr } from '../../i18n.js';
 import type {
+  ChannelProbeResult,
   RouteSummaryRow,
   RouteChannel,
   RouteDecision,
   RouteDecisionCandidate,
   MissingTokenRouteSiteActionItem,
   MissingTokenGroupRouteSiteActionItem,
+  RouteProbeSession,
   RouteRoutingStrategy,
 } from './types.js';
 import type { RouteCandidateView, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
@@ -84,6 +86,13 @@ type RouteCardProps = {
   onToggleSourceGroup: (groupKey: string) => void;
   onResetSiteHealth?: (siteId: number) => void;
   onResetChannelCooldown?: (channelId: number) => void;
+  onProbeRouteChannels?: (routeId: number) => void;
+  routeProbeSession?: RouteProbeSession;
+  onApplyProbeRanking?: (routeId: number) => void;
+  onClearRouteProbeSession?: (routeId: number) => void;
+  onProbeChannel?: (channelId: number) => void;
+  probingChannelIds?: Set<number>;
+  channelProbeResults?: Record<number, ChannelProbeResult>;
 };
 
 function AnimatedCollapseSection({ open, children }: { open: boolean; children: ReactNode }) {
@@ -134,6 +143,13 @@ function RouteCardInner({
   onToggleSourceGroup,
   onResetSiteHealth,
   onResetChannelCooldown,
+  onProbeRouteChannels,
+  routeProbeSession,
+  onApplyProbeRanking,
+  onClearRouteProbeSession,
+  onProbeChannel,
+  probingChannelIds,
+  channelProbeResults,
 }: RouteCardProps) {
   const routeIcon = resolveRouteIcon(route);
   const exactRoute = isRouteExactModel(route);
@@ -189,6 +205,27 @@ function RouteCardInner({
         channels: chans,
       }));
   })();
+
+  const routeProbeResults = routeProbeSession ? Object.values(routeProbeSession.results) : [];
+  const routeProbeSupportedCount = routeProbeResults.filter((result) => result.status === 'supported').length;
+  const routeProbeFailedCount = routeProbeResults.filter((result) => (
+    result.status === 'unsupported' || (result.status === 'skipped' && result.httpStatus != null)
+  )).length;
+  const routeProbeUnknownCount = Math.max(0, routeProbeResults.length - routeProbeSupportedCount - routeProbeFailedCount);
+  const routeProbeLatencies = routeProbeResults
+    .filter((result) => result.status === 'supported' && result.ttftMs != null)
+    .map((result) => Number(result.ttftMs))
+    .filter((value) => Number.isFinite(value));
+  const routeProbeFastestMs = routeProbeLatencies.length > 0 ? Math.min(...routeProbeLatencies) : null;
+  const routeProbeAverageMs = routeProbeLatencies.length > 0
+    ? Math.round(routeProbeLatencies.reduce((sum, value) => sum + value, 0) / routeProbeLatencies.length)
+    : null;
+  const routeProbeInFlight = !!routeProbeSession && !routeProbeSession.done;
+  const canProbeRoute = !explicitGroupRoute && !readOnlyRoute;
+  const canApplyProbeRanking = !!routeProbeSession
+    && routeProbeSession.done
+    && routeProbeSession.expectedCount > 0
+    && routeProbeSession.completedCount === routeProbeSession.expectedCount;
 
   const renderClearCooldownButton = () => {
     if (readOnlyRoute) return null;
@@ -507,6 +544,17 @@ function RouteCardInner({
                 {resettingPriority ? <><span className="spinner spinner-sm" /> {tr('重置中...')}</> : tr('重置优先级')}
               </button>
             )}
+            {canProbeRoute && onProbeRouteChannels && (
+              <button
+                onClick={() => onProbeRouteChannels(route.id)}
+                className="btn btn-ghost"
+                style={{ fontSize: 12, padding: '6px 10px', color: 'var(--color-info)', border: '1px solid var(--color-border)', whiteSpace: compact ? 'normal' : 'nowrap', flex: compact ? '1 1 0' : undefined }}
+              >
+                {routeProbeInFlight ? (
+                  <><span className="spinner spinner-sm" /> {`探活中 (${routeProbeSession?.completedCount ?? 0}/${routeProbeSession?.expectedCount || routeProbeSession?.completedCount || '?'})...`}</>
+                ) : routeProbeResults.length > 0 ? '重新探活' : '批量探活'}
+              </button>
+            )}
             <button
               onClick={() => onAddChannel(route.id)}
               className="btn btn-ghost"
@@ -517,6 +565,60 @@ function RouteCardInner({
           </div>
         )}
       </div>
+
+      {routeProbeSession && (routeProbeSession.expectedCount > 0 || routeProbeResults.length > 0 || routeProbeInFlight) ? (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            marginBottom: 12,
+            padding: '10px 12px',
+            border: '1px solid color-mix(in srgb, var(--color-info) 18%, var(--color-border))',
+            borderRadius: 'var(--radius-sm)',
+            background: 'color-mix(in srgb, var(--color-info) 6%, transparent)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              {routeProbeInFlight ? `探活中 (${routeProbeSession.completedCount}/${routeProbeSession.expectedCount || '?'})...` : '探活完成'}
+            </span>
+            {routeProbeSession.expectedCount > 0 ? (
+              <span className="badge badge-info" style={{ fontSize: 10 }}>
+                预期 {routeProbeSession.expectedCount} 通道
+              </span>
+            ) : null}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--color-text-secondary)' }}>
+            <span>✅ {routeProbeSupportedCount} 成功</span>
+            <span>❌ {routeProbeFailedCount} 失败</span>
+            <span>❓ {routeProbeUnknownCount} 未知</span>
+            {routeProbeFastestMs != null ? <span>⏱ 最快 {routeProbeFastestMs}ms</span> : null}
+            {routeProbeAverageMs != null ? <span>平均 {routeProbeAverageMs}ms</span> : null}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => onApplyProbeRanking?.(route.id)}
+              disabled={!canApplyProbeRanking || !onApplyProbeRanking}
+              className="btn btn-ghost"
+              style={{ fontSize: 12, padding: '6px 10px', border: '1px solid var(--color-border)' }}
+            >
+              应用探活排序
+            </button>
+            <button
+              type="button"
+              onClick={() => onClearRouteProbeSession?.(route.id)}
+              className="btn btn-link"
+              style={{ fontSize: 12, padding: 0 }}
+            >
+              清除结果
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Channel list */}
       {loadingChannels ? (
@@ -601,6 +703,9 @@ function RouteCardInner({
                                 onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
                                 onResetSiteHealth={onResetSiteHealth}
                                 onResetChannelCooldown={onResetChannelCooldown}
+                                onProbeChannel={onProbeChannel}
+                                probingChannel={!!probingChannelIds?.has(channel.id)}
+                                probeResult={channelProbeResults?.[channel.id] || routeProbeSession?.results[channel.id]}
                               />
                             );
                           })}
@@ -628,6 +733,9 @@ function RouteCardInner({
                                 onSiteBlockModel={() => onSiteBlockModel(channel.id, route.id)}
                                 onResetSiteHealth={onResetSiteHealth}
                                 onResetChannelCooldown={onResetChannelCooldown}
+                                onProbeChannel={onProbeChannel}
+                                probingChannel={!!probingChannelIds?.has(channel.id)}
+                                probeResult={channelProbeResults?.[channel.id] || routeProbeSession?.results[channel.id]}
                               />
                             );
                           })}

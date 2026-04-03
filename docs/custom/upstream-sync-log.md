@@ -199,3 +199,4 @@
 | *(merged)* | feat: API Key 连接新增探活功能 + 探活模型选择改为多选框 |
 | *(merged)* | feat(路由健康): 站点运行时惩罚重置 + WebUI 健康 badge/操作按钮 |
 | `2bd80d1` | feat(路由健康): 通道级冷却重置 + 站点惩罚 DB 同步 + WebUI 操作按钮 |
+| `884855a` | feat(探活): 路由级批量探活 + 单通道探活 + 按性能应急排序 — channelProbeService / SSE 流式批量探活 / 三段式排序写回 / 前端会话管理 + UI |

@@ -65,7 +65,38 @@
 - **#330** (主动探活+负载感知路由) — ✅ 已完成手工移植，含四态探测、负载感知、stable_first 主池/观察池、自动恢复探测
 - **#365** (路由冷却控制) — ✅ 已完成手工移植，含可配置冷却上限、route 级批量清冷却、前端按钮
 - **#383** (首字节超时) — ✅ 已完成分阶段手工移植，含 direct routes / proxy_logs / UI
-- **#373** (Site API Endpoint Pool) — 上游架构演进方向，长期跟踪
+- **#373** (Site API Endpoint Pool) — ⏸️ 暂不合入，当前需求不迫切。详见下方深度分析
+
+<details>
+<summary>#373 深度分析（2026-04-03）</summary>
+
+**核心架构**：把 site 拆成管理面板地址 + AI 请求地址池（`siteApiEndpoints` 表），支持同一站点多个 API 入口自动轮转 + endpoint 级 cooldown/故障隔离。
+
+**核心组件**：
+- `siteApiEndpoints` 新表：per-site 多 endpoint，各自 cooldown/lastFail/sortOrder
+- `siteApiEndpointService.ts` (287行)：选择 + 故障分类(retryable vs non-retryable) + cooldown 5min + 自动轮转
+- `runWithSiteApiEndpointPool(site, fn)`：所有代理路由/模型发现的统一入口，失败自动轮转
+
+**改动范围**：49 文件 +7220/-980 行，涉及所有代理路由（completions/embeddings/images/search/videos）、两个 surface（chatSurface/openAiResponsesSurface）、模型发现、备份/迁移、Sites UI。
+
+**不合入原因**：
+1. 当前站点数量有限，多入口需求不强烈
+2. 16 个核心文件与本地分叉严重（chatSurface 31处差异、accounts 25处差异），手工移植工作量大
+3. 后续直接依赖仅 #386（codex websocket 走 endpoint pool），其余 PR 不受影响
+
+**值得借鉴的思路**（供未来参考）：
+- 站点管理地址与请求地址解耦
+- endpoint 级故障分类：retryable(408/429/5xx) 自动轮转+cooldown，non-retryable(400/401/403) 直接抛错
+- `runWithSiteApiEndpointPool` 统一包装模式
+
+**如果未来要做，分相位路径**：
+1. Phase 0: 新建表 + service（纯增量，零冲突）
+2. Phase 1: platformDiscoveryRegistry 接入
+3. Phase 2: direct routes 接入（机械替换）
+4. Phase 3: surfaces 接入（差异最大）
+5. Phase 4: Sites UI editor（可选）
+
+</details>
 
 ---
 

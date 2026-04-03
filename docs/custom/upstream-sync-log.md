@@ -2,6 +2,46 @@
 
 > 记录每次从上游 `cita-777/metapi` 同步的变更。
 
+## 2026-04-03 同步
+
+**上游已审阅到**：`63f6b07`（upstream/main HEAD）
+
+### 已合入的 Commit
+
+| Commit | 说明 | 合入方式 | 备注 |
+|--------|------|---------|------|
+| `b9b553d` | fix: sqlite migration journal recovery (#400) | `git cherry-pick` | 2026-04-03 合入，本地提交 `2d0ba35` |
+| `63f6b07` | cap sqlite migration recovery retries (#410) | `git cherry-pick` | 2026-04-03 合入，本地提交 `28e1b11` |
+
+### 待合入的 Commit（已分析，待执行）
+
+| Commit | 说明 | 优先级 | 冲突预估 |
+|--------|------|--------|----------|
+| `6ad9ec6` | strip codex responses max_output_tokens (#399) | P2 | ⚠️ 高冲突，upstreamEndpoint.ts 已分叉 1434 行 |
+
+### 验证备注
+
+- `npm test -- src/server/db/migrate.test.ts`：合入前后都只有同一条既有红测，`replays missing migrations before marking a duplicate-column migration as applied` 仍因测试夹具缺少 `downstream_api_keys` 基表而失败，不是 #400/#410 回归。
+- 合入后 `migrate.test.ts` 变为 `11 tests | 1 failed`，新增的 #400/#410 用例已通过。
+- `npm run typecheck` 当前仍失败于 `src/web/pages/helpers/sitesEditor.test.ts` 缺少 `probeDisabled`，属于本次 SQLite migration 合并之外的既有问题。
+
+### 跳过的 Commit（已审阅，不需要）
+
+| Commit | 说明 | 跳过原因 |
+|--------|------|----------|
+| `bc3893f` | refine token routes workspace motion and hierarchy (#394) | 14 文件 +2470/-733 行，本地 TokenRoutes UI 已独立演进（+8261 行差异），合入会破坏探活/健康度/优先级编辑等现有功能 |
+| `19bfed2` | refresh integration and settings docs for current UI and provider coverage (#398) | 12 文件 +982/-238 行，纯文档更新，本地已有完善的自定义文档体系（docs/custom/），冲突大价值低 |
+| `082891a` | fix runtime settings restart hydration (#392) | 8 文件 +365/-279 行，纯重构（提取 runtimeSettingsHydration.ts），冲突极高（需重构 5+ 文件），价值不足以抵消成本 |
+
+### 待定的 Commit（需进一步评估）
+
+| Commit | 说明 | 待定原因 |
+|--------|------|----------|
+| `2be0603` | fix expired connection health recovery (#393) | 10 文件 +406/-17 行，功能价值高（过期 API Key 自动恢复），但依赖 #392（已建议跳过），需评估是否手工移植核心逻辑 |
+| `af5b62f` | fix codex responses continuation across channel drift (#404) | 3 文件 +288/-6 行，修复 Codex responses 多轮对话续接问题，但缺失前置依赖 `codexSessionResponseStore.ts`（在上游 #330 中引入，本地手工移植时未包含） |
+
+---
+
 ## 2026-04-02 同步
 
 **上游已审阅到**：`1407f75`（upstream/main HEAD）

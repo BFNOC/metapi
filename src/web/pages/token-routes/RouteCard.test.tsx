@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { create, type ReactTestInstance } from 'react-test-renderer';
+import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import RouteCard from './RouteCard.js';
 import type { RouteSummaryRow } from './types.js';
 
@@ -135,5 +135,81 @@ describe('RouteCard', () => {
     button.props.onClick();
     expect(onClearCooldown).toHaveBeenCalledTimes(1);
     expect(onClearCooldown).toHaveBeenCalledWith(42);
+  });
+
+  it('opens the ranking confirmation modal before applying probe ranking', () => {
+    const onApplyProbeRanking = vi.fn();
+    const root = create(
+      <RouteCard
+        route={buildRoute()}
+        brand={null}
+        expanded
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        updatingChannel={{}}
+        savingPriority={false}
+        onSaveSettings={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onResetPriority={vi.fn()}
+        resettingPriority={false}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+        routeProbeSession={{
+          controller: new AbortController(),
+          expectedCount: 2,
+          completedCount: 2,
+          done: true,
+          results: {
+            11: {
+              channelId: 11,
+              status: 'supported',
+              ttftMs: 120,
+              httpStatus: 200,
+              error: null,
+            },
+            12: {
+              channelId: 12,
+              status: 'unsupported',
+              ttftMs: null,
+              httpStatus: 401,
+              error: null,
+            },
+          },
+        }}
+        onApplyProbeRanking={onApplyProbeRanking}
+      />,
+    );
+
+    const applyRankingButtons = root.root.findAll((node) => (
+      node.type === 'button'
+      && typeof node.props.onClick === 'function'
+      && collectText(node).trim() === '应用探活排序'
+    ));
+
+    expect(applyRankingButtons).toHaveLength(1);
+
+    act(() => {
+      applyRankingButtons[0].props.onClick();
+    });
+
+    expect(onApplyProbeRanking).not.toHaveBeenCalled();
   });
 });

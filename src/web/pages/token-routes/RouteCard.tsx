@@ -1,4 +1,5 @@
 import { memo, useState, type ReactNode } from 'react';
+import CenteredModal from '../../components/CenteredModal.js';
 import {
   DndContext,
   KeyboardSensor,
@@ -26,6 +27,7 @@ import type {
   MissingTokenRouteSiteActionItem,
   MissingTokenGroupRouteSiteActionItem,
   RouteProbeSession,
+  RouteProbeSnapshot,
   RouteRoutingStrategy,
 } from './types.js';
 import type { RouteCandidateView, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
@@ -88,6 +90,7 @@ type RouteCardProps = {
   onResetChannelCooldown?: (channelId: number) => void;
   onProbeRouteChannels?: (routeId: number) => void;
   routeProbeSession?: RouteProbeSession;
+  routeProbeSnapshot?: RouteProbeSnapshot;
   onApplyProbeRanking?: (routeId: number) => void;
   onClearRouteProbeSession?: (routeId: number) => void;
   onProbeChannel?: (channelId: number) => void;
@@ -145,6 +148,7 @@ function RouteCardInner({
   onResetChannelCooldown,
   onProbeRouteChannels,
   routeProbeSession,
+  routeProbeSnapshot,
   onApplyProbeRanking,
   onClearRouteProbeSession,
   onProbeChannel,
@@ -181,6 +185,7 @@ function RouteCardInner({
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+  const [showRankingConfirm, setShowRankingConfirm] = useState(false);
 
   const decisionMap = new Map<number, RouteDecisionCandidate>(
     (routeDecision?.candidates || []).map((c) => [c.channelId, c]),
@@ -206,13 +211,17 @@ function RouteCardInner({
       }));
   })();
 
-  const routeProbeResults = routeProbeSession ? Object.values(routeProbeSession.results) : [];
-  const routeProbeSupportedCount = routeProbeResults.filter((result) => result.status === 'supported').length;
-  const routeProbeFailedCount = routeProbeResults.filter((result) => (
+  const effectiveProbeResults = routeProbeSession
+    ? Object.values(routeProbeSession.results)
+    : routeProbeSnapshot
+      ? Object.values(routeProbeSnapshot.results)
+      : [];
+  const routeProbeSupportedCount = effectiveProbeResults.filter((result) => result.status === 'supported').length;
+  const routeProbeFailedCount = effectiveProbeResults.filter((result) => (
     result.status === 'unsupported' || (result.status === 'skipped' && result.httpStatus != null)
   )).length;
-  const routeProbeUnknownCount = Math.max(0, routeProbeResults.length - routeProbeSupportedCount - routeProbeFailedCount);
-  const routeProbeLatencies = routeProbeResults
+  const routeProbeUnknownCount = Math.max(0, effectiveProbeResults.length - routeProbeSupportedCount - routeProbeFailedCount);
+  const routeProbeLatencies = effectiveProbeResults
     .filter((result) => result.status === 'supported' && result.ttftMs != null)
     .map((result) => Number(result.ttftMs))
     .filter((value) => Number.isFinite(value));
@@ -221,6 +230,16 @@ function RouteCardInner({
     ? Math.round(routeProbeLatencies.reduce((sum, value) => sum + value, 0) / routeProbeLatencies.length)
     : null;
   const routeProbeInFlight = !!routeProbeSession && !routeProbeSession.done;
+  const routeProbeSnapshotLabel = routeProbeSnapshot
+    ? new Date(routeProbeSnapshot.probedAt).toLocaleString(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+    : '';
   const canProbeRoute = !explicitGroupRoute && !readOnlyRoute;
   const canApplyProbeRanking = !!routeProbeSession
     && routeProbeSession.done
@@ -552,7 +571,7 @@ function RouteCardInner({
               >
                 {routeProbeInFlight ? (
                   <><span className="spinner spinner-sm" /> {`探活中 (${routeProbeSession?.completedCount ?? 0}/${routeProbeSession?.expectedCount || routeProbeSession?.completedCount || '?'})...`}</>
-                ) : routeProbeResults.length > 0 ? '重新探活' : '批量探活'}
+                ) : effectiveProbeResults.length > 0 ? '重新探活' : '批量探活'}
               </button>
             )}
             <button
@@ -566,7 +585,61 @@ function RouteCardInner({
         )}
       </div>
 
-      {routeProbeSession && (routeProbeSession.expectedCount > 0 || routeProbeResults.length > 0 || routeProbeInFlight) ? (
+      {routeProbeSession ? (
+        routeProbeSession.expectedCount > 0 || effectiveProbeResults.length > 0 || routeProbeInFlight ? (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              marginBottom: 12,
+              padding: '10px 12px',
+              border: '1px solid color-mix(in srgb, var(--color-info) 18%, var(--color-border))',
+              borderRadius: 'var(--radius-sm)',
+              background: 'color-mix(in srgb, var(--color-info) 6%, transparent)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                {routeProbeInFlight ? `探活中 (${routeProbeSession.completedCount}/${routeProbeSession.expectedCount || '?'})...` : '探活完成'}
+              </span>
+              {routeProbeSession.expectedCount > 0 ? (
+                <span className="badge badge-info" style={{ fontSize: 10 }}>
+                  预期 {routeProbeSession.expectedCount} 通道
+                </span>
+              ) : null}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--color-text-secondary)' }}>
+              <span>✅ {routeProbeSupportedCount} 成功</span>
+              <span>❌ {routeProbeFailedCount} 失败</span>
+              <span>❓ {routeProbeUnknownCount} 未知</span>
+              {routeProbeFastestMs != null ? <span>⏱ 最快 {routeProbeFastestMs}ms</span> : null}
+              {routeProbeAverageMs != null ? <span>平均 {routeProbeAverageMs}ms</span> : null}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => setShowRankingConfirm(true)}
+                disabled={!canApplyProbeRanking || !onApplyProbeRanking}
+                className="btn btn-ghost"
+                style={{ fontSize: 12, padding: '6px 10px', border: '1px solid var(--color-border)' }}
+              >
+                应用探活排序
+              </button>
+              <button
+                type="button"
+                onClick={() => onClearRouteProbeSession?.(route.id)}
+                className="btn btn-link"
+                style={{ fontSize: 12, padding: 0 }}
+              >
+                清除结果
+              </button>
+            </div>
+          </div>
+        ) : null
+      ) : routeProbeSnapshot ? (
         <div
           style={{
             display: 'flex',
@@ -574,20 +647,23 @@ function RouteCardInner({
             gap: 8,
             marginBottom: 12,
             padding: '10px 12px',
-            border: '1px solid color-mix(in srgb, var(--color-info) 18%, var(--color-border))',
+            border: '1px solid var(--color-border)',
             borderRadius: 'var(--radius-sm)',
-            background: 'color-mix(in srgb, var(--color-info) 6%, transparent)',
+            background: 'color-mix(in srgb, var(--color-text-muted) 6%, transparent)',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)' }}>
-              {routeProbeInFlight ? `探活中 (${routeProbeSession.completedCount}/${routeProbeSession.expectedCount || '?'})...` : '探活完成'}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+              上次探活: {routeProbeSnapshotLabel}
             </span>
-            {routeProbeSession.expectedCount > 0 ? (
-              <span className="badge badge-info" style={{ fontSize: 10 }}>
-                预期 {routeProbeSession.expectedCount} 通道
-              </span>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => onClearRouteProbeSession?.(route.id)}
+              className="btn btn-link"
+              style={{ fontSize: 12, padding: 0, color: 'var(--color-text-secondary)' }}
+            >
+              清除
+            </button>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--color-text-secondary)' }}>
@@ -596,26 +672,6 @@ function RouteCardInner({
             <span>❓ {routeProbeUnknownCount} 未知</span>
             {routeProbeFastestMs != null ? <span>⏱ 最快 {routeProbeFastestMs}ms</span> : null}
             {routeProbeAverageMs != null ? <span>平均 {routeProbeAverageMs}ms</span> : null}
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={() => onApplyProbeRanking?.(route.id)}
-              disabled={!canApplyProbeRanking || !onApplyProbeRanking}
-              className="btn btn-ghost"
-              style={{ fontSize: 12, padding: '6px 10px', border: '1px solid var(--color-border)' }}
-            >
-              应用探活排序
-            </button>
-            <button
-              type="button"
-              onClick={() => onClearRouteProbeSession?.(route.id)}
-              className="btn btn-link"
-              style={{ fontSize: 12, padding: 0 }}
-            >
-              清除结果
-            </button>
           </div>
         </div>
       ) : null}
@@ -705,7 +761,9 @@ function RouteCardInner({
                                 onResetChannelCooldown={onResetChannelCooldown}
                                 onProbeChannel={onProbeChannel}
                                 probingChannel={!!probingChannelIds?.has(channel.id)}
-                                probeResult={channelProbeResults?.[channel.id] || routeProbeSession?.results[channel.id]}
+                                probeResult={channelProbeResults?.[channel.id]
+                                  ?? routeProbeSession?.results[channel.id]
+                                  ?? routeProbeSnapshot?.results[channel.id]}
                               />
                             );
                           })}
@@ -735,7 +793,9 @@ function RouteCardInner({
                                 onResetChannelCooldown={onResetChannelCooldown}
                                 onProbeChannel={onProbeChannel}
                                 probingChannel={!!probingChannelIds?.has(channel.id)}
-                                probeResult={channelProbeResults?.[channel.id] || routeProbeSession?.results[channel.id]}
+                                probeResult={channelProbeResults?.[channel.id]
+                                  ?? routeProbeSession?.results[channel.id]
+                                  ?? routeProbeSnapshot?.results[channel.id]}
                               />
                             );
                           })}
@@ -758,6 +818,40 @@ function RouteCardInner({
           {readOnlyRoute ? tr('暂无通道，先补齐连接配置后再重建路由。') : tr('暂无通道')}
         </div>
       )}
+
+      <CenteredModal
+        open={showRankingConfirm}
+        onClose={() => setShowRankingConfirm(false)}
+        title="应用探活排序"
+        maxWidth={520}
+        closeOnBackdrop
+        footer={(
+          <>
+            <button className="btn btn-ghost" onClick={() => setShowRankingConfirm(false)}>取消</button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setShowRankingConfirm(false);
+                onApplyProbeRanking?.(route.id);
+              }}
+            >
+              确认应用
+            </button>
+          </>
+        )}
+      >
+        <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+          <p>将根据探活结果调整通道配置：</p>
+          <ul style={{ margin: '8px 0', paddingLeft: 20 }}>
+            <li><strong>异常通道</strong>（不可用/401/403/429）→ 优先级沉底</li>
+            <li><strong>健康通道</strong> → 保持原优先级，按响应速度调整权重（快 200 / 正常 100 / 慢 30）</li>
+            <li><strong>不确定通道</strong> → 保持原优先级和权重不变</li>
+          </ul>
+          <p style={{ color: 'var(--color-text-muted)' }}>
+            这是人工应急整理，不代表长期最优配置。
+          </p>
+        </div>
+      </CenteredModal>
     </div>
   );
 }

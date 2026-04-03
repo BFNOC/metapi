@@ -6,6 +6,7 @@ import { invalidateTokenRouterCache } from './tokenRouter.js';
 export type ChannelPriorityUpdate = {
   id: number;
   priority: number;
+  weight?: number;
 };
 
 export async function clearDependentExplicitGroupSnapshotsBySourceRouteIds(sourceRouteIds: number[]): Promise<void> {
@@ -41,21 +42,25 @@ export async function applyChannelPriorityUpdates(input: {
   ));
   if (channelIds.length === 0) return [];
 
-  const updateMap = new Map<number, number>();
+  const updateMap = new Map<number, { priority: number; weight?: number }>();
   for (const update of input.updates) {
     const channelId = Math.trunc(update.id);
     if (channelId <= 0) continue;
-    updateMap.set(channelId, Math.max(0, Math.trunc(update.priority)));
+    updateMap.set(channelId, {
+      priority: Math.max(0, Math.trunc(update.priority)),
+      weight: update.weight !== undefined ? Math.max(0, Math.trunc(update.weight)) : undefined,
+    });
   }
 
   await db.transaction(async (tx) => {
     for (const channelId of channelIds) {
-      const priority = updateMap.get(channelId);
-      if (priority == null) continue;
-      await tx.update(schema.routeChannels).set({
-        priority,
-        manualOverride: true,
-      }).where(eq(schema.routeChannels.id, channelId)).run();
+      const patch = updateMap.get(channelId);
+      if (!patch) continue;
+      const nextSet: Record<string, unknown> = { priority: patch.priority, manualOverride: true };
+      if (patch.weight !== undefined) {
+        nextSet.weight = patch.weight;
+      }
+      await tx.update(schema.routeChannels).set(nextSet).where(eq(schema.routeChannels.id, channelId)).run();
     }
   });
 

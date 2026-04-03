@@ -585,47 +585,48 @@ function sortChannelsByCurrentPriority(channels: Array<typeof schema.routeChanne
   });
 }
 
-function buildProbeRankingPriorityUpdates(
+type ProbeRankingUpdate = { id: number; priority: number; weight: number; };
+
+function buildProbeRankingUpdates(
   channels: Array<typeof schema.routeChannels.$inferSelect>,
   ranking: ProbeRankingPayloadItem[],
-): BatchChannelPriorityUpdate[] {
+): ProbeRankingUpdate[] {
   const rankingByChannelId = new Map(ranking.map((item) => [item.channelId, item]));
-  const fast: Array<typeof schema.routeChannels.$inferSelect> = [];
-  const normal: Array<typeof schema.routeChannels.$inferSelect> = [];
-  const slow: Array<typeof schema.routeChannels.$inferSelect> = [];
+  const healthy: Array<{ channel: typeof schema.routeChannels.$inferSelect; item: ProbeRankingPayloadItem }> = [];
   const uncertain: Array<typeof schema.routeChannels.$inferSelect> = [];
   const unhealthy: Array<typeof schema.routeChannels.$inferSelect> = [];
 
   for (const channel of sortChannelsByCurrentPriority(channels)) {
     const item = rankingByChannelId.get(channel.id);
-    if (!item) continue;
-
+    if (!item) { uncertain.push(channel); continue; }
     if (item.status === 'unsupported' || (item.httpStatus != null && PROBE_RANKING_ERROR_HTTP_STATUS.has(item.httpStatus))) {
       unhealthy.push(channel);
-      continue;
+    } else if (item.status === 'supported') {
+      healthy.push({ channel, item });
+    } else {
+      uncertain.push(channel);
     }
-
-    if (item.status === 'supported') {
-      if (item.ttftMs == null) {
-        uncertain.push(channel);
-      } else if (item.ttftMs < 1000) {
-        fast.push(channel);
-      } else if (item.ttftMs < 3000) {
-        normal.push(channel);
-      } else {
-        slow.push(channel);
-      }
-      continue;
-    }
-
-    uncertain.push(channel);
   }
 
-  return [...fast, ...normal, ...slow, ...uncertain, ...unhealthy]
-    .map((channel, priority) => ({
-      id: channel.id,
-      priority,
-    }));
+  const healthyUpdates: ProbeRankingUpdate[] = healthy.map(({ channel, item }) => ({
+    id: channel.id, priority: channel.priority ?? 0, weight: ttftToWeight(item.ttftMs),
+  }));
+  const uncertainUpdates: ProbeRankingUpdate[] = uncertain.map((channel) => ({
+    id: channel.id, priority: channel.priority ?? 0, weight: channel.weight ?? 10,
+  }));
+  const maxExistingPriority = Math.max(0, ...channels.map((channel) => channel.priority ?? 0));
+  const sinkPriority = maxExistingPriority + 1;
+  const unhealthyUpdates: ProbeRankingUpdate[] = unhealthy.map((channel) => ({
+    id: channel.id, priority: sinkPriority, weight: channel.weight ?? 10,
+  }));
+  return [...healthyUpdates, ...uncertainUpdates, ...unhealthyUpdates];
+}
+
+function ttftToWeight(ttftMs: number | null): number {
+  if (ttftMs == null) return 100;
+  if (ttftMs < 1000) return 200;
+  if (ttftMs < 3000) return 100;
+  return 30;
 }
 
 function parseBatchRouteDecisionModels(
@@ -1522,7 +1523,7 @@ export async function tokensRoutes(app: FastifyInstance) {
         }
       }
 
-      const updates = buildProbeRankingPriorityUpdates(enabledChannels, parsed.ranking);
+      const updates = buildProbeRankingUpdates(enabledChannels, parsed.ranking);
       const result = await applyChannelPriorityUpdates({ existingChannels: enabledChannels, updates });
       return {
         success: true,

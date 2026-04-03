@@ -22,6 +22,14 @@ import {
   type MissingTokenModelsByName,
   type RouteMissingTokenHint,
 } from './helpers/routeMissingTokenHints.js';
+import {
+  buildChannelFingerprint,
+  clearAllRouteProbeSnapshots,
+  isSnapshotStale,
+  loadRouteProbeSnapshots,
+  removeRouteProbeSnapshot,
+  saveRouteProbeSnapshot,
+} from './helpers/routeProbeSnapshotStore.js';
 import { buildVisibleRouteList } from './helpers/routeListVisibility.js';
 import { buildZeroChannelPlaceholderRoutes } from './helpers/zeroChannelRoutes.js';
 import {
@@ -36,6 +44,7 @@ import type {
   GroupFilter,
   RouteSummaryRow,
   RouteProbeSession,
+  RouteProbeSnapshot,
   RouteRoutingStrategy,
   RouteMode,
   RouteDecision,
@@ -148,6 +157,7 @@ export default function TokenRoutes() {
   const [probingChannelIds, setProbingChannelIds] = useState<Set<number>>(new Set());
   const [channelProbeResults, setChannelProbeResults] = useState<Record<number, ChannelProbeResult>>({});
   const [routeProbeSessions, setRouteProbeSessions] = useState<Record<number, RouteProbeSession>>({});
+  const [routeProbeSnapshots, setRouteProbeSnapshots] = useState<Record<number, RouteProbeSnapshot>>({});
 
   const [decisionByRoute, setDecisionByRoute] = useState<Record<number, RouteDecision | null>>({});
   const [loadingDecision, setLoadingDecision] = useState(false);
@@ -219,13 +229,29 @@ export default function TokenRoutes() {
     setRouteProbeSessions({});
   }, []);
 
+  const clearPersistedRouteProbeSnapshot = useCallback((routeId: number) => {
+    removeRouteProbeSnapshot(routeId);
+    setRouteProbeSnapshots((prev) => {
+      if (!(routeId in prev)) return prev;
+      const next = { ...prev };
+      delete next[routeId];
+      return next;
+    });
+  }, []);
+
+  const clearPersistedRouteProbeSnapshots = useCallback(() => {
+    clearAllRouteProbeSnapshots();
+    setRouteProbeSnapshots({});
+  }, []);
+
   const invalidateProbeStateForRoute = useCallback((routeId: number, options?: { clearChannelProbeResults?: boolean }) => {
     clearRouteProbeSession(routeId);
+    clearPersistedRouteProbeSnapshot(routeId);
     if (options?.clearChannelProbeResults) {
       const channelIds = (channelsByRouteId[routeId] || []).map((channel) => channel.id);
       clearChannelProbeResultsByIds(channelIds);
     }
-  }, [channelsByRouteId, clearChannelProbeResultsByIds, clearRouteProbeSession]);
+  }, [channelsByRouteId, clearChannelProbeResultsByIds, clearPersistedRouteProbeSnapshot, clearRouteProbeSession]);
 
   const refreshRouteDecisionForRoute = useCallback(async (routeId: number) => {
     const route = routeSummaries.find((item) => item.id === routeId);
@@ -396,6 +422,10 @@ export default function TokenRoutes() {
   };
 
   useEffect(() => {
+    setRouteProbeSnapshots(loadRouteProbeSnapshots());
+  }, []);
+
+  useEffect(() => {
     (async () => {
       try {
         await load();
@@ -414,10 +444,38 @@ export default function TokenRoutes() {
     }
   }, []);
 
+  useEffect(() => {
+    if (expandedRouteIds.length === 0) return;
+    const staleRouteIds: number[] = [];
+    for (const routeId of expandedRouteIds) {
+      const snapshot = routeProbeSnapshots[routeId];
+      const channels = channelsByRouteId[routeId];
+      if (!snapshot || !channels) continue;
+      if (isSnapshotStale(snapshot, channels)) {
+        staleRouteIds.push(routeId);
+      }
+    }
+    if (staleRouteIds.length === 0) return;
+    for (const routeId of staleRouteIds) {
+      removeRouteProbeSnapshot(routeId);
+    }
+    setRouteProbeSnapshots((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const routeId of staleRouteIds) {
+        if (!(routeId in next)) continue;
+        delete next[routeId];
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [channelsByRouteId, expandedRouteIds]);
+
   const handleRebuild = async () => {
     try {
       setRebuilding(true);
       clearAllRouteProbeSessions();
+      clearPersistedRouteProbeSnapshots();
       const res = await api.rebuildRoutes(true);
       if (res?.queued) {
         toast.info(res.message || '已开始重建路由，请稍后查看日志');
@@ -927,6 +985,7 @@ export default function TokenRoutes() {
     try {
       await api.batchUpdateRoutes({ ids, action });
       clearAllRouteProbeSessions();
+      clearPersistedRouteProbeSnapshots();
       toast.success(`已批量${actionLabel} ${ids.length} 条路由`);
       setSelectedRouteIds(new Set());
       setBatchSelectMode(false);
@@ -1078,8 +1137,13 @@ export default function TokenRoutes() {
     const route = routeSummaries.find((item) => item.id === routeId);
     if (!isRouteProbeable(route)) return;
 
+    const snapshotChannels = [...(channelsByRouteId[routeId] || [])];
     clearRouteProbeSession(routeId);
+    clearPersistedRouteProbeSnapshot(routeId);
     const controller = new AbortController();
+    let snapshotExpectedCount = 0;
+    let snapshotCompletedCount = 0;
+    let snapshotResults: Record<number, ChannelProbeResult> = {};
     const nextSession: RouteProbeSession = {
       controller,
       expectedCount: 0,
@@ -1097,6 +1161,7 @@ export default function TokenRoutes() {
           const totalCount = typeof event.totalCount === 'number' && Number.isFinite(event.totalCount)
             ? Math.max(0, Math.trunc(event.totalCount))
             : 0;
+          snapshotExpectedCount = totalCount;
           setRouteProbeSessions((prev) => {
             const current = prev[routeId];
             if (!current || current.controller !== controller) return prev;
@@ -1118,6 +1183,8 @@ export default function TokenRoutes() {
           httpStatus: typeof event.httpStatus === 'number' && Number.isFinite(event.httpStatus) ? Math.trunc(event.httpStatus) : null,
           error: typeof event.error === 'string' ? event.error : null,
         };
+        snapshotCompletedCount += 1;
+        snapshotResults = { ...snapshotResults, [result.channelId]: result };
         setRouteProbeSessions((prev) => {
           const current = prev[routeId];
           if (!current || current.controller !== controller) return prev;
@@ -1125,8 +1192,8 @@ export default function TokenRoutes() {
             ...prev,
             [routeId]: {
               ...current,
-              completedCount: current.completedCount + 1,
-              results: { ...current.results, [result.channelId]: result },
+              completedCount: snapshotCompletedCount,
+              results: snapshotResults,
             },
           };
         });
@@ -1139,10 +1206,25 @@ export default function TokenRoutes() {
           ...prev,
           [routeId]: {
             ...current,
+            expectedCount: snapshotExpectedCount,
+            completedCount: snapshotCompletedCount,
             done: true,
+            results: snapshotResults,
           },
         };
       });
+      if (routeProbeSessionsRef.current[routeId]?.controller !== controller) {
+        return;
+      }
+      const snapshot: RouteProbeSnapshot = {
+        probedAt: new Date().toISOString(),
+        channelFingerprint: buildChannelFingerprint(snapshotChannels),
+        expectedCount: snapshotExpectedCount,
+        completedCount: snapshotCompletedCount,
+        results: { ...snapshotResults },
+      };
+      saveRouteProbeSnapshot(routeId, snapshot);
+      setRouteProbeSnapshots((prev) => ({ ...prev, [routeId]: snapshot }));
       toast.success('批量探活完成');
     } catch (e) {
       if (controller.signal.aborted) return;
@@ -1155,8 +1237,6 @@ export default function TokenRoutes() {
     if (!session || !session.done || session.completedCount !== session.expectedCount || session.expectedCount <= 0) {
       return;
     }
-    const confirmed = window.confirm('将异常通道沉底，健康通道按响应速度粗排（快/正常/慢三档），不确定通道保持原序。这是人工应急整理，不代表长期最优排序。');
-    if (!confirmed) return;
 
     const ranking = Object.values(session.results).map((result) => ({
       channelId: result.channelId,
@@ -1168,6 +1248,7 @@ export default function TokenRoutes() {
     try {
       await api.applyProbeRanking(routeId, ranking);
       clearRouteProbeSession(routeId, { abort: false });
+      clearPersistedRouteProbeSnapshot(routeId);
       toast.success('已应用探活排序');
       await loadChannels(routeId, true);
       await refreshRouteDecisionForRoute(routeId);
@@ -1178,6 +1259,7 @@ export default function TokenRoutes() {
 
   const handleClearRouteProbeSession = (routeId: number) => {
     clearRouteProbeSession(routeId, { abort: false });
+    clearPersistedRouteProbeSnapshot(routeId);
   };
 
   const handleDeleteChannel = async (channelId: number, routeId: number) => {
@@ -2081,6 +2163,7 @@ export default function TokenRoutes() {
                     onResetChannelCooldown={stableResetChannelCooldown}
                     onProbeRouteChannels={stableProbeRouteChannels}
                     routeProbeSession={routeProbeSessions[route.id]}
+                    routeProbeSnapshot={routeProbeSnapshots[route.id]}
                     onApplyProbeRanking={stableApplyProbeRanking}
                     onClearRouteProbeSession={stableClearRouteProbeSession}
                     onProbeChannel={stableProbeChannel}
@@ -2130,6 +2213,7 @@ export default function TokenRoutes() {
               onResetChannelCooldown={stableResetChannelCooldown}
               onProbeRouteChannels={stableProbeRouteChannels}
               routeProbeSession={routeProbeSessions[route.id]}
+              routeProbeSnapshot={routeProbeSnapshots[route.id]}
               onApplyProbeRanking={stableApplyProbeRanking}
               onClearRouteProbeSession={stableClearRouteProbeSession}
               onProbeChannel={stableProbeChannel}

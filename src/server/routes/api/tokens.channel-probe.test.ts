@@ -438,8 +438,10 @@ describe('channel probe routes', () => {
       .where(inArray(schema.routeChannels.id, [slowSupported.id, unsupported.id]))
       .all();
     const updatedById = new Map(updatedChannels.map((channel) => [channel.id, channel]));
-    expect(updatedById.get(slowSupported.id)?.priority).toBe(0);
-    expect(updatedById.get(unsupported.id)?.priority).toBe(1);
+    expect(updatedById.get(slowSupported.id)?.priority).toBe(5);
+    expect(updatedById.get(slowSupported.id)?.weight).toBe(100);
+    expect(updatedById.get(unsupported.id)?.priority).toBe(6);
+    expect(updatedById.get(unsupported.id)?.weight).toBe(10);
     expect(updatedById.get(slowSupported.id)?.manualOverride).toBe(true);
     expect(updatedById.get(unsupported.id)?.manualOverride).toBe(true);
 
@@ -451,5 +453,145 @@ describe('channel probe routes', () => {
     expect(routeById.get(route.id)?.decisionRefreshedAt).toBeNull();
     expect(routeById.get(dependentGroupRoute.id)?.decisionSnapshot).toBeNull();
     expect(routeById.get(dependentGroupRoute.id)?.decisionRefreshedAt).toBeNull();
+  });
+
+  it('keeps healthy channel priority unchanged and sets weight by TTFT tier', async () => {
+    const fastFixture = await seedSiteAccountToken();
+    const normalFixture = await seedSiteAccountToken();
+    const slowFixture = await seedSiteAccountToken();
+    const route = await seedRoute({ modelPattern: 'gpt-4o-weight-test' });
+
+    const fastChannel = await seedChannel({
+      routeId: route.id,
+      accountId: fastFixture.account.id,
+      tokenId: fastFixture.token.id,
+      sourceModel: 'gpt-4o-weight-test',
+      priority: 3,
+    });
+    const normalChannel = await seedChannel({
+      routeId: route.id,
+      accountId: normalFixture.account.id,
+      tokenId: normalFixture.token.id,
+      sourceModel: 'gpt-4o-weight-test',
+      priority: 3,
+    });
+    const slowChannel = await seedChannel({
+      routeId: route.id,
+      accountId: slowFixture.account.id,
+      tokenId: slowFixture.token.id,
+      sourceModel: 'gpt-4o-weight-test',
+      priority: 3,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${route.id}/channels/apply-probe-ranking`,
+      payload: {
+        ranking: [
+          { channelId: fastChannel.id, ttftMs: 500, status: 'supported', httpStatus: 200 },
+          { channelId: normalChannel.id, ttftMs: 1500, status: 'supported', httpStatus: 200 },
+          { channelId: slowChannel.id, ttftMs: 4000, status: 'supported', httpStatus: 200 },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const updatedChannels = await db.select().from(schema.routeChannels)
+      .where(inArray(schema.routeChannels.id, [fastChannel.id, normalChannel.id, slowChannel.id]))
+      .all();
+    const updatedById = new Map(updatedChannels.map((channel) => [channel.id, channel]));
+    expect(updatedById.get(fastChannel.id)?.priority).toBe(3);
+    expect(updatedById.get(normalChannel.id)?.priority).toBe(3);
+    expect(updatedById.get(slowChannel.id)?.priority).toBe(3);
+    expect(updatedById.get(fastChannel.id)?.weight).toBe(200);
+    expect(updatedById.get(normalChannel.id)?.weight).toBe(100);
+    expect(updatedById.get(slowChannel.id)?.weight).toBe(30);
+  });
+
+  it('sinks unhealthy channels to maxExistingPriority + 1', async () => {
+    const healthyFixture = await seedSiteAccountToken();
+    const unhealthyFixture = await seedSiteAccountToken();
+    const route = await seedRoute({ modelPattern: 'gpt-4o-sink-test' });
+
+    const healthyChannel = await seedChannel({
+      routeId: route.id,
+      accountId: healthyFixture.account.id,
+      tokenId: healthyFixture.token.id,
+      sourceModel: 'gpt-4o-sink-test',
+      priority: 9,
+    });
+    const unhealthyChannel = await seedChannel({
+      routeId: route.id,
+      accountId: unhealthyFixture.account.id,
+      tokenId: unhealthyFixture.token.id,
+      sourceModel: 'gpt-4o-sink-test',
+      priority: 2,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${route.id}/channels/apply-probe-ranking`,
+      payload: {
+        ranking: [
+          { channelId: healthyChannel.id, ttftMs: 800, status: 'supported', httpStatus: 200 },
+          { channelId: unhealthyChannel.id, ttftMs: null, status: 'unsupported', httpStatus: 401 },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const updatedChannels = await db.select().from(schema.routeChannels)
+      .where(inArray(schema.routeChannels.id, [healthyChannel.id, unhealthyChannel.id]))
+      .all();
+    const updatedById = new Map(updatedChannels.map((channel) => [channel.id, channel]));
+    expect(updatedById.get(healthyChannel.id)?.priority).toBe(9);
+    expect(updatedById.get(healthyChannel.id)?.weight).toBe(200);
+    expect(updatedById.get(unhealthyChannel.id)?.priority).toBe(10);
+    expect(updatedById.get(unhealthyChannel.id)?.weight).toBe(10);
+  });
+
+  it('keeps uncertain channels with original priority and weight', async () => {
+    const healthyFixture = await seedSiteAccountToken();
+    const inconclusiveFixture = await seedSiteAccountToken();
+    const route = await seedRoute({ modelPattern: 'gpt-4o-uncertain-test' });
+
+    const healthyChannel = await seedChannel({
+      routeId: route.id,
+      accountId: healthyFixture.account.id,
+      tokenId: healthyFixture.token.id,
+      sourceModel: 'gpt-4o-uncertain-test',
+      priority: 1,
+    });
+    const inconclusiveChannel = await seedChannel({
+      routeId: route.id,
+      accountId: inconclusiveFixture.account.id,
+      tokenId: inconclusiveFixture.token.id,
+      sourceModel: 'gpt-4o-uncertain-test',
+      priority: 4,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${route.id}/channels/apply-probe-ranking`,
+      payload: {
+        ranking: [
+          { channelId: healthyChannel.id, ttftMs: 200, status: 'supported', httpStatus: 200 },
+          { channelId: inconclusiveChannel.id, ttftMs: null, status: 'inconclusive', httpStatus: null },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const updatedChannels = await db.select().from(schema.routeChannels)
+      .where(inArray(schema.routeChannels.id, [healthyChannel.id, inconclusiveChannel.id]))
+      .all();
+    const updatedById = new Map(updatedChannels.map((channel) => [channel.id, channel]));
+    expect(updatedById.get(healthyChannel.id)?.priority).toBe(1);
+    expect(updatedById.get(healthyChannel.id)?.weight).toBe(200);
+    expect(updatedById.get(inconclusiveChannel.id)?.priority).toBe(4);
+    expect(updatedById.get(inconclusiveChannel.id)?.weight).toBe(10);
   });
 });

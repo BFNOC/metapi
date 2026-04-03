@@ -171,3 +171,17 @@ export type GroupRouteItem = {
   channelCount: number;
   sourceRouteCount: number;
 };
+
+/** 探活结果快照 — 仅用于展示，不可触发排序操作 */
+export type RouteProbeSnapshot = {
+  /** 探活完成时间（ISO 8601 字符串） */
+  readonly probedAt: string;
+  /** 探活时的 enabled channel ID 集合（升序），用于拓扑失效判断 */
+  readonly channelFingerprint: readonly number[];
+  /** 预期探测通道数 */
+  readonly expectedCount: number;
+  /** 实际完成通道数 */
+  readonly completedCount: number;
+  /** 各通道探活结果 */
+  readonly results: Readonly<Record<number, ChannelProbeResult>>;
+};

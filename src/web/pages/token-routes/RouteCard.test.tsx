@@ -212,4 +212,76 @@ describe('RouteCard', () => {
 
     expect(onApplyProbeRanking).not.toHaveBeenCalled();
   });
+
+  it('shows skipped probe results separately from unknown results in the summary', () => {
+    const root = create(
+      <RouteCard
+        route={buildRoute()}
+        brand={null}
+        expanded
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        updatingChannel={{}}
+        savingPriority={false}
+        onSaveSettings={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onResetPriority={vi.fn()}
+        resettingPriority={false}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+        routeProbeSession={{
+          controller: new AbortController(),
+          expectedCount: 3,
+          completedCount: 3,
+          done: true,
+          results: {
+            11: {
+              channelId: 11,
+              status: 'supported',
+              ttftMs: 120,
+              httpStatus: 200,
+              error: null,
+            },
+            12: {
+              channelId: 12,
+              status: 'skipped',
+              ttftMs: null,
+              httpStatus: null,
+              error: '通道无有效探活令牌',
+            },
+            13: {
+              channelId: 13,
+              status: 'inconclusive',
+              ttftMs: null,
+              httpStatus: 200,
+              error: 'Probe returned no result',
+            },
+          },
+        }}
+      />,
+    );
+
+    const text = collectText(root.root);
+    expect(text).toContain('✅ 1 成功');
+    expect(text).toContain('⏭ 1 跳过');
+    expect(text).toContain('❓ 1 未知');
+  });
 });

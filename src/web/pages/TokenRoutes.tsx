@@ -1243,6 +1243,7 @@ export default function TokenRoutes() {
       ttftMs: result.ttftMs,
       status: result.status,
       httpStatus: result.httpStatus,
+      error: result.error,
     }));
 
     try {

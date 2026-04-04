@@ -36,6 +36,7 @@ import {
   probeChannelEntry,
   probeRouteChannelEntries,
 } from '../../services/channelProbeService.js';
+import { deriveProbeHealthStatus } from '../../../shared/probeHealthClassifier.runtime.js';
 import { normalizeTokenRouteMode, type RouteMode } from '../../../shared/tokenRouteContract.js';
 
 function isExactModelPattern(modelPattern: string): boolean {
@@ -465,9 +466,8 @@ type ProbeRankingPayloadItem = {
   ttftMs: number | null;
   status: ProbeRankingStatus;
   httpStatus: number | null;
+  error?: string | null;
 };
-
-const PROBE_RANKING_ERROR_HTTP_STATUS = new Set([401, 403, 429]);
 
 function parseBatchChannelUpdates(input: unknown): { ok: true; updates: BatchChannelPriorityUpdate[] } | { ok: false; message: string } {
   if (!input || typeof input !== 'object') {
@@ -532,6 +532,7 @@ function parseApplyProbeRankingInput(
     const ttftMsRaw = (item as { ttftMs?: unknown }).ttftMs;
     const statusRaw = (item as { status?: unknown }).status;
     const httpStatusRaw = (item as { httpStatus?: unknown }).httpStatus;
+    const errorRaw = (item as { error?: unknown }).error;
     if (typeof channelIdRaw !== 'number' || !Number.isFinite(channelIdRaw)) {
       return { ok: false, message: `ranking[${index}].channelId 必须是有限数字` };
     }
@@ -555,6 +556,13 @@ function parseApplyProbeRankingInput(
     ) {
       return { ok: false, message: `ranking[${index}].httpStatus 必须是数字或 null` };
     }
+    if (
+      errorRaw !== undefined
+      && errorRaw !== null
+      && typeof errorRaw !== 'string'
+    ) {
+      return { ok: false, message: `ranking[${index}].error 必须是字符串或 null` };
+    }
 
     const channelId = Math.trunc(channelIdRaw);
     if (channelId <= 0) {
@@ -570,6 +578,7 @@ function parseApplyProbeRankingInput(
       ttftMs: ttftMsRaw === null ? null : Math.max(0, Math.trunc(ttftMsRaw)),
       status: statusRaw,
       httpStatus: httpStatusRaw === null ? null : Math.trunc(httpStatusRaw),
+      error: typeof errorRaw === 'string' ? errorRaw : null,
     });
   }
 
@@ -599,7 +608,8 @@ function buildProbeRankingUpdates(
   for (const channel of sortChannelsByCurrentPriority(channels)) {
     const item = rankingByChannelId.get(channel.id);
     if (!item) { uncertain.push(channel); continue; }
-    if (item.status === 'unsupported' || (item.httpStatus != null && PROBE_RANKING_ERROR_HTTP_STATUS.has(item.httpStatus))) {
+    const health = deriveProbeHealthStatus(item.status, item.httpStatus, item.error || null);
+    if (health === 'failure') {
       unhealthy.push(channel);
     } else if (item.status === 'supported') {
       healthy.push({ channel, item });

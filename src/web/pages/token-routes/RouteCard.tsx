@@ -18,6 +18,7 @@ import { BrandGlyph, InlineBrandIcon, type BrandInfo } from '../../components/Br
 import ModernSelect from '../../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../../components/useAnimatedVisibility.js';
 import { tr } from '../../i18n.js';
+import { aggregateProbeHealthStats } from '../../../shared/probeHealthClassifier.js';
 import type {
   ChannelProbeResult,
   RouteSummaryRow,
@@ -216,11 +217,12 @@ function RouteCardInner({
     : routeProbeSnapshot
       ? Object.values(routeProbeSnapshot.results)
       : [];
-  const routeProbeSupportedCount = effectiveProbeResults.filter((result) => result.status === 'supported').length;
-  const routeProbeFailedCount = effectiveProbeResults.filter((result) => (
-    result.status === 'unsupported' || (result.status === 'skipped' && result.httpStatus != null)
-  )).length;
-  const routeProbeUnknownCount = Math.max(0, effectiveProbeResults.length - routeProbeSupportedCount - routeProbeFailedCount);
+  const { successCount, failureCount, unknownCount, skippedCount } =
+    aggregateProbeHealthStats(effectiveProbeResults);
+  const routeProbeSupportedCount = successCount;
+  const routeProbeFailedCount = failureCount;
+  const routeProbeUnknownCount = unknownCount;
+  const routeProbeSkippedCount = skippedCount;
   const routeProbeLatencies = effectiveProbeResults
     .filter((result) => result.status === 'supported' && result.ttftMs != null)
     .map((result) => Number(result.ttftMs))
@@ -613,6 +615,7 @@ function RouteCardInner({
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--color-text-secondary)' }}>
               <span>✅ {routeProbeSupportedCount} 成功</span>
               <span>❌ {routeProbeFailedCount} 失败</span>
+              <span>⏭ {routeProbeSkippedCount} 跳过</span>
               <span>❓ {routeProbeUnknownCount} 未知</span>
               {routeProbeFastestMs != null ? <span>⏱ 最快 {routeProbeFastestMs}ms</span> : null}
               {routeProbeAverageMs != null ? <span>平均 {routeProbeAverageMs}ms</span> : null}
@@ -669,6 +672,7 @@ function RouteCardInner({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--color-text-secondary)' }}>
             <span>✅ {routeProbeSupportedCount} 成功</span>
             <span>❌ {routeProbeFailedCount} 失败</span>
+            <span>⏭ {routeProbeSkippedCount} 跳过</span>
             <span>❓ {routeProbeUnknownCount} 未知</span>
             {routeProbeFastestMs != null ? <span>⏱ 最快 {routeProbeFastestMs}ms</span> : null}
             {routeProbeAverageMs != null ? <span>平均 {routeProbeAverageMs}ms</span> : null}

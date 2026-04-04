@@ -9,6 +9,7 @@ import {
 import { getChannelDecisionState, getPriorityTagStyle, getProbabilityColor } from './utils.js';
 import { ChannelSettingsPanel } from './ChannelSettingsPanel.js';
 import type { RouteDecisionCandidate } from '../../../shared/tokenRouteContract.js';
+import { deriveProbeHealthStatus } from '../../../shared/probeHealthClassifier.js';
 
 /* ── Shared action pill button ── */
 type ActionPillVariant = 'warning' | 'info';
@@ -92,7 +93,14 @@ function getProbeResultBadge(probeResult?: ChannelProbeResult): {
 } | null {
   if (!probeResult) return null;
   const probeError = (probeResult.error || '').trim();
-  if (probeResult.status === 'supported') {
+
+  const health = deriveProbeHealthStatus(
+    probeResult.status,
+    probeResult.httpStatus,
+    probeResult.error
+  );
+
+  if (health === 'success') {
     return {
       label: `✅ ${formatProbeLatency(probeResult.ttftMs)}`,
       style: {
@@ -108,7 +116,7 @@ function getProbeResultBadge(probeResult?: ChannelProbeResult): {
     ? String(probeResult.httpStatus)
     : (probeError || probeResult.status).slice(0, 20);
 
-  if (probeResult.status === 'unsupported' || (probeResult.status === 'skipped' && probeResult.httpStatus != null)) {
+  if (health === 'failure') {
     return {
       label: `❌ ${failureLabel}`,
       style: {
@@ -117,6 +125,18 @@ function getProbeResultBadge(probeResult?: ChannelProbeResult): {
         color: 'var(--color-danger)',
       },
       tooltip: probeError || `探活失败：${failureLabel}`,
+    };
+  }
+
+  if (health === 'skipped') {
+    return {
+      label: '⏭ 跳过',
+      style: {
+        fontSize: 10,
+        background: 'color-mix(in srgb, var(--color-text-muted) 14%, transparent)',
+        color: 'var(--color-text-muted)',
+      },
+      tooltip: probeError || '探活已跳过',
     };
   }
 

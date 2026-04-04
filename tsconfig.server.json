@@ -3,10 +3,10 @@
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "outDir": "dist/server",
-    "rootDir": "src/server",
+    "outDir": "dist",
+    "rootDir": "src",
     "noImplicitAny": false
   },
-  "include": ["src/server/**/*.ts"],
-  "exclude": ["src/server/**/*.test.ts"]
+  "include": ["src/server/**/*.ts", "src/shared/**/*.ts"],
+  "exclude": ["src/server/**/*.test.ts", "src/shared/**/*.test.ts"]
 }

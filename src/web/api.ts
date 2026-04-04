@@ -234,7 +234,7 @@ type ChannelProbeResultPayload = {
   error: string | null;
 };
 
-type ApplyProbeRankingItem = Pick<ChannelProbeResultPayload, 'channelId' | 'ttftMs' | 'status' | 'httpStatus'>;
+type ApplyProbeRankingItem = Pick<ChannelProbeResultPayload, 'channelId' | 'ttftMs' | 'status' | 'httpStatus' | 'error'>;
 
 const DEFAULT_PROXY_TEST_TIMEOUT_MS = 30_000;
 const LONG_RUNNING_PROXY_TEST_TIMEOUT_MS = 150_000;

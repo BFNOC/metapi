@@ -22,6 +22,7 @@ import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/pro
 import { detectProxyFailure } from '../../routes/proxy/proxyFailureJudge.js';
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
 import { anthropicMessagesTransformer } from '../../transformers/anthropic/messages/index.js';
+import { shouldPreferResponsesForAnthropicContinuation } from '../../transformers/anthropic/messages/compatibility.js';
 import { getProxyAuthContext, getProxyResourceOwner } from '../../middleware/auth.js';
 import {
   ProxyInputFileResolutionError,
@@ -96,6 +97,7 @@ function recordSuccessfulEndpointDowngrades(input: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ReturnType<typeof summarizeConversationFileInputsInOpenAiBody>;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   };
 }) {
   const seenFailedEndpoints = new Set<'chat' | 'messages' | 'responses'>();
@@ -158,6 +160,10 @@ export async function handleChatSurfaceRequest(
   }
   const conversationFileSummary = summarizeConversationFileInputsInOpenAiBody(resolvedOpenAiBody);
   const hasNonImageFileInput = conversationFileSummary.hasDocument;
+  const wantsContinuationAwareResponses = (
+    downstreamFormat === 'claude'
+    && shouldPreferResponsesForAnthropicContinuation(claudeOriginalBody)
+  );
   const codexSessionCacheKey = deriveCodexSessionCacheKey({
     downstreamFormat,
     body: downstreamFormat === 'claude' ? claudeOriginalBody : request.body,
@@ -220,6 +226,7 @@ export async function handleChatSurfaceRequest(
         {
           hasNonImageFileInput,
           conversationFileSummary,
+          wantsContinuationAwareResponses,
         },
       ),
     ];
@@ -234,6 +241,7 @@ export async function handleChatSurfaceRequest(
       requestCapabilities: {
         hasNonImageFileInput,
         conversationFileSummary,
+        wantsContinuationAwareResponses,
       },
     };
     const buildProviderHeaders = () => (

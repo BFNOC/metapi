@@ -1,6 +1,7 @@
 import { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
+import { resetCodexSessionResponseStore } from './codexSessionResponseStore.js';
 
 describe('codexWebsocketRuntime', () => {
   let upstreamServer: WebSocketServer;
@@ -10,7 +11,7 @@ describe('codexWebsocketRuntime', () => {
   let upstreamMessageHandler: (socket: import('ws').WebSocket, parsed: Record<string, unknown>, requestIndex: number) => void;
 
   beforeAll(async () => {
-    upstreamServer = new WebSocketServer({ port: 0 });
+    upstreamServer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
     upstreamServer.on('connection', (socket) => {
       upstreamConnectionCount += 1;
       socket.on('message', (payload) => {
@@ -25,6 +26,7 @@ describe('codexWebsocketRuntime', () => {
   });
 
   beforeEach(() => {
+    resetCodexSessionResponseStore();
     upstreamConnectionCount = 0;
     upstreamRequests = [];
     upstreamMessageHandler = (socket, parsed, requestIndex) => {
@@ -266,6 +268,189 @@ describe('codexWebsocketRuntime', () => {
     expect(upstreamRequests).toHaveLength(2);
 
     await runtime.closeSession('exec-session-failed-turn');
+  });
+
+  it('infers previous_response_id for tool-output follow-up turns from the remembered session response id', async () => {
+    const { createCodexWebsocketRuntime } = await import('./codexWebsocketRuntime.js');
+    const runtime = createCodexWebsocketRuntime();
+
+    await runtime.sendRequest({
+      sessionId: 'exec-session-infer-prev',
+      requestUrl: upstreamWsUrl,
+      headers: {
+        Authorization: 'Bearer oauth-access-token',
+        'OpenAI-Beta': 'responses_websockets=2026-02-06',
+      },
+      body: {
+        model: 'gpt-5.4',
+        input: [],
+      },
+    });
+
+    const second = await runtime.sendRequest({
+      sessionId: 'exec-session-infer-prev',
+      requestUrl: upstreamWsUrl,
+      headers: {
+        Authorization: 'Bearer oauth-access-token',
+        'OpenAI-Beta': 'responses_websockets=2026-02-06',
+      },
+      body: {
+        model: 'gpt-5.4',
+        input: [{
+          id: 'tool_out_1',
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: '{"ok":true}',
+        }],
+      },
+    });
+
+    expect(second.events[0]).toMatchObject({
+      type: 'response.completed',
+      response: { id: 'resp-2' },
+    });
+    expect(upstreamRequests).toHaveLength(2);
+    expect(upstreamRequests[1]).toMatchObject({
+      type: 'response.create',
+      previous_response_id: 'resp-1',
+      input: [{
+        id: 'tool_out_1',
+        type: 'function_call_output',
+        call_id: 'call_1',
+        output: '{"ok":true}',
+      }],
+    });
+
+    await runtime.closeSession('exec-session-infer-prev');
+  });
+
+  it('drops stale previous_response_id and retries once when the upstream reports previous_response_not_found', async () => {
+    upstreamMessageHandler = (socket, parsed, requestIndex) => {
+      if (requestIndex === 1) {
+        socket.send(JSON.stringify({
+          type: 'error',
+          error: {
+            message: 'previous_response_not_found',
+            code: 'previous_response_not_found',
+            type: 'invalid_request_error',
+          },
+        }));
+        return;
+      }
+
+      socket.send(JSON.stringify({
+        type: 'response.completed',
+        response: {
+          id: 'resp-recovered',
+          object: 'response',
+          model: parsed.model || 'gpt-5.4',
+          status: 'completed',
+          output: [],
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            total_tokens: 2,
+          },
+        },
+      }));
+    };
+
+    const { createCodexWebsocketRuntime } = await import('./codexWebsocketRuntime.js');
+    const runtime = createCodexWebsocketRuntime();
+
+    const result = await runtime.sendRequest({
+      sessionId: 'exec-session-prev-recovery',
+      requestUrl: upstreamWsUrl,
+      headers: {
+        Authorization: 'Bearer oauth-access-token',
+        'OpenAI-Beta': 'responses_websockets=2026-02-06',
+      },
+      body: {
+        model: 'gpt-5.4',
+        previous_response_id: 'resp-stale',
+        input: [{
+          id: 'tool_out_retry_1',
+          type: 'function_call_output',
+          call_id: 'call_retry_1',
+          output: '{"retry":true}',
+        }],
+      },
+    });
+
+    expect(result.events[0]).toMatchObject({
+      type: 'response.completed',
+      response: { id: 'resp-recovered' },
+    });
+    expect(upstreamRequests).toHaveLength(2);
+    expect(upstreamRequests[0]).toMatchObject({
+      type: 'response.create',
+      previous_response_id: 'resp-stale',
+    });
+    expect(upstreamRequests[1]).toMatchObject({
+      type: 'response.create',
+      input: [{
+        id: 'tool_out_retry_1',
+        type: 'function_call_output',
+        call_id: 'call_retry_1',
+        output: '{"retry":true}',
+      }],
+    });
+    expect(upstreamRequests[1]?.previous_response_id).toBeUndefined();
+
+    await runtime.closeSession('exec-session-prev-recovery');
+  });
+
+  it('clears remembered continuation state when the execution session closes', async () => {
+    const { createCodexWebsocketRuntime } = await import('./codexWebsocketRuntime.js');
+    const runtime = createCodexWebsocketRuntime();
+
+    await runtime.sendRequest({
+      sessionId: 'exec-session-clear-store',
+      requestUrl: upstreamWsUrl,
+      headers: {
+        Authorization: 'Bearer oauth-access-token',
+        'OpenAI-Beta': 'responses_websockets=2026-02-06',
+      },
+      body: {
+        model: 'gpt-5.4',
+        input: [],
+      },
+    });
+
+    await runtime.closeSession('exec-session-clear-store');
+    upstreamRequests = [];
+
+    await runtime.sendRequest({
+      sessionId: 'exec-session-clear-store',
+      requestUrl: upstreamWsUrl,
+      headers: {
+        Authorization: 'Bearer oauth-access-token',
+        'OpenAI-Beta': 'responses_websockets=2026-02-06',
+      },
+      body: {
+        model: 'gpt-5.4',
+        input: [{
+          id: 'tool_out_after_close',
+          type: 'function_call_output',
+          call_id: 'call_after_close',
+          output: '{"afterClose":true}',
+        }],
+      },
+    });
+
+    expect(upstreamRequests).toHaveLength(1);
+    expect(upstreamRequests[0]).toMatchObject({
+      type: 'response.create',
+      input: [{
+        id: 'tool_out_after_close',
+        type: 'function_call_output',
+        call_id: 'call_after_close',
+        output: '{"afterClose":true}',
+      }],
+    });
+    expect(upstreamRequests[0]?.previous_response_id).toBeUndefined();
+
+    await runtime.closeSession('exec-session-clear-store');
   });
 
   it('fails the current turn and opens a fresh websocket on the next turn when a reused session closes before yielding any events', async () => {

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
+const selectPreferredChannelMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -20,14 +21,19 @@ const dbInsertMock = vi.fn((_arg?: any) => ({
   }),
 }));
 
-vi.mock('undici', () => ({
-  fetch: (...args: unknown[]) => fetchMock(...args),
-}));
+vi.mock('undici', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('undici')>();
+  return {
+    ...actual,
+    fetch: (...args: unknown[]) => fetchMock(...args),
+  };
+});
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
     selectChannel: (...args: unknown[]) => selectChannelMock(...args),
     selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -54,6 +60,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: () => false,
+  shouldAbortSameSiteEndpointFallback: () => false,
 }));
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
@@ -64,17 +71,23 @@ vi.mock('../../services/oauth/quota.js', () => ({
   recordOauthQuotaResetHint: async () => undefined,
 }));
 
-vi.mock('../../db/index.js', () => ({
-  db: {
-    insert: (arg: any) => dbInsertMock(arg),
-  },
-  hasProxyLogBillingDetailsColumn: async () => false,
-  hasProxyLogClientColumns: async () => false,
-  hasProxyLogDownstreamApiKeyIdColumn: async () => false,
-  schema: {
-    proxyLogs: {},
-  },
-}));
+vi.mock('../../db/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../db/index.js')>();
+  return {
+    ...actual,
+    db: {
+      insert: (arg: any) => dbInsertMock(arg),
+    },
+    hasProxyLogBillingDetailsColumn: async () => false,
+    hasProxyLogClientColumns: async () => false,
+    hasProxyLogDownstreamApiKeyIdColumn: async () => false,
+    hasProxyLogStreamTimingColumns: async () => false,
+    schema: {
+      ...actual.schema,
+      proxyLogs: {},
+    },
+  };
+});
 
 describe('claude count_tokens proxy route', () => {
   let app: FastifyInstance;
@@ -89,6 +102,7 @@ describe('claude count_tokens proxy route', () => {
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
+    selectPreferredChannelMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -106,6 +120,7 @@ describe('claude count_tokens proxy route', () => {
       actualModel: 'claude-opus-4-6',
     });
     selectNextChannelMock.mockReturnValue(null);
+    selectPreferredChannelMock.mockReturnValue(null);
   });
 
   afterAll(async () => {

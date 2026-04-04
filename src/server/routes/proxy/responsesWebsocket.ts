@@ -4,6 +4,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { createCodexWebsocketRuntime, CodexWebsocketRuntimeError } from '../../proxy-core/runtime/codexWebsocketRuntime.js';
+import { buildCodexSessionResponseStoreKey } from '../../proxy-core/runtime/codexSessionResponseStore.js';
 import {
   authorizeDownstreamToken,
   consumeManagedKeyRequest,
@@ -435,6 +436,34 @@ async function forwardResponsesRequestViaHttp(input: {
     try {
       const payload = JSON.parse(response.body);
       const output = collectResponsesOutput([payload]);
+      if (isRecord(payload)) {
+        const object = asTrimmedString(payload.object).toLowerCase();
+        const status = asTrimmedString(payload.status).toLowerCase();
+        const terminalEventType = status === 'incomplete'
+          ? 'response.incomplete'
+          : status === 'failed'
+            ? 'response.failed'
+            : status === 'completed'
+              ? 'response.completed'
+              : '';
+        if (object === 'response' && terminalEventType) {
+          const createdPayload = {
+            ...payload,
+            status: 'in_progress',
+            output: [],
+            output_text: '',
+          };
+          input.socket.send(JSON.stringify({
+            type: 'response.created',
+            response: createdPayload,
+          }));
+          input.socket.send(JSON.stringify({
+            type: terminalEventType,
+            response: payload,
+          }));
+          return output;
+        }
+      }
       input.socket.send(JSON.stringify(payload));
       return output;
     } catch {
@@ -541,13 +570,23 @@ async function handleResponsesWebsocketConnection(
   const websocketSessionId = headerValueToTrimmedString(request.headers['session_id'])
     || headerValueToTrimmedString(request.headers['session-id'])
     || randomUUID();
+  const runtimeSessionKeys = new Set<string>();
   let lastRequest: Record<string, unknown> | null = null;
   let lastResponseOutput: unknown[] = [];
   let selectedChannel: SelectedChannel | null = null;
   let messageQueue = Promise.resolve();
 
   socket.once('close', () => {
-    void codexWebsocketRuntime.closeSession(websocketSessionId);
+    const sessionKeys = runtimeSessionKeys.size > 0
+      ? Array.from(runtimeSessionKeys)
+      : [websocketSessionId];
+    void Promise.all(sessionKeys.map(async (sessionKey) => {
+      try {
+        await codexWebsocketRuntime.closeSession(sessionKey);
+      } catch {
+        // Ignore close-time cleanup failures after downstream disconnects.
+      }
+    }));
   });
 
   socket.on('message', (raw) => {
@@ -634,8 +673,15 @@ async function handleResponsesWebsocketConnection(
             const requestUrl = `${codexWebsocketChannel.site.url.replace(/\/+$/, '')}${prepared.path}`;
 
             try {
-              const runtimeResult = await codexWebsocketRuntime.sendRequest({
+              const websocketRuntimeSessionKey = buildCodexSessionResponseStoreKey({
                 sessionId: websocketSessionId,
+                siteId: codexWebsocketChannel.site.id,
+                accountId: codexWebsocketChannel.account.id,
+                channelId: codexWebsocketChannel.channel.id,
+              }) || websocketSessionId;
+              runtimeSessionKeys.add(websocketRuntimeSessionKey);
+              const runtimeResult = await codexWebsocketRuntime.sendRequest({
+                sessionId: websocketRuntimeSessionKey,
                 requestUrl,
                 headers: prepared.headers,
                 body: prepared.body,

@@ -11,6 +11,8 @@
 | Commit | 说明 | 合入方式 | 备注 |
 |--------|------|---------|------|
 | `6ad9ec6` | strip codex responses max_output_tokens (#399) | 手工移植 | 2026-04-04 合入，本地提交 `12d357f` |
+| `596d1b9` | #330 Codex continuation 模块补齐 | 手工移植 | 2026-04-04 合入，补齐之前 #330 手工移植时跳过的 continuation 部分 |
+| `af5b62f` | fix codex responses continuation across channel drift (#404) | 手工移植 | 2026-04-04 合入，在 #330 continuation 基础上应用 |
 
 <details>
 <summary>#399 合并详情（2026-04-04）</summary>
@@ -46,6 +48,51 @@
 - ✅ `responses.codex-oauth.test.ts` - 21 passed
 - ✅ `architecture-boundaries.test.ts` - 14 passed
 - ✅ `repo:drift-check` - Violations: 0
+
+</details>
+
+<details>
+<summary>#330 Codex continuation 模块补齐 + #404 合入详情（2026-04-04）</summary>
+
+**背景**：#330（proactive channel probes + load-aware routing）于 2026-04-02 手工移植时，跳过了 Codex responses continuation 相关模块。本次补齐这些模块，并在此基础上应用 #404（修复 Codex responses continuation 在 channel/account 漂移后断裂的问题）。
+
+**功能说明**：
+- Codex responses 多轮对话续接：自动记忆 terminal `response.id`，对 tool-output follow-up 自动注入 `previous_response_id`
+- 跨通道续接保持：channel/account 漂移后通过 bare-session fallback 仍能找到旧 `responseId`
+- `previous_response_not_found` 自动恢复：检测到旧续接 ID 失效时 strip 并重试一次
+- Claude continuation-aware routing：检测 Claude 请求中的 continuation hint，优先走 responses endpoint
+
+**新增文件（5 个）**：
+- `src/server/proxy-core/runtime/codexSessionResponseStore.ts` (128行) — 通道级 session→responseId 存储
+- `src/server/proxy-core/runtime/codexSessionResponseStore.test.ts` — 5 用例
+- `src/server/transformers/openai/responses/continuation.ts` (144行) — continuation 辅助函数
+- `src/server/transformers/openai/responses/continuation.test.ts` — 4 用例
+- `src/server/transformers/anthropic/messages/compatibility.test.ts` — 4 用例
+
+**修改文件（11 个）**：
+- `codexWebsocketRuntime.ts` — +82行：continuation 注入/记忆/recovery/清理
+- `openAiResponsesSurface.ts` — +92行：8 处集成点（scoped key、inject、remember×4、tryRecover、queue key）
+- `responsesWebsocket.ts` — +50行：scoped session key + 多 key 清理 + HTTP event 包装
+- `upstreamEndpoint.ts` — +32行：`stripClaudeMessagesContinuationFields` + `wantsContinuationAwareResponses`
+- `chatSurface.ts` — +8行：Claude continuation-aware routing（仅主 chat 路径）
+- `compatibility.ts` — +52行：`shouldPreferResponsesForAnthropicContinuation()`
+- 测试文件：`codexWebsocketRuntime.test.ts`(+187)、`responses.codex-oauth.test.ts`(+260)、`responses.websocket.test.ts`(+259)、`upstreamEndpoint.test.ts`(+131)、`chat.count-tokens.test.ts`(+43)
+
+**合入方式**：手工移植
+- 原因：`codexWebsocketRuntime.ts`、`openAiResponsesSurface.ts`、`chatSurface.ts` 等文件已独立演进，与上游有较大分叉
+- 策略：从上游 #330 (`596d1b9`) 提取 continuation 子集 + #404 (`af5b62f`) 叠加，由 Codex gpt-5.4 xhigh 审查 plan → 实施 → Antigravity 复核
+
+**验证结果**：
+- ✅ `codexSessionResponseStore.test.ts` - 5 passed
+- ✅ `continuation.test.ts` - 4 passed
+- ✅ `compatibility.test.ts` - 4 passed
+- ✅ `codexWebsocketRuntime.test.ts` - 9 passed
+- ✅ `upstreamEndpoint.test.ts` - 63 passed
+- ✅ `responses.codex-oauth.test.ts` - 24 passed
+- ✅ `responses.websocket.test.ts` - 27 passed
+- ✅ `chat.count-tokens.test.ts` - 2 passed
+- ✅ TypeScript 检查 - 无新增错误
+- **总计 138 测试全部通过**
 
 </details>
 

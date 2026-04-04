@@ -60,6 +60,7 @@ type EndpointCapabilityProfile = {
   hasNonImageFileInput: boolean;
   hasRemoteDocumentUrl: boolean;
   wantsNativeResponsesReasoning: boolean;
+  wantsContinuationAwareResponses: boolean;
 };
 
 type ChannelContext = {
@@ -277,6 +278,15 @@ function extractClaudeBetasFromBody(body: Record<string, unknown>): {
   };
 }
 
+function stripClaudeMessagesContinuationFields(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...body };
+  delete next.previous_response_id;
+  delete next.prompt_cache_key;
+  return next;
+}
+
 function buildAntigravityRuntimeHeaders(input: {
   baseHeaders: Record<string, string>;
   stream: boolean;
@@ -463,6 +473,7 @@ function buildEndpointCapabilityProfile(input?: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   };
 }): EndpointCapabilityProfile {
   const conversationFileSummary = input?.requestCapabilities?.conversationFileSummary;
@@ -482,6 +493,7 @@ function buildEndpointCapabilityProfile(input?: {
       conversationFileSummary?.hasRemoteDocumentUrl === true
     ),
     wantsNativeResponsesReasoning: input?.requestCapabilities?.wantsNativeResponsesReasoning === true,
+    wantsContinuationAwareResponses: input?.requestCapabilities?.wantsContinuationAwareResponses === true,
   };
 }
 
@@ -508,6 +520,7 @@ function buildEndpointRuntimeStateKey(input: {
     capabilityProfile.hasNonImageFileInput ? 'files' : 'nofiles',
     capabilityProfile.hasRemoteDocumentUrl ? 'remoteurl' : 'noremoteurl',
     capabilityProfile.wantsNativeResponsesReasoning ? 'reasoning' : 'noreasoning',
+    capabilityProfile.wantsContinuationAwareResponses ? 'continuation' : 'nocontinuation',
   ].join(':');
 }
 
@@ -525,6 +538,7 @@ export function recordUpstreamEndpointSuccess(input: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   };
 }): void {
   const capabilityProfile = buildEndpointCapabilityProfile({
@@ -556,6 +570,7 @@ export function recordUpstreamEndpointFailure(input: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   };
 }): void {
   const capabilityProfile = buildEndpointCapabilityProfile({
@@ -577,6 +592,7 @@ export function recordUpstreamEndpointDowngrade(input: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   };
 }): void {
   const capabilityProfile = buildEndpointCapabilityProfile({
@@ -668,6 +684,7 @@ export async function resolveUpstreamEndpointCandidates(
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   },
 ): Promise<UpstreamEndpoint[]> {
   const sitePlatform = normalizePlatformName(context.site.platform);
@@ -679,6 +696,7 @@ export async function resolveUpstreamEndpointCandidates(
   const preferMessagesForClaudeModel = capabilityProfile.preferMessagesForClaudeModel;
   const hasNonImageFileInput = capabilityProfile.hasNonImageFileInput;
   const wantsNativeResponsesReasoning = capabilityProfile.wantsNativeResponsesReasoning;
+  const wantsContinuationAwareResponses = capabilityProfile.wantsContinuationAwareResponses;
   const runtimeStateKey = buildEndpointRuntimeStateKey({
     siteId: context.site.id,
     downstreamFormat,
@@ -732,9 +750,11 @@ export async function resolveUpstreamEndpointCandidates(
     })()
     : preferred;
   const prioritizedPreferredEndpoints: UpstreamEndpoint[] = (
-    wantsNativeResponsesReasoning
-    && preferMessagesForClaudeModel
-    && preferredWithCapabilities.includes('responses')
+    preferredWithCapabilities.includes('responses')
+    && (
+      wantsContinuationAwareResponses
+      || (wantsNativeResponsesReasoning && preferMessagesForClaudeModel)
+    )
   )
     ? [
       'responses',
@@ -1010,7 +1030,7 @@ export function buildUpstreamEndpointRequest(input: {
       && input.forceNormalizeClaudeBody !== true
     )
       ? {
-        ...input.claudeOriginalBody,
+        ...stripClaudeMessagesContinuationFields(input.claudeOriginalBody),
         model: input.modelName,
         stream: input.stream,
       }
@@ -1021,7 +1041,7 @@ export function buildUpstreamEndpointRequest(input: {
       && input.forceNormalizeClaudeBody === true
     )
       ? sanitizeAnthropicMessagesBody({
-        ...input.claudeOriginalBody,
+        ...stripClaudeMessagesContinuationFields(input.claudeOriginalBody),
         model: input.modelName,
         stream: input.stream,
       })
@@ -1168,7 +1188,7 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
   const sitePlatform = normalizePlatformName(input.sitePlatform);
   const claudeHeaders = extractClaudePassthroughHeaders(input.downstreamHeaders);
   const { body: bodyWithoutBetas, betas } = extractClaudeBetasFromBody({
-    ...input.claudeBody,
+    ...stripClaudeMessagesContinuationFields(input.claudeBody),
     model: input.modelName,
   });
   const sanitizedBody = sanitizeAnthropicMessagesBody(bodyWithoutBetas);

@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
 import { resetCodexHttpSessionQueue } from '../../proxy-core/runtime/codexHttpSessionQueue.js';
+import { resetCodexSessionResponseStore } from '../../proxy-core/runtime/codexSessionResponseStore.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
@@ -161,6 +162,7 @@ describe('responses proxy codex oauth refresh', () => {
 
   beforeEach(() => {
     resetCodexHttpSessionQueue();
+    resetCodexSessionResponseStore();
     config.proxyEmptyContentFailEnabled = false;
     config.proxyStickySessionEnabled = originalProxyStickySessionEnabled;
     config.proxySessionChannelConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
@@ -471,6 +473,264 @@ describe('responses proxy codex oauth refresh', () => {
     expect(String(options.headers.Session_id || options.headers.session_id || '')).toMatch(/^[0-9a-f-]{36}$/i);
     expect(options.headers.Conversation_id || options.headers.conversation_id).toBeUndefined();
     expect(forwardedBody.prompt_cache_key).toBe('codex-cache-123');
+  });
+
+  it('infers previous_response_id for codex tool-output follow-up turns on the same downstream session', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_codex_prev_1',
+        object: 'response',
+        model: 'gpt-5.2-codex',
+        status: 'completed',
+        output_text: 'tool call issued',
+        usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_codex_prev_2',
+        object: 'response',
+        model: 'gpt-5.2-codex',
+        status: 'completed',
+        output_text: 'tool result accepted',
+        usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const headers = {
+      session_id: 'session-http-prev-1',
+      'user-agent': 'CodexClient/1.0',
+    };
+
+    const firstResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers,
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: 'start codex tool flow',
+      },
+    });
+    expect(firstResponse.statusCode).toBe(200);
+
+    const secondResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers,
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: [
+          {
+            id: 'tool_out_1',
+            type: 'function_call_output',
+            call_id: 'call_1',
+            output: '{"ok":true}',
+          },
+        ],
+      },
+    });
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
+    const secondBody = JSON.parse(secondOptions.body);
+    expect(secondBody.previous_response_id).toBe('resp_codex_prev_1');
+    expect(secondBody.input).toEqual([
+      {
+        id: 'tool_out_1',
+        type: 'function_call_output',
+        call_id: 'call_1',
+        output: '{"ok":true}',
+      },
+    ]);
+  });
+
+  it('reuses previous_response_id for codex tool-output follow-up turns after channel/account drift on the same downstream session', async () => {
+    const firstSelected = {
+      channel: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      account: {
+        id: 33,
+        username: 'codex-user-a@example.com',
+        extraConfig: JSON.stringify({
+          credentialMode: 'session',
+          oauth: {
+            provider: 'codex',
+            accountId: 'chatgpt-account-123',
+            email: 'codex-user-a@example.com',
+            planType: 'plus',
+          },
+        }),
+      },
+      tokenName: 'default-a',
+      tokenValue: 'expired-access-token-a',
+      actualModel: 'gpt-5.2-codex',
+    };
+    const secondSelected = {
+      channel: { id: 12, routeId: 23 },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      account: {
+        id: 34,
+        username: 'codex-user-b@example.com',
+        extraConfig: JSON.stringify({
+          credentialMode: 'session',
+          oauth: {
+            provider: 'codex',
+            accountId: 'chatgpt-account-456',
+            email: 'codex-user-b@example.com',
+            planType: 'plus',
+          },
+        }),
+      },
+      tokenName: 'default-b',
+      tokenValue: 'expired-access-token-b',
+      actualModel: 'gpt-5.2-codex',
+    };
+
+    selectChannelMock
+      .mockReset()
+      .mockReturnValueOnce(firstSelected)
+      .mockReturnValueOnce(secondSelected);
+    selectPreferredChannelMock
+      .mockReset()
+      .mockReturnValue(null);
+    selectNextChannelMock.mockReset().mockReturnValue(null);
+
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_codex_prev_drift_1',
+        object: 'response',
+        model: 'gpt-5.2-codex',
+        status: 'completed',
+        output_text: 'tool call issued',
+        usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_codex_prev_drift_2',
+        object: 'response',
+        model: 'gpt-5.2-codex',
+        status: 'completed',
+        output_text: 'tool result accepted after drift',
+        usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const headers = {
+      session_id: 'session-http-prev-drift',
+      'user-agent': 'CodexClient/1.0',
+    };
+
+    const firstResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers,
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: 'start codex tool flow',
+      },
+    });
+    expect(firstResponse.statusCode).toBe(200);
+
+    const secondResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers,
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: [
+          {
+            id: 'tool_out_drift_1',
+            type: 'function_call_output',
+            call_id: 'call_1',
+            output: '{"ok":true}',
+          },
+        ],
+      },
+    });
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const [, firstOptions] = fetchMock.mock.calls[0] as [string, any];
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
+    const secondBody = JSON.parse(secondOptions.body);
+    expect(firstOptions.headers['Chatgpt-Account-Id'] || firstOptions.headers['chatgpt-account-id']).toBe('chatgpt-account-123');
+    expect(secondOptions.headers['Chatgpt-Account-Id'] || secondOptions.headers['chatgpt-account-id']).toBe('chatgpt-account-456');
+    expect(secondBody.previous_response_id).toBe('resp_codex_prev_drift_1');
+    expect(secondBody.input).toEqual([
+      {
+        id: 'tool_out_drift_1',
+        type: 'function_call_output',
+        call_id: 'call_1',
+        output: '{"ok":true}',
+      },
+    ]);
+  });
+
+  it('drops stale previous_response_id and retries codex responses requests once', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          message: 'previous_response_not_found',
+          code: 'previous_response_not_found',
+          type: 'invalid_request_error',
+        },
+      }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_codex_prev_recovered',
+        object: 'response',
+        model: 'gpt-5.2-codex',
+        status: 'completed',
+        output_text: 'recovered after dropping stale previous_response_id',
+        usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: {
+        session_id: 'session-http-prev-recovery',
+      },
+      payload: {
+        model: 'gpt-5.2-codex',
+        previous_response_id: 'resp_stale',
+        input: [
+          {
+            id: 'tool_out_retry_1',
+            type: 'function_call_output',
+            call_id: 'call_retry_1',
+            output: '{"retry":true}',
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const [, firstOptions] = fetchMock.mock.calls[0] as [string, any];
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
+    const firstBody = JSON.parse(firstOptions.body);
+    const secondBody = JSON.parse(secondOptions.body);
+
+    expect(firstBody.previous_response_id).toBe('resp_stale');
+    expect(secondBody.previous_response_id).toBeUndefined();
+    expect(secondBody.input).toEqual(firstBody.input);
   });
 
   it('strips generic downstream headers before forwarding codex responses upstream', async () => {

@@ -28,6 +28,7 @@ import {
 import { clearFocusParams, readFocusAccountIntent } from './helpers/navigationFocus.js';
 import { TokensPanel } from './Tokens.js';
 import { tr } from '../i18n.js';
+import { loadModelMappingCandidates } from '../utils/modelMappingLoader.js';
 import { buildCustomReorderUpdates, sortItemsForDisplay, type SortMode } from './helpers/listSorting.js';
 import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
 import { SITE_DOCS_URL } from '../docsLink.js';
@@ -716,6 +717,35 @@ export default function Accounts() {
   const parseAccountExtraConfig = (account: any): Record<string, any> => {
     try { return JSON.parse(account?.extraConfig || '{}') || {}; }
     catch { return {}; }
+  };
+
+  const openMappingModal = async (account: any) => {
+    const target = {
+      accountId: account.id,
+      accountName: resolveAccountDisplayName(account),
+      mapping: parseAccountExtraConfig(account)?.modelMapping || null,
+      availableModels: [] as string[],
+      loadingModels: true,
+    };
+    setMappingTarget(target);
+
+    try {
+      const result = await loadModelMappingCandidates({
+        accountId: account.id,
+        siteId: account.siteId,
+        siteModelFilterMode: account.site?.modelFilterMode,
+      });
+      setMappingTarget((prev) => prev && prev.accountId === account.id ? {
+        ...prev,
+        availableModels: result.availableModels,
+        loadingModels: false,
+      } : prev);
+    } catch {
+      setMappingTarget((prev) => prev && prev.accountId === account.id ? {
+        ...prev,
+        loadingModels: false,
+      } : prev);
+    }
   };
 
   const extractManagedSub2ApiAuth = (account: any) => {
@@ -1752,16 +1782,7 @@ export default function Accounts() {
                             )}
                             {connectionMode === 'apikey' && (
                               <button
-                                onClick={() => {
-                                  const target = { accountId: a.id, accountName: resolveAccountDisplayName(a), mapping: parseAccountExtraConfig(a)?.modelMapping || null, availableModels: [] as string[], loadingModels: true };
-                                  setMappingTarget(target);
-                                  api.getAccountModels(a.id).then((result: any) => {
-                                    const models = Array.isArray(result?.models) ? result.models.map((m: any) => m.name as string).sort() : [];
-                                    setMappingTarget((prev) => prev && prev.accountId === a.id ? { ...prev, availableModels: models, loadingModels: false } : prev);
-                                  }).catch(() => {
-                                    setMappingTarget((prev) => prev && prev.accountId === a.id ? { ...prev, loadingModels: false } : prev);
-                                  });
-                                }}
+                                onClick={() => { void openMappingModal(a); }}
                                 className="btn btn-link btn-link-primary"
                               >
                                 模型映射
@@ -2092,16 +2113,7 @@ export default function Accounts() {
                             )}
                             {connectionMode === 'apikey' && (
                               <button
-                                onClick={() => {
-                                  const target = { accountId: a.id, accountName: resolveAccountDisplayName(a), mapping: parseAccountExtraConfig(a)?.modelMapping || null, availableModels: [] as string[], loadingModels: true };
-                                  setMappingTarget(target);
-                                  api.getAccountModels(a.id).then((result: any) => {
-                                    const models = Array.isArray(result?.models) ? result.models.map((m: any) => m.name as string).sort() : [];
-                                    setMappingTarget((prev) => prev && prev.accountId === a.id ? { ...prev, availableModels: models, loadingModels: false } : prev);
-                                  }).catch(() => {
-                                    setMappingTarget((prev) => prev && prev.accountId === a.id ? { ...prev, loadingModels: false } : prev);
-                                  });
-                                }}
+                                onClick={() => { void openMappingModal(a); }}
                                 className="btn btn-link btn-link-primary"
                               >
                                 模型映射
@@ -2205,7 +2217,7 @@ export default function Accounts() {
       <ModelMappingModal
         open={!!mappingTarget}
         onClose={() => { setMappingTarget(null); void load(); }}
-        accountName={mappingTarget?.accountName || ''}
+        targetName={mappingTarget?.accountName || ''}
         initialMapping={mappingTarget?.mapping || null}
         availableModels={mappingTarget?.availableModels || []}
         loadingModels={mappingTarget?.loadingModels || false}

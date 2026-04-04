@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
+import ModelMappingModal from '../components/ModelMappingModal.js';
 import { ToastProvider } from '../components/Toast.js';
 import Accounts from './Accounts.js';
 
@@ -9,6 +10,10 @@ const { apiMock, toastMock } = vi.hoisted(() => ({
   apiMock: {
     getAccounts: vi.fn(),
     getSites: vi.fn(),
+    getSiteAvailableModels: vi.fn(),
+    getSiteAllowedModels: vi.fn(),
+    getSiteDisabledModels: vi.fn(),
+    updateSiteModelFilter: vi.fn(),
     updateAccount: vi.fn(),
     updateSiteDisabledModels: vi.fn(),
     rebuildRoutes: vi.fn(),
@@ -32,6 +37,28 @@ vi.mock('../components/Toast.js', () => ({
   ToastProvider: ({ children }: { children: ReactNode }) => children,
   useToast: () => toastMock,
 }));
+
+vi.mock('../components/CenteredModal.js', async () => {
+  const ReactModule = await vi.importActual<typeof import('react')>('react');
+  return {
+    __esModule: true,
+    default: ({ open, title, children, footer }: any) => (open ? ReactModule.createElement(
+      'div',
+      { className: 'mock-centered-modal' },
+      ReactModule.createElement('div', null, title),
+      ReactModule.createElement('div', null, children),
+      ReactModule.createElement('div', null, footer),
+    ) : null),
+  };
+});
+
+vi.mock('react-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-dom')>('react-dom');
+  return {
+    ...actual,
+    createPortal: (node: unknown) => node,
+  };
+});
 
 function collectText(node: ReactTestInstance): string {
   return (node.children || []).map((child) => {
@@ -60,16 +87,35 @@ function deferred<T>() {
 describe('Accounts edit panel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(globalThis, 'document', {
+      value: {
+        body: {
+          style: {
+            overflow: '',
+          },
+        },
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      configurable: true,
+      writable: true,
+    });
     apiMock.getSites.mockResolvedValue([
       { id: 1, name: 'Site A', platform: 'new-api', status: 'active' },
     ]);
+    apiMock.getSiteAvailableModels.mockResolvedValue({ models: [] });
+    apiMock.getSiteAllowedModels.mockResolvedValue({ models: [] });
+    apiMock.getSiteDisabledModels.mockResolvedValue({ models: [] });
+    apiMock.updateSiteModelFilter.mockResolvedValue({ success: true });
     apiMock.getAccounts.mockResolvedValue([
       {
         id: 1,
         siteId: 1,
         username: 'alpha',
-        accessToken: 'session-alpha',
+        accessToken: '',
         status: 'active',
+        credentialMode: 'apikey',
+        capabilities: { canCheckin: false, canRefreshBalance: false, proxyOnly: true },
         site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
       },
     ]);
@@ -91,6 +137,8 @@ describe('Accounts edit panel', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    // @ts-expect-error test cleanup
+    delete globalThis.document;
   });
 
   it('opens edit panel from account row action', async () => {
@@ -98,7 +146,7 @@ describe('Accounts edit panel', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter initialEntries={['/accounts']}>
+          <MemoryRouter initialEntries={['/accounts?segment=apikey']}>
             <ToastProvider>
               <Accounts />
             </ToastProvider>
@@ -129,6 +177,18 @@ describe('Accounts edit panel', () => {
   });
 
   it('opens model modal when clicking model button', async () => {
+    apiMock.getAccounts.mockResolvedValue([
+      {
+        id: 1,
+        siteId: 1,
+        username: 'alpha',
+        accessToken: '',
+        status: 'active',
+        credentialMode: 'apikey',
+        capabilities: { canCheckin: false, canRefreshBalance: false, proxyOnly: true },
+        site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
+      },
+    ]);
     apiMock.getAccountModels.mockResolvedValue({
       siteId: 1,
       siteName: 'Site A',
@@ -144,7 +204,7 @@ describe('Accounts edit panel', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter initialEntries={['/accounts']}>
+          <MemoryRouter initialEntries={['/accounts?segment=apikey']}>
             <ToastProvider>
               <Accounts />
             </ToastProvider>
@@ -174,6 +234,75 @@ describe('Accounts edit panel', () => {
     }
   });
 
+  it('applies site allow-list when opening mapping modal', async () => {
+    apiMock.getAccounts.mockResolvedValue([
+      {
+        id: 1,
+        siteId: 1,
+        username: 'alpha',
+        accessToken: '',
+        apiToken: 'sk-alpha',
+        status: 'active',
+        credentialMode: 'apikey',
+        capabilities: { canCheckin: false, canRefreshBalance: false, proxyOnly: true },
+        site: {
+          id: 1,
+          name: 'Site A',
+          status: 'active',
+          platform: 'new-api',
+          modelFilterMode: 'allow-list',
+        },
+      },
+    ]);
+    apiMock.getSites.mockResolvedValue([
+      { id: 1, name: 'Site A', platform: 'new-api', status: 'active', modelFilterMode: 'allow-list' },
+    ]);
+    apiMock.getAccountModels.mockResolvedValue({
+      siteId: 1,
+      siteName: 'Site A',
+      models: [
+        { name: 'gpt-4', latencyMs: 120, disabled: false },
+        { name: 'claude-3', latencyMs: 80, disabled: false },
+      ],
+      totalCount: 2,
+      disabledCount: 0,
+    });
+    apiMock.getSiteAllowedModels.mockResolvedValue({ models: ['claude-3'] });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts?segment=apikey']}>
+            <ToastProvider>
+              <Accounts />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const mappingButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '模型映射'
+      ));
+
+      await act(async () => {
+        await mappingButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const mappingModal = root.root.findByType(ModelMappingModal);
+      expect(apiMock.getSiteAllowedModels).toHaveBeenCalledWith(1);
+      expect(mappingModal.props.open).toBe(true);
+      expect(mappingModal.props.targetName).toBe('alpha');
+      expect(mappingModal.props.availableModels).toEqual(['claude-3']);
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('ignores stale model modal loads after switching accounts', async () => {
     const firstLoad = deferred<any>();
     const secondLoad = deferred<any>();
@@ -182,16 +311,20 @@ describe('Accounts edit panel', () => {
         id: 1,
         siteId: 1,
         username: 'alpha',
-        accessToken: 'session-alpha',
+        accessToken: '',
         status: 'active',
+        credentialMode: 'apikey',
+        capabilities: { canCheckin: false, canRefreshBalance: false, proxyOnly: true },
         site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
       },
       {
         id: 2,
         siteId: 2,
         username: 'beta',
-        accessToken: 'session-beta',
+        accessToken: '',
         status: 'active',
+        credentialMode: 'apikey',
+        capabilities: { canCheckin: false, canRefreshBalance: false, proxyOnly: true },
         site: { id: 2, name: 'Site B', status: 'active', platform: 'new-api' },
       },
     ]);
@@ -209,7 +342,7 @@ describe('Accounts edit panel', () => {
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter initialEntries={['/accounts']}>
+          <MemoryRouter initialEntries={['/accounts?segment=apikey']}>
             <ToastProvider>
               <Accounts />
             </ToastProvider>
@@ -251,7 +384,7 @@ describe('Accounts edit panel', () => {
       await flushMicrotasks();
 
       const rendered = JSON.stringify(root.toJSON());
-      expect(rendered).toContain('模型管理 · Site B');
+      expect(rendered).toContain('已发现模型 · Site B');
       expect(rendered).toContain('model-b');
       expect(rendered).not.toContain('model-a');
     } finally {
@@ -260,6 +393,18 @@ describe('Accounts edit panel', () => {
   });
 
   it('reports route rebuild failure without claiming success', async () => {
+    apiMock.getAccounts.mockResolvedValue([
+      {
+        id: 1,
+        siteId: 1,
+        username: 'alpha',
+        accessToken: '',
+        status: 'active',
+        credentialMode: 'apikey',
+        capabilities: { canCheckin: false, canRefreshBalance: false, proxyOnly: true },
+        site: { id: 1, name: 'Site A', status: 'active', platform: 'new-api' },
+      },
+    ]);
     apiMock.getAccountModels.mockResolvedValue({
       siteId: 1,
       siteName: 'Site A',
@@ -267,13 +412,16 @@ describe('Accounts edit panel', () => {
       totalCount: 1,
       disabledCount: 0,
     });
+    apiMock.getSiteAvailableModels.mockResolvedValue({
+      models: [{ name: 'gpt-4', disabled: false }],
+    });
     apiMock.rebuildRoutes.mockRejectedValue(new Error('rebuild failed'));
 
     let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter initialEntries={['/accounts']}>
+          <MemoryRouter initialEntries={['/accounts?segment=apikey']}>
             <ToastProvider>
               <Accounts />
             </ToastProvider>
@@ -282,38 +430,38 @@ describe('Accounts edit panel', () => {
       });
       await flushMicrotasks();
 
-      const modelButton = root.root.find((node) => (
+      const modelFilterButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn-link-info')
-        && collectText(node).trim() === '模型'
+        && collectText(node).trim() === '模型过滤'
       ));
 
       await act(async () => {
-        await modelButton.props.onClick();
+        await modelFilterButton.props.onClick();
       });
       await flushMicrotasks();
 
       const saveButtons = root.root.findAll((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && collectText(node).trim() === '保存'
+        && collectText(node).trim() === '保存配置'
       ));
 
       await act(async () => {
         await saveButtons[saveButtons.length - 1]!.props.onClick();
       });
       await flushMicrotasks();
+      await flushMicrotasks();
 
-      expect(apiMock.updateSiteDisabledModels).toHaveBeenCalledWith(1, []);
+      expect(apiMock.updateSiteModelFilter).toHaveBeenCalledWith(1, {
+        modelFilterMode: 'deny-list',
+        models: [],
+      });
       expect(apiMock.rebuildRoutes).toHaveBeenCalledWith(false, false);
-      expect(toastMock.error).toHaveBeenCalledWith('模型禁用设置已保存，但路由重建失败，请手动刷新路由');
-      expect(toastMock.success).not.toHaveBeenCalledWith('模型禁用设置已保存，路由已重建');
+      expect(toastMock.success).toHaveBeenCalledWith('模型过滤配置已保存，但路由重建失败，请手动刷新路由');
+      expect(toastMock.success).not.toHaveBeenCalledWith('模型过滤配置已保存，路由已重建');
     } finally {
       root?.unmount();
     }
   });
 });
-
-

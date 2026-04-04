@@ -10,7 +10,8 @@ type MappingEntry = {
 type ModelMappingModalProps = {
   open: boolean;
   onClose: () => void;
-  accountName: string;
+  targetName?: string;
+  accountName?: string;
   initialMapping: Record<string, string> | null;
   availableModels: string[];
   loadingModels: boolean;
@@ -212,12 +213,14 @@ function ModelPickerOverlay({
 export default function ModelMappingModal({
   open,
   onClose,
+  targetName,
   accountName,
   initialMapping,
   availableModels,
   loadingModels,
   onSave,
 }: ModelMappingModalProps) {
+  const displayName = targetName || accountName || '';
   const [entries, setEntries] = useState<MappingEntry[]>([]);
   const [saving, setSaving] = useState(false);
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
@@ -299,7 +302,7 @@ export default function ModelMappingModal({
       <CenteredModal
         open={open}
         onClose={onClose}
-        title={`模型映射 — ${accountName}`}
+        title={`模型映射 — ${displayName}`}
         maxWidth={700}
         closeOnBackdrop
         closeOnEscape
@@ -329,7 +332,7 @@ export default function ModelMappingModal({
         )}
       >
         <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
-          将请求中的模型名映射为该账号上游实际模型名。点击右侧按钮从已发现模型中选择。
+          将请求中的模型名映射为当前目标的上游实际模型名。点击右侧按钮从已发现模型中选择。
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

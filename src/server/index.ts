@@ -32,6 +32,7 @@ import { setLegacyProxyLogRetentionFallbackEnabled, stopProxyLogRetentionService
 import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
+import { migrateAccountModelMappingsToTokens } from './services/tokenModelMappingMigrationService.js';
 import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
 import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackfill.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
@@ -374,9 +375,24 @@ try {
   await ensureProxyLogBillingDetailsColumn();
   await repairStoredCreatedAtValues();
   await migrateSiteApiKeysToAccounts();
+  const tokenModelMappingMigration = await migrateAccountModelMappingsToTokens();
+  const shouldLogTokenModelMappingMigration = tokenModelMappingMigration.targetAccounts > 0 || tokenModelMappingMigration.failedAccounts > 0;
+  if (shouldLogTokenModelMappingMigration) {
+    console.info(
+      `[tokenModelMappingMigration] startup summary: target=${tokenModelMappingMigration.targetAccounts}, `
+      + `success=${tokenModelMappingMigration.migratedAccounts}, `
+      + `failed=${tokenModelMappingMigration.failedAccounts}, `
+      + `skipped=${tokenModelMappingMigration.skippedAccounts}, `
+      + `updatedTokens=${tokenModelMappingMigration.migratedTokens}, `
+      + `skippedTokens=${tokenModelMappingMigration.skippedExistingTokens}`,
+    );
+  }
   await ensureDefaultSitesSeeded();
   await ensureOauthIdentityBackfill();
   await routeRefreshWorkflow.rebuildRoutesOnly();
+  if (shouldLogTokenModelMappingMigration) {
+    console.info('[tokenModelMappingMigration] route rebuild completed');
+  }
 
   console.log('Loaded runtime settings overrides');
 } catch (error) {

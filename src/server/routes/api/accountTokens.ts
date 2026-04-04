@@ -28,6 +28,10 @@ import {
   rebuildRoutesBestEffort,
   refreshAccountCoverageBatch,
 } from '../../services/accountMutationWorkflow.js';
+import {
+  normalizeModelMappingInput,
+  parseNormalizedModelMapping,
+} from '../../services/modelMappingRecord.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -53,7 +57,12 @@ function isModelFilteredByTokenConfig(mode: string, modelList: string[], modelNa
   return false;
 }
 
-export { parseFilteredModels, isModelFilteredByTokenConfig };
+export {
+  parseFilteredModels,
+  isModelFilteredByTokenConfig,
+  parseNormalizedModelMapping as parseModelMapping,
+  normalizeModelMappingInput,
+};
 
 type SyncExecutionResult = {
   accountId: number;
@@ -1175,6 +1184,68 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       tokenId,
       modelFilterMode: nextMode,
       filteredModels: nextModels,
+    };
+  });
+
+  app.get<{ Params: { id: string } }>('/api/account-tokens/:id/model-mapping', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) {
+      return reply.code(400).send({ message: '令牌 ID 无效' });
+    }
+
+    const token = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.id, tokenId))
+      .get();
+    if (!token) {
+      return reply.code(404).send({ message: '令牌不存在' });
+    }
+
+    return {
+      tokenId,
+      tokenName: token.name,
+      modelMapping: parseNormalizedModelMapping(token.modelMapping ?? null),
+    };
+  });
+
+  app.put<{
+    Params: { id: string };
+    Body: {
+      modelMapping?: Record<string, string> | null;
+    };
+  }>('/api/account-tokens/:id/model-mapping', async (request, reply) => {
+    const tokenId = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) {
+      return reply.code(400).send({ message: '令牌 ID 无效' });
+    }
+
+    const token = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.id, tokenId))
+      .get();
+    if (!token) {
+      return reply.code(404).send({ message: '令牌不存在' });
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(request.body || {}, 'modelMapping')) {
+      return reply.code(400).send({ message: '缺少 modelMapping 字段' });
+    }
+
+    const normalized = normalizeModelMappingInput(request.body?.modelMapping);
+    if (!normalized.valid) {
+      return reply.code(400).send({ message: 'modelMapping 必须是对象或 null' });
+    }
+
+    await db.update(schema.accountTokens).set({
+      modelMapping: normalized.modelMapping ? JSON.stringify(normalized.modelMapping) : null,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(schema.accountTokens.id, tokenId)).run();
+
+    await rebuildRoutesBestEffort();
+
+    return {
+      success: true,
+      tokenId,
+      tokenName: token.name,
+      modelMapping: normalized.modelMapping,
     };
   });
 

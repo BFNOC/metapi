@@ -67,6 +67,24 @@
           "notNull": true,
           "defaultValue": "'ready'",
           "primaryKey": false
+        },
+        "model_filter_mode": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": "'none'",
+          "primaryKey": false
+        },
+        "filtered_models": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_mapping": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },

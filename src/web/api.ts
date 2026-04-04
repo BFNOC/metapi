@@ -582,6 +582,9 @@ export const api = {
   getTokenModelFilter: (tokenId: number) => request(`/api/account-tokens/${tokenId}/model-filter`),
   updateTokenModelFilter: (tokenId: number, data: { modelFilterMode: string; filteredModels: string[] }) =>
     request(`/api/account-tokens/${tokenId}/model-filter`, { method: 'PUT', body: JSON.stringify(data) }),
+  getTokenModelMapping: (tokenId: number) => request(`/api/account-tokens/${tokenId}/model-mapping`),
+  updateTokenModelMapping: (tokenId: number, data: { modelMapping: Record<string, string> | null }) =>
+    request(`/api/account-tokens/${tokenId}/model-mapping`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Check-in
   triggerCheckinAll: () => request('/api/checkin/trigger', { method: 'POST' }),

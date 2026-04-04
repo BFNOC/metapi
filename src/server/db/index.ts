@@ -181,6 +181,7 @@ function ensureTokenManagementSchema() {
       source text DEFAULT 'manual',
       enabled integer DEFAULT true,
       is_default integer DEFAULT false,
+      model_mapping text,
       created_at text DEFAULT (datetime('now')),
       updated_at text DEFAULT (datetime('now')),
       FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE cascade
@@ -201,6 +202,9 @@ function ensureTokenManagementSchema() {
   }
   if (!tableColumnExists('account_tokens', 'filtered_models')) {
     execSqliteLegacyCompat('ALTER TABLE account_tokens ADD COLUMN filtered_models text;');
+  }
+  if (!tableColumnExists('account_tokens', 'model_mapping')) {
+    execSqliteLegacyCompat('ALTER TABLE account_tokens ADD COLUMN model_mapping text;');
   }
 
   execSqliteStatement(`
@@ -401,6 +405,22 @@ function ensureSiteGlobalWeightSchema() {
     SET global_weight = 1
     WHERE global_weight IS NULL
       OR global_weight <= 0;
+  `);
+}
+
+function ensureSiteProbeDisabledSchema() {
+  if (!tableExists('sites')) {
+    return;
+  }
+
+  if (!tableColumnExists('sites', 'probe_disabled')) {
+    execSqliteLegacyCompat(`ALTER TABLE sites ADD COLUMN probe_disabled integer DEFAULT 0;`);
+  }
+
+  execSqliteLegacyCompat(`
+    UPDATE sites
+    SET probe_disabled = 0
+    WHERE probe_disabled IS NULL;
   `);
 }
 
@@ -1368,6 +1388,7 @@ function initSqliteDb() {
   ensureSiteCustomHeadersSchema();
   ensureSiteExternalCheckinUrlSchema();
   ensureSiteGlobalWeightSchema();
+  ensureSiteProbeDisabledSchema();
   ensureRouteGroupingSchema();
   ensureDownstreamApiKeySchema();
   ensureProxyLogBillingDetailsSchema();

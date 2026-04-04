@@ -16,6 +16,7 @@ import {
 import { type DownstreamRoutingPolicy, EMPTY_DOWNSTREAM_ROUTING_POLICY } from './downstreamPolicyTypes.js';
 import { isUsableAccountToken } from './accountTokenService.js';
 import { getModelMappingFromExtraConfig } from './accountExtraConfig.js';
+import { parseNormalizedModelMapping } from './modelMappingRecord.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import {
   isExactTokenRouteModelPattern,
@@ -1347,18 +1348,7 @@ function isModelAllowedByDownstreamPolicy(requestedModel: string, policy: Downst
 }
 
 function parseModelMappingRecord(modelMapping?: string | Record<string, unknown> | null): Record<string, unknown> | null {
-  if (!modelMapping) return null;
-  if (typeof modelMapping === 'object' && !Array.isArray(modelMapping)) {
-    return modelMapping as Record<string, unknown>;
-  }
-  if (typeof modelMapping !== 'string') return null;
-  try {
-    const parsed = JSON.parse(modelMapping);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  return parseNormalizedModelMapping(modelMapping);
 }
 
 function resolveMappedModel(requestedModel: string, modelMapping?: string | Record<string, unknown> | null): string {
@@ -1389,6 +1379,8 @@ function resolveActualModelForSelectedChannel(
   route: RouteRow,
   mappedModel: string,
   channelSourceModel: string | null | undefined,
+  hasTokenContext: boolean,
+  tokenModelMapping?: string | Record<string, unknown> | null,
   accountExtraConfig?: string | null,
 ): string {
   const sourceModel = normalizeChannelSourceModel(channelSourceModel);
@@ -1396,6 +1388,17 @@ function resolveActualModelForSelectedChannel(
   // or by display-name/group routing), always use it as the upstream model.
   if (sourceModel) {
     return sourceModel;
+  }
+  // Route-level modelMapping is already reflected in mappedModel and stays authoritative.
+  if (mappedModel !== requestedModel) {
+    return mappedModel;
+  }
+  if (hasTokenContext) {
+    const tokenMapping = parseModelMappingRecord(tokenModelMapping);
+    if (tokenMapping) {
+      return resolveMappedModel(mappedModel, tokenMapping);
+    }
+    return mappedModel;
   }
   // Fallback: apply account-level model mapping at runtime (for channels without sourceModel)
   const accountMapping = getModelMappingFromExtraConfig(accountExtraConfig);
@@ -1824,6 +1827,8 @@ export class TokenRouter {
         match.route,
         mappedModel,
         selected.channel.sourceModel,
+        Boolean(selected.token),
+        selected.token?.modelMapping,
         selected.account.extraConfig,
       );
       summary.push(`全局轮询：可用 ${ordered.length}，忽略优先级`);
@@ -1930,6 +1935,8 @@ export class TokenRouter {
       match.route,
       mappedModel,
       selected.channel.sourceModel,
+      Boolean(selected.token),
+      selected.token?.modelMapping,
       selected.account.extraConfig,
     );
     summary.push(`最终选择：${selectedLabel}（P${selectedPriority}）`);
@@ -2206,6 +2213,8 @@ export class TokenRouter {
         match.route,
         mappedModel,
         selected.channel.sourceModel,
+        Boolean(selected.token),
+        selected.token?.modelMapping,
         selected.account.extraConfig,
       );
 
@@ -2256,6 +2265,8 @@ export class TokenRouter {
         match.route,
         mappedModel,
         selected.channel.sourceModel,
+        Boolean(selected.token),
+        selected.token?.modelMapping,
         selected.account.extraConfig,
       );
 
@@ -2321,6 +2332,8 @@ export class TokenRouter {
       match.route,
       mappedModel,
       selected.channel.sourceModel,
+      Boolean(selected.token),
+      selected.token?.modelMapping,
       selected.account.extraConfig,
     );
 
@@ -2723,5 +2736,6 @@ export const tokenRouter = new TokenRouter();
 
 export const __tokenRouterTestUtils = {
   resolveMappedModel,
+  resolveActualModelForSelectedChannel,
   resetStableFirstObservationState,
 };

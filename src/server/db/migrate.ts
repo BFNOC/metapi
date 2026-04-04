@@ -83,6 +83,10 @@ const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   // 0019: proxy log stream/timing columns
   { table: 'proxy_logs', column: 'is_stream' },
   { table: 'proxy_logs', column: 'first_byte_latency_ms' },
+  // 0020: account token model config columns
+  { table: 'account_tokens', column: 'model_filter_mode' },
+  { table: 'account_tokens', column: 'filtered_models' },
+  { table: 'account_tokens', column: 'model_mapping' },
 ];
 
 

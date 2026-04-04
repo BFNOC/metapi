@@ -16,6 +16,18 @@ describe('schema contract generation', () => {
       notNull: true,
       defaultValue: "'ready'",
     });
+    expect(contract.tables.account_tokens.columns.model_filter_mode).toMatchObject({
+      logicalType: 'text',
+      defaultValue: "'none'",
+    });
+    expect(contract.tables.account_tokens.columns.filtered_models).toMatchObject({
+      logicalType: 'json',
+      defaultValue: null,
+    });
+    expect(contract.tables.account_tokens.columns.model_mapping).toMatchObject({
+      logicalType: 'json',
+      defaultValue: null,
+    });
     expect(contract.tables.site_disabled_models).toBeDefined();
     expect(contract.tables.downstream_api_keys).toBeDefined();
     expect(contract.tables.proxy_files).toBeDefined();

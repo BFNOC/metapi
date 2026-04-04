@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ type ModelServiceModule = typeof import('./modelService.js');
 describe('rebuildTokenRoutesFromAvailability', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let ensureSiteCompatibilityColumns: DbModule['ensureSiteCompatibilityColumns'];
   let rebuildTokenRoutesFromAvailability: ModelServiceModule['rebuildTokenRoutesFromAvailability'];
   let dataDir = '';
 
@@ -19,11 +20,14 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
+    await dbModule.ensureSiteCompatibilityColumns();
     const modelService = await import('./modelService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
+    ensureSiteCompatibilityColumns = dbModule.ensureSiteCompatibilityColumns;
     rebuildTokenRoutesFromAvailability = modelService.rebuildTokenRoutesFromAvailability;
+    await ensureSiteCompatibilityColumns();
   });
 
   beforeEach(async () => {
@@ -199,6 +203,116 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     expect(channels[0]?.manualOverride).toBe(false);
   });
 
+  it('builds token routes from token-level reverse mappings instead of account mappings', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'token-mapping-site',
+      url: 'https://token-mapping-site.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'token-mapping-user',
+      accessToken: 'session-token',
+      status: 'active',
+      extraConfig: JSON.stringify({
+        modelMapping: {
+          'account-glm-5': 'vendor-glm-5',
+        },
+      }),
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-token-mapping',
+      enabled: true,
+      isDefault: true,
+      modelMapping: JSON.stringify({
+        'token-glm-5': 'vendor-glm-5',
+      }),
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'vendor-glm-5',
+      available: true,
+    }).run();
+
+    await rebuildTokenRoutesFromAvailability();
+
+    const tokenRoute = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.modelPattern, 'token-glm-5'))
+      .get();
+    const accountRoute = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.modelPattern, 'account-glm-5'))
+      .get();
+
+    expect(tokenRoute).toBeDefined();
+    expect(accountRoute).toBeUndefined();
+
+    const channel = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, tokenRoute!.id))
+      .get();
+    expect(channel).toMatchObject({
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'vendor-glm-5',
+    });
+  });
+
+  it('skips conflicting token-level reverse mappings that resolve two upstream models to the same route name', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const site = await db.insert(schema.sites).values({
+        name: 'token-conflict-site',
+        url: 'https://token-conflict-site.example.com',
+        platform: 'new-api',
+      }).returning().get();
+
+      const account = await db.insert(schema.accounts).values({
+        siteId: site.id,
+        username: 'token-conflict-user',
+        accessToken: 'session-token',
+        status: 'active',
+      }).returning().get();
+
+      const token = await db.insert(schema.accountTokens).values({
+        accountId: account.id,
+        name: 'default',
+        token: 'sk-token-conflict',
+        enabled: true,
+        isDefault: true,
+        modelMapping: JSON.stringify({
+          'glm-5-public': 'vendor-glm-5',
+        }),
+      }).returning().get();
+
+      await db.insert(schema.tokenModelAvailability).values([
+        {
+          tokenId: token.id,
+          modelName: 'vendor-glm-5',
+          available: true,
+        },
+        {
+          tokenId: token.id,
+          modelName: 'glm-5-public',
+          available: true,
+        },
+      ]).run();
+
+      await rebuildTokenRoutesFromAvailability();
+
+      const route = await db.select().from(schema.tokenRoutes)
+        .where(eq(schema.tokenRoutes.modelPattern, 'glm-5-public'))
+        .get();
+      expect(route).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('skip conflicting token model mapping'));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('removes stale exact routes and keeps wildcard routes on rebuild', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'site-1',
@@ -278,5 +392,112 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     const wildcardRouteAfter = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, wildcardRoute.id)).get();
     expect(wildcardRouteAfter).toBeDefined();
+  });
+
+  it('uses token-level reverse mapping to expose token routes by mapped request name', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'token-mapping-site',
+      url: 'https://token-mapping.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'token-mapping-user',
+      accessToken: 'access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-token-mapping',
+      enabled: true,
+      isDefault: true,
+      modelMapping: JSON.stringify({
+        'glm-5': 'provider-glm-5',
+      }),
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'provider-glm-5',
+      available: true,
+    }).run();
+
+    const rebuild = await rebuildTokenRoutesFromAvailability();
+    expect(rebuild.models).toBe(1);
+
+    const route = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.modelPattern, 'glm-5'))
+      .get();
+    expect(route).toBeDefined();
+
+    const channels = await db.select().from(schema.routeChannels)
+      .where(and(
+        eq(schema.routeChannels.routeId, route!.id),
+        eq(schema.routeChannels.tokenId, token.id),
+      ))
+      .all();
+    expect(channels).toHaveLength(1);
+    expect(channels[0]?.sourceModel).toBe('provider-glm-5');
+
+    const upstreamNamedRoute = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.modelPattern, 'provider-glm-5'))
+      .get();
+    expect(upstreamNamedRoute).toBeUndefined();
+  });
+
+  it('skips conflicting token-level route names instead of silently overwriting', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const site = await db.insert(schema.sites).values({
+        name: 'token-conflict-site',
+        url: 'https://token-conflict.example.com',
+        platform: 'new-api',
+      }).returning().get();
+
+      const account = await db.insert(schema.accounts).values({
+        siteId: site.id,
+        username: 'token-conflict-user',
+        accessToken: 'access-token',
+        status: 'active',
+      }).returning().get();
+
+      const token = await db.insert(schema.accountTokens).values({
+        accountId: account.id,
+        name: 'default',
+        token: 'sk-token-conflict',
+        enabled: true,
+        isDefault: true,
+        modelMapping: JSON.stringify({
+          'glm-5': 'provider-glm-5',
+        }),
+      }).returning().get();
+
+      await db.insert(schema.tokenModelAvailability).values([
+        {
+          tokenId: token.id,
+          modelName: 'provider-glm-5',
+          available: true,
+        },
+        {
+          tokenId: token.id,
+          modelName: 'glm-5',
+          available: true,
+        },
+      ]).run();
+
+      const rebuild = await rebuildTokenRoutesFromAvailability();
+      expect(rebuild.models).toBe(0);
+
+      const route = await db.select().from(schema.tokenRoutes)
+        .where(eq(schema.tokenRoutes.modelPattern, 'glm-5'))
+        .get();
+      expect(route).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('skip conflicting token model mapping'));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

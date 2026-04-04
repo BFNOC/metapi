@@ -22,6 +22,7 @@ import { invalidateTokenRouterCache } from './tokenRouter.js';
 import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
 import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
+import { buildReverseExactModelMapping, parseNormalizedModelMapping } from './modelMappingRecord.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
 import { withAccountProxyOverride } from './siteProxy.js';
 import { isCodexPlatform } from './oauth/codexAccount.js';
@@ -1032,7 +1033,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     return false;
   }
 
-  // Build per-account reverse model mapping: upstreamModel → requestModel
+  // Build reverse model mappings: upstreamModel → requestModel
   // e.g. 「阿里」glm-5 → glm-5, so routes expose user-facing names
   const accountReverseMappings = new Map<number, Map<string, string>>();
   const accountIdsSeen = new Set<number>();
@@ -1048,8 +1049,6 @@ export async function rebuildTokenRoutesFromAvailability() {
     if (!mapping) continue;
     const reverse = new Map<string, string>();
     for (const [requestName, upstreamName] of Object.entries(mapping)) {
-      // Skip pattern keys (wildcards, regex) — these are runtime-only mappings
-      // and should NOT produce route names (they'd appear in /v1/models as garbage)
       if (requestName.includes('*') || requestName.startsWith('re:') || requestName.startsWith('^')) continue;
       if (typeof upstreamName !== 'string' || !upstreamName.trim()) continue;
       reverse.set(upstreamName.toLowerCase(), requestName);
@@ -1057,7 +1056,19 @@ export async function rebuildTokenRoutesFromAvailability() {
     if (reverse.size > 0) accountReverseMappings.set(acc.id, reverse);
   }
 
+  const tokenReverseMappings = new Map<number, Map<string, string>>();
+  const tokenMappingRows = await db.select({
+    id: schema.accountTokens.id,
+    modelMapping: schema.accountTokens.modelMapping,
+  }).from(schema.accountTokens).all();
+  for (const row of tokenMappingRows) {
+    const parsed = buildReverseExactModelMapping(parseNormalizedModelMapping(row.modelMapping));
+    if (parsed.size > 0) tokenReverseMappings.set(row.id, parsed);
+  }
+  const loggedTokenRouteNameConflicts = new Set<string>();
+
   const modelCandidates = new Map<string, Map<string, { accountId: number; tokenId: number | null; sourceModel: string | null }>>();
+  const conflictedRouteCandidates = new Set<string>();
   const addModelCandidate = (modelNameRaw: string | null | undefined, accountId: number, tokenId: number | null, siteId: number, skipSiteFilter = false) => {
     const originalModel = (modelNameRaw || '').trim();
     if (!originalModel) return;
@@ -1065,16 +1076,37 @@ export async function rebuildTokenRoutesFromAvailability() {
     if (isModelFilteredByToken(tokenId, originalModel)) return;
     if (blockedBrandRules.length > 0 && isModelBlockedByBrand(originalModel, blockedBrandRules)) return;
 
-    // Apply reverse model mapping: if account maps "glm-5" → "「阿里」glm-5",
-    // then when we see "「阿里」glm-5" in availability, expose it as "glm-5" in routes
-    const reverseMap = accountReverseMappings.get(accountId);
+    const reverseMap = tokenId != null
+      ? tokenReverseMappings.get(tokenId)
+      : accountReverseMappings.get(accountId);
     const mappedName = reverseMap?.get(originalModel.toLowerCase());
     const routeModelName = mappedName || originalModel;
     const sourceModel = mappedName ? originalModel : null;
-
     if (!modelCandidates.has(routeModelName)) modelCandidates.set(routeModelName, new Map());
     const candidateKey = `${accountId}:${tokenId ?? 'account'}`;
-    modelCandidates.get(routeModelName)!.set(candidateKey, { accountId, tokenId, sourceModel });
+    const conflictKey = `${candidateKey}::${routeModelName}`;
+    if (conflictedRouteCandidates.has(conflictKey)) {
+      return;
+    }
+    const candidateMap = modelCandidates.get(routeModelName)!;
+    const existing = candidateMap.get(candidateKey);
+    if (existing) {
+      const existingSource = existing.sourceModel || routeModelName;
+      const desiredSource = sourceModel || routeModelName;
+      if (existingSource !== desiredSource) {
+        candidateMap.delete(candidateKey);
+        if (candidateMap.size === 0) {
+          modelCandidates.delete(routeModelName);
+        }
+        conflictedRouteCandidates.add(conflictKey);
+        if (tokenId != null && !loggedTokenRouteNameConflicts.has(conflictKey)) {
+          loggedTokenRouteNameConflicts.add(conflictKey);
+          console.warn(`[modelService] skip conflicting token model mapping for token ${tokenId}: route "${routeModelName}" resolves from multiple upstream models`);
+        }
+      }
+      return;
+    }
+    candidateMap.set(candidateKey, { accountId, tokenId, sourceModel });
   };
 
   for (const row of usableTokenRows) {
@@ -1149,6 +1181,9 @@ export async function rebuildTokenRoutesFromAvailability() {
   let removedRoutes = 0;
 
   for (const [modelName, candidateMap] of modelCandidates.entries()) {
+    if (candidateMap.size === 0) {
+      continue;
+    }
     let route = routes.find((r) => (r.routeMode || 'pattern') !== 'explicit_group' && r.modelPattern === modelName);
     if (!route) {
       const inserted = await db.insert(schema.tokenRoutes).values({

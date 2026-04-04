@@ -50,6 +50,15 @@ export const ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS: AccountTokenColumnCompati
       postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "filtered_models" TEXT',
     },
   },
+  {
+    table: 'account_tokens',
+    column: 'model_mapping',
+    addSql: {
+      sqlite: 'ALTER TABLE account_tokens ADD COLUMN model_mapping text;',
+      mysql: 'ALTER TABLE `account_tokens` ADD COLUMN `model_mapping` TEXT NULL',
+      postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "model_mapping" TEXT',
+    },
+  },
 ];
 
 function normalizeSchemaErrorMessage(error: unknown): string {

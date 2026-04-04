@@ -19,6 +19,7 @@ describe('backupService', () => {
 
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
+    await dbModule.ensureSiteCompatibilityColumns();
     const serviceModule = await import('./backupService.js');
 
     db = dbModule.db;
@@ -99,6 +100,7 @@ describe('backupService', () => {
       source: 'manual',
       enabled: true,
       isDefault: true,
+      modelMapping: JSON.stringify({ 'glm-5': 'vendor-glm-5' }),
       createdAt: now,
       updatedAt: now,
     }).returning().get();
@@ -254,6 +256,9 @@ describe('backupService', () => {
     expect(restoredAccount?.oauthProvider).toBe('codex');
     expect(restoredAccount?.oauthAccountKey).toBe('roundtrip-account-key');
     expect(restoredAccount?.oauthProjectId).toBe('roundtrip-project-id');
+
+    const restoredToken = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, accountToken.id)).get();
+    expect(restoredToken?.modelMapping).toBe('{"glm-5":"vendor-glm-5"}');
 
     expect(restoredRoute?.displayName).toBe('gpt-route');
     expect(restoredRoute?.displayIcon).toBe('icon-gpt');

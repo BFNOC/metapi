@@ -87,6 +87,7 @@ export const accountTokens = sqliteTable('account_tokens', {
   isDefault: integer('is_default', { mode: 'boolean' }).default(false),
   modelFilterMode: text('model_filter_mode').default('none'), // 'none' | 'allow-list' | 'deny-list'
   filteredModels: text('filtered_models'), // JSON array<string>
+  modelMapping: text('model_mapping'), // JSON
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({

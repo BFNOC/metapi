@@ -446,7 +446,22 @@ function buildStatements(
   for (const row of snapshot.accounts.accountTokens) {
     statements.push({
       table: 'account_tokens',
-      columns: ['id', 'account_id', 'name', 'token', 'token_group', 'value_status', 'source', 'enabled', 'is_default', 'created_at', 'updated_at'],
+      columns: [
+        'id',
+        'account_id',
+        'name',
+        'token',
+        'token_group',
+        'value_status',
+        'source',
+        'enabled',
+        'is_default',
+        'model_filter_mode',
+        'filtered_models',
+        'model_mapping',
+        'created_at',
+        'updated_at',
+      ],
       values: [
         asNumber(row.id, 0),
         asNumber(row.accountId, 0),
@@ -457,6 +472,9 @@ function buildStatements(
         asNullableString(row.source) ?? 'manual',
         asBoolean(row.enabled, true),
         asBoolean(row.isDefault, false),
+        asNullableString((row as { modelFilterMode?: unknown }).modelFilterMode) ?? 'none',
+        asNullableString((row as { filteredModels?: unknown }).filteredModels),
+        serializeColumnValue('account_tokens', 'model_mapping', (row as { modelMapping?: unknown }).modelMapping, contract),
         asNullableString(row.createdAt),
         asNullableString(row.updatedAt),
       ],

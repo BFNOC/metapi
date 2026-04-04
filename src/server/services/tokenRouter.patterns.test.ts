@@ -26,6 +26,7 @@ describe('TokenRouter patterns and model mapping', () => {
 
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
+    await dbModule.ensureSiteCompatibilityColumns();
     const tokenRouterModule = await import('./tokenRouter.js');
     db = dbModule.db;
     schema = dbModule.schema;
@@ -168,6 +169,60 @@ describe('TokenRouter patterns and model mapping', () => {
     })).toBe('target-glob');
   });
 
+  it('prefers token-level mapping over account-level mapping when sourceModel is empty', async () => {
+    const { route } = await createRouteWithSingleChannel('*');
+
+    expect(tokenRouterTestUtils.resolveActualModelForSelectedChannel(
+      'glm-5',
+      route,
+      'glm-5',
+      null,
+      true,
+      { 'glm-5': 'token-upstream' },
+      JSON.stringify({
+        modelMapping: {
+          'glm-5': 'account-upstream',
+        },
+      }),
+    )).toBe('token-upstream');
+  });
+
+  it('falls back to account-level mapping for direct-account channels without token mapping', async () => {
+    const { route } = await createRouteWithSingleChannel('*');
+
+    expect(tokenRouterTestUtils.resolveActualModelForSelectedChannel(
+      'glm-5',
+      route,
+      'glm-5',
+      null,
+      false,
+      null,
+      JSON.stringify({
+        modelMapping: {
+          'glm-5': 'account-upstream',
+        },
+      }),
+    )).toBe('account-upstream');
+  });
+
+  it('does not fall back to account-level mapping for token channels without token mapping', async () => {
+    const { route } = await createRouteWithSingleChannel('*');
+
+    expect(tokenRouterTestUtils.resolveActualModelForSelectedChannel(
+      'glm-5',
+      route,
+      'glm-5',
+      null,
+      true,
+      null,
+      JSON.stringify({
+        modelMapping: {
+          'glm-5': 'account-upstream',
+        },
+      }),
+    )).toBe('glm-5');
+  });
+
   it('matches a route by display name alias as an exposed model', async () => {
     await createRouteWithSingleChannel(
       're:^claude-(opus|sonnet)-4-5$',
@@ -229,5 +284,61 @@ describe('TokenRouter patterns and model mapping', () => {
     expect(decision.actualModel).toBe('claude-opus-4-5');
     expect(decision.summary).toContain('按显示名命中：claude-test-4.6-sonnet');
     expect(decision.summary).toContain('实际转发模型：claude-opus-4-5');
+  });
+
+  it('prefers token-level model mapping over account-level fallback when token mapping exists', () => {
+    const actual = tokenRouterTestUtils.resolveActualModelForSelectedChannel(
+      'glm-5',
+      {} as any,
+      'glm-5',
+      null,
+      true,
+      JSON.stringify({ 'glm-5': 'token-upstream' }),
+      JSON.stringify({ modelMapping: { 'glm-5': 'account-upstream' } }),
+    );
+
+    expect(actual).toBe('token-upstream');
+  });
+
+  it('falls back to account-level mapping for direct-account channels without token mapping', () => {
+    const actual = tokenRouterTestUtils.resolveActualModelForSelectedChannel(
+      'glm-5',
+      {} as any,
+      'glm-5',
+      null,
+      false,
+      null,
+      JSON.stringify({ modelMapping: { 'glm-5': 'account-upstream' } }),
+    );
+
+    expect(actual).toBe('account-upstream');
+  });
+
+  it('does not fall back to account-level mapping for token channels without token mapping', () => {
+    const actual = tokenRouterTestUtils.resolveActualModelForSelectedChannel(
+      'glm-5',
+      {} as any,
+      'glm-5',
+      null,
+      true,
+      null,
+      JSON.stringify({ modelMapping: { 'glm-5': 'account-upstream' } }),
+    );
+
+    expect(actual).toBe('glm-5');
+  });
+
+  it('keeps route-level mapping authoritative before token-level mapping', () => {
+    const actual = tokenRouterTestUtils.resolveActualModelForSelectedChannel(
+      'glm-5',
+      {} as any,
+      'route-upstream',
+      null,
+      true,
+      JSON.stringify({ 'route-upstream': 'token-upstream' }),
+      JSON.stringify({ modelMapping: { 'glm-5': 'account-upstream' } }),
+    );
+
+    expect(actual).toBe('route-upstream');
   });
 });

@@ -672,6 +672,7 @@ function pushDefaultImportedToken(
     isDefault: true,
     modelFilterMode: null,
     filteredModels: null,
+    modelMapping: null,
     createdAt,
     updatedAt,
   });
@@ -1084,6 +1085,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         isDefault: true,
         modelFilterMode: null,
         filteredModels: null,
+        modelMapping: null,
         createdAt,
         updatedAt,
       });
@@ -1603,6 +1605,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         isDefault: row.isDefault,
         modelFilterMode: row.modelFilterMode ?? null,
         filteredModels: row.filteredModels ?? null,
+        modelMapping: row.modelMapping ?? null,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();

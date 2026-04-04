@@ -59,6 +59,7 @@ type SyncableAccount = {
   site?: {
     status?: string | null;
     name?: string | null;
+    modelFilterMode?: string | null;
   } | null;
 };
 
@@ -160,7 +161,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
   }>(null);
   const [probeTarget, setProbeTarget] = useState<null | { tokenId: number; tokenName: string; siteId: number; siteName: string; models?: string[] }>(null);
   const [modelFilterTarget, setModelFilterTarget] = useState<null | { tokenId: number; tokenName: string }>(null);
-  const [mappingTarget, setMappingTarget] = useState<{ accountId: number; accountName: string; mapping: Record<string, string> | null; availableModels: string[]; loadingModels: boolean } | null>(null);
+  const [mappingTarget, setMappingTarget] = useState<{ tokenId: number; tokenName: string; mapping: Record<string, string> | null; availableModels: string[]; loadingModels: boolean } | null>(null);
   const [form, setForm] = useState(initialCreateForm);
   const [editForm, setEditForm] = useState({
     name: '',
@@ -178,29 +179,45 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
   const editingTokenIdRef = useRef<number | null>(null);
   const toast = useToast();
 
-  const parseAccountExtraConfig = (account: any): Record<string, any> => {
-    try { return JSON.parse(account?.extraConfig || '{}') || {}; }
-    catch { return {}; }
-  };
-
-  const openMappingModal = (accountId: number) => {
-    const account = accounts.find((a: any) => a.id === accountId);
-    if (!account) return;
-    const accountName = (account as any).username || `account-${accountId}`;
+  const openMappingModal = async (token: any) => {
+    const tokenId = Number(token?.id || 0);
+    if (!Number.isFinite(tokenId) || tokenId <= 0) return;
+    const tokenName = String(token?.name || '').trim() || `token-${tokenId}`;
     const target = {
-      accountId,
-      accountName,
-      mapping: parseAccountExtraConfig(account)?.modelMapping || null,
+      tokenId,
+      tokenName,
+      mapping: null as Record<string, string> | null,
       availableModels: [] as string[],
       loadingModels: true,
     };
     setMappingTarget(target);
-    api.getAccountModels(accountId).then((result: any) => {
-      const models = Array.isArray(result?.models) ? result.models.map((m: any) => m.name as string).sort() : [];
-      setMappingTarget((prev) => prev && prev.accountId === accountId ? { ...prev, availableModels: models, loadingModels: false } : prev);
-    }).catch(() => {
-      setMappingTarget((prev) => prev && prev.accountId === accountId ? { ...prev, loadingModels: false } : prev);
-    });
+    try {
+      const [mappingResult, modelsResult] = await Promise.all([
+        api.getTokenModelMapping(tokenId),
+        api.getTokenModels(tokenId),
+      ]);
+      const models = Array.isArray(modelsResult?.models)
+        ? modelsResult.models
+          .filter((model: any) => !model?.filtered)
+          .map((model: any) => String(model?.name || '').trim())
+          .filter((name: string) => name.length > 0)
+          .sort()
+        : [];
+      setMappingTarget((prev) => (
+        prev && prev.tokenId === tokenId
+          ? {
+            ...prev,
+            mapping: (mappingResult?.modelMapping && typeof mappingResult.modelMapping === 'object')
+              ? mappingResult.modelMapping as Record<string, string>
+              : null,
+            availableModels: models,
+            loadingModels: false,
+          }
+          : prev
+      ));
+    } catch {
+      setMappingTarget((prev) => prev && prev.tokenId === tokenId ? { ...prev, loadingModels: false } : prev);
+    }
   };
 
   const load = useCallback(async () => {
@@ -1330,7 +1347,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                           )}
                           {!isPending && (
                             <button
-                              onClick={() => openMappingModal(token.accountId)}
+                              onClick={() => { void openMappingModal(token); }}
                               className="btn btn-link btn-link-primary"
                             >
                               模型映射
@@ -1487,7 +1504,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                         )}
                         {!isPending && (
                           <button
-                            onClick={() => openMappingModal(token.accountId)}
+                            onClick={() => { void openMappingModal(token); }}
                             className="btn btn-link btn-link-primary token-table-action-btn"
                           >
                             模型映射
@@ -1562,13 +1579,13 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       <ModelMappingModal
         open={!!mappingTarget}
         onClose={() => { setMappingTarget(null); void load(); }}
-        accountName={mappingTarget?.accountName || ''}
+        targetName={mappingTarget?.tokenName || ''}
         initialMapping={mappingTarget?.mapping || null}
         availableModels={mappingTarget?.availableModels || []}
         loadingModels={mappingTarget?.loadingModels || false}
         onSave={async (mapping) => {
           if (!mappingTarget) return;
-          await api.updateAccount(mappingTarget.accountId, { modelMapping: mapping });
+          await api.updateTokenModelMapping(mappingTarget.tokenId, { modelMapping: mapping });
           toast.success(mapping ? '模型映射已保存' : '模型映射已清除');
         }}
       />

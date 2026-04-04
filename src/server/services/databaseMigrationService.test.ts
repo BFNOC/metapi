@@ -269,7 +269,13 @@ describe('databaseMigrationService', () => {
           extraConfig: { platformUserId: 42 },
           status: 'active',
         }],
-        accountTokens: [],
+        accountTokens: [{
+          id: 7,
+          accountId: 2,
+          name: 'default',
+          token: 'sk-demo',
+          modelMapping: { 'glm-5': 'provider-glm-5' },
+        }],
         checkinLogs: [],
         modelAvailability: [],
         tokenModelAvailability: [],
@@ -314,6 +320,7 @@ describe('databaseMigrationService', () => {
 
     const siteStatement = statements.find((statement) => statement.table === 'sites');
     const accountStatement = statements.find((statement) => statement.table === 'accounts');
+    const accountTokenStatement = statements.find((statement) => statement.table === 'account_tokens');
     const tokenRouteStatement = statements.find((statement) => statement.table === 'token_routes');
     const proxyLogStatement = statements.find((statement) => statement.table === 'proxy_logs');
     const proxyVideoStatement = statements.find((statement) => statement.table === 'proxy_video_tasks');
@@ -321,6 +328,7 @@ describe('databaseMigrationService', () => {
 
     expect(siteStatement?.values[siteStatement.columns.indexOf('custom_headers')]).toBe('{"x-site-scope":"internal"}');
     expect(accountStatement?.values[accountStatement.columns.indexOf('extra_config')]).toBe('{"platformUserId":42}');
+    expect(accountTokenStatement?.values[accountTokenStatement.columns.indexOf('model_mapping')]).toBe('{"glm-5":"provider-glm-5"}');
     expect(tokenRouteStatement?.values[tokenRouteStatement.columns.indexOf('model_mapping')]).toBe('{"*":"gpt-4o-mini"}');
     expect(tokenRouteStatement?.values[tokenRouteStatement.columns.indexOf('decision_snapshot')]).toBe('{"channels":[1]}');
     expect(proxyLogStatement?.values[proxyLogStatement.columns.indexOf('billing_details')]).toBe('{"total":1.25}');
@@ -329,6 +337,60 @@ describe('databaseMigrationService', () => {
     expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('supported_models')]).toBe('["gpt-4o-mini"]');
     expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('allowed_route_ids')]).toBe('[3]');
     expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('site_weight_multipliers')]).toBe('{"1":1.5}');
+  });
+
+  it('preserves account token model filter fields and token-level model mapping in migration statements', () => {
+    const statements = __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        siteAllowedModels: [],
+        accounts: [],
+        accountTokens: [{
+          id: 7,
+          accountId: 3,
+          name: 'default',
+          token: 'sk-token',
+          tokenGroup: 'vip',
+          valueStatus: 'ready',
+          source: 'manual',
+          enabled: true,
+          isDefault: false,
+          modelFilterMode: 'allow-list',
+          filteredModels: '["glm-5"]',
+          modelMapping: { 'glm-5': 'vendor-glm-5' },
+          createdAt: '2026-04-04 10:00:00',
+          updatedAt: '2026-04-04 10:00:00',
+        }],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [],
+        proxyVideoTasks: [],
+        proxyFiles: [],
+        downstreamApiKeys: [],
+        events: [],
+      },
+      preferences: {
+        settings: [],
+      },
+    } as any);
+
+    const tokenStatement = statements.find((statement) => statement.table === 'account_tokens');
+    expect(tokenStatement?.columns).toEqual(expect.arrayContaining([
+      'model_filter_mode',
+      'filtered_models',
+      'model_mapping',
+    ]));
+    expect(tokenStatement?.values[tokenStatement.columns.indexOf('model_filter_mode')]).toBe('allow-list');
+    expect(tokenStatement?.values[tokenStatement.columns.indexOf('filtered_models')]).toBe('["glm-5"]');
+    expect(tokenStatement?.values[tokenStatement.columns.indexOf('model_mapping')]).toBe('{"glm-5":"vendor-glm-5"}');
   });
 
   it('uses schema logical types to serialize JSON columns instead of String(value)', () => {

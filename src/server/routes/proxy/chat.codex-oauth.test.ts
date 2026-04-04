@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
+const selectPreferredChannelMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -21,20 +22,29 @@ const dbInsertMock = vi.fn((_arg?: any) => ({
   }),
 }));
 
-vi.mock('undici', () => ({
-  fetch: (...args: unknown[]) => fetchMock(...args),
-}));
+vi.mock('undici', async () => {
+  const actual = await vi.importActual<typeof import('undici')>('undici');
+  return {
+    ...actual,
+    fetch: (...args: unknown[]) => fetchMock(...args),
+  };
+});
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
     selectChannel: (...args: unknown[]) => selectChannelMock(...args),
     selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
 }));
 
 vi.mock('../../services/modelService.js', () => ({
+  refreshModelsAndRebuildRoutes: (...args: unknown[]) => refreshModelsAndRebuildRoutesMock(...args),
+}));
+
+vi.mock('../../services/routeRefreshWorkflow.js', () => ({
   refreshModelsAndRebuildRoutes: (...args: unknown[]) => refreshModelsAndRebuildRoutesMock(...args),
 }));
 
@@ -72,6 +82,7 @@ vi.mock('../../db/index.js', () => ({
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
+  hasProxyLogStreamTimingColumns: async () => false,
   schema: {
     proxyLogs: {},
   },
@@ -106,6 +117,7 @@ describe('chat proxy codex oauth compatibility', () => {
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
+    selectPreferredChannelMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -117,7 +129,7 @@ describe('chat proxy codex oauth compatibility', () => {
 
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
-      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
         username: 'codex-user@example.com',
@@ -135,6 +147,7 @@ describe('chat proxy codex oauth compatibility', () => {
       tokenValue: 'oauth-access-token',
       actualModel: 'gpt-5.4',
     });
+    selectPreferredChannelMock.mockReturnValue(null);
     selectNextChannelMock.mockReturnValue(null);
     refreshOauthAccessTokenSingleflightMock.mockResolvedValue({
       accessToken: 'fresh-access-token',
@@ -169,7 +182,6 @@ describe('chat proxy codex oauth compatibility', () => {
         messages: [{ role: 'user', content: 'hello codex' }],
       },
     });
-
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
@@ -180,7 +192,8 @@ describe('chat proxy codex oauth compatibility', () => {
     expect(forwardedBody.store).toBe(false);
     expect(forwardedBody.parallel_tool_calls).toBeUndefined();
     expect(forwardedBody.include).toBeUndefined();
-    expect(forwardedBody.max_output_tokens).toBe(256);
+    expect(forwardedBody.max_output_tokens).toBeUndefined();
+    expect(forwardedBody.max_tokens).toBeUndefined();
     expect(forwardedBody.max_completion_tokens).toBeUndefined();
 
     const body = response.json();
@@ -296,7 +309,7 @@ describe('chat proxy codex oauth compatibility', () => {
   it('retries oauth chat requests with a normalized upstream URL after refresh', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
-      site: { name: 'openai-site', url: 'https://gateway.example.com/v1/', platform: 'openai' },
+      site: { id: 45, name: 'openai-site', url: 'https://gateway.example.com/v1/', platform: 'openai' },
       account: {
         id: 33,
         username: 'oauth-user@example.com',

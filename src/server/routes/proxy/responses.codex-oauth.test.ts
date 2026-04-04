@@ -34,9 +34,13 @@ const dbInsertMock = vi.fn((_arg?: any) => ({
   },
 }));
 
-vi.mock('undici', () => ({
-  fetch: (...args: unknown[]) => fetchMock(...args),
-}));
+vi.mock('undici', async () => {
+  const actual = await vi.importActual<typeof import('undici')>('undici');
+  return {
+    ...actual,
+    fetch: (...args: unknown[]) => fetchMock(...args),
+  };
+});
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
@@ -49,6 +53,10 @@ vi.mock('../../services/tokenRouter.js', () => ({
 }));
 
 vi.mock('../../services/modelService.js', () => ({
+  refreshModelsAndRebuildRoutes: (...args: unknown[]) => refreshModelsAndRebuildRoutesMock(...args),
+}));
+
+vi.mock('../../services/routeRefreshWorkflow.js', () => ({
   refreshModelsAndRebuildRoutes: (...args: unknown[]) => refreshModelsAndRebuildRoutesMock(...args),
 }));
 
@@ -90,6 +98,7 @@ vi.mock('../../db/index.js', () => ({
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
+  hasProxyLogStreamTimingColumns: async () => false,
   schema: {
     proxyLogs: {},
   },
@@ -173,7 +182,7 @@ describe('responses proxy codex oauth refresh', () => {
 
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
-      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
         username: 'codex-user@example.com',
@@ -332,7 +341,7 @@ describe('responses proxy codex oauth refresh', () => {
   it('retries oauth responses requests with a normalized upstream URL after refresh', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
-      site: { name: 'openai-site', url: 'https://gateway.example.com/v1/', platform: 'openai' },
+      site: { id: 45, name: 'openai-site', url: 'https://gateway.example.com/v1/', platform: 'openai' },
       account: {
         id: 33,
         username: 'oauth-user@example.com',
@@ -733,7 +742,7 @@ describe('responses proxy codex oauth refresh', () => {
 
     const selected = {
       channel: { id: 11, routeId: 22 },
-      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
         username: 'codex-user@example.com',

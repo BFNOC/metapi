@@ -98,6 +98,15 @@ describe('proxy route architecture boundaries', () => {
     expect(source).not.toContain('shouldInjectDerivedPromptCacheKey');
   });
 
+  it('keeps codex responses normalization behind transformer helpers', () => {
+    const source = readSource('./upstreamEndpoint.ts');
+    expect(source).toContain("from '../../transformers/openai/responses/codexCompatibility.js'");
+    expect(source).not.toContain('function ensureCodexResponsesInstructions(');
+    expect(source).not.toContain('function ensureCodexResponsesStoreFalse(');
+    expect(source).not.toContain('function stripCodexUnsupportedResponsesFields(');
+    expect(source).not.toContain('function applyCodexResponsesCompatibility(');
+  });
+
   it('keeps gemini runtime closure in transformer-owned helpers', () => {
     const source = readSource('./gemini.ts');
     const surfaceSource = readSource('../../proxy-core/surfaces/geminiSurface.ts');
@@ -179,4 +188,3 @@ describe('proxy route architecture boundaries', () => {
     expect(geminiSource).not.toContain("from '../../transformers/canonical/");
   });
 });
-

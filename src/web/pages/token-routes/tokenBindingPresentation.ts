@@ -22,6 +22,10 @@ type TokenBindingContext = {
   accountName?: string | null;
 };
 
+type DirectBindingPresentationContext = {
+  sourceModel?: string;
+};
+
 function parseExtraConfigHints(extraConfig?: string | null): {
   credentialMode: Extract<TokenBindingConnectionMode, 'session' | 'apikey'> | null;
   hasOauthProvider: boolean;
@@ -52,27 +56,29 @@ function parseExtraConfigHints(extraConfig?: string | null): {
 function buildDirectBindingPresentation(
   connectionMode: Extract<TokenBindingConnectionMode, 'apikey' | 'oauth'>,
   accountName: string,
+  context: DirectBindingPresentationContext = {},
 ): TokenBindingPresentation {
+  const sourceModelSuffix = context.sourceModel ? ` [${context.sourceModel}]` : '';
   if (connectionMode === 'oauth') {
     return {
       isFollowingAccountDefault: false,
-      bindingModeLabel: 'OAuth授权',
+      bindingModeLabel: '账号主凭证',
       badgeTone: 'warning',
       effectiveTokenName: accountName,
       helperText: `当前直接使用连接「${accountName}」的 OAuth 授权，不依赖账号令牌。`,
-      followOptionLabel: `固定使用：${accountName}(OAuth 授权)`,
-      followOptionDescription: `直接使用连接「${accountName}」的 OAuth 授权`,
+      followOptionLabel: `账号主凭证${sourceModelSuffix}`,
+      followOptionDescription: `直接使用连接「${accountName}」的 OAuth 授权${context.sourceModel ? `，来源模型 ${context.sourceModel}` : ''}`,
     };
   }
 
   return {
     isFollowingAccountDefault: false,
-    bindingModeLabel: 'API令牌',
+    bindingModeLabel: '账号主凭证',
     badgeTone: 'warning',
     effectiveTokenName: accountName,
     helperText: `当前直接使用连接「${accountName}」保存的 API Key，不依赖账号令牌。`,
-    followOptionLabel: `固定使用：${accountName}(跟随 API Key 设置)`,
-    followOptionDescription: `直接使用连接「${accountName}」保存的 API Key`,
+    followOptionLabel: `账号主凭证${sourceModelSuffix}`,
+    followOptionDescription: `直接使用连接「${accountName}」保存的 API Key${context.sourceModel ? `，来源模型 ${context.sourceModel}` : ''}`,
   };
 }
 
@@ -103,7 +109,7 @@ export function describeTokenBinding(
   options: TokenBindingOption[],
   activeTokenId: number,
   fallbackTokenName?: string | null,
-  context: TokenBindingContext = {},
+  context: TokenBindingContext & DirectBindingPresentationContext = {},
 ): TokenBindingPresentation {
   const defaultToken = getDefaultTokenOption(options);
   const selectedToken = activeTokenId
@@ -114,7 +120,9 @@ export function describeTokenBinding(
 
   if (!activeTokenId) {
     if (connectionMode === 'apikey' || connectionMode === 'oauth') {
-      return buildDirectBindingPresentation(connectionMode, accountName);
+      return buildDirectBindingPresentation(connectionMode, accountName, {
+        sourceModel: context.sourceModel,
+      });
     }
 
     const effectiveTokenName = defaultToken?.name || fallbackTokenName || '未设置默认令牌';
@@ -142,13 +150,13 @@ export function describeTokenBinding(
     helperText: selectedToken?.isDefault
       ? `已固定到「${effectiveTokenName}」。它目前也是账号默认，但以后账号默认变化时，这个通道不会跟着变。`
       : `已固定到「${effectiveTokenName}」，不会随账号默认变化。`,
-    followOptionLabel: connectionMode === 'oauth'
-      ? 'OAuth授权'
-      : (connectionMode === 'apikey' ? 'API 设置' : '跟随账号默认'),
+    followOptionLabel: connectionMode === 'oauth' || connectionMode === 'apikey'
+      ? `账号主凭证${context.sourceModel ? ` [${context.sourceModel}]` : ''}`
+      : '跟随账号默认',
     followOptionDescription: connectionMode === 'oauth'
-      ? `直接使用连接「${accountName}」的 OAuth 授权`
+      ? `直接使用连接「${accountName}」的 OAuth 授权${context.sourceModel ? `，来源模型 ${context.sourceModel}` : ''}`
       : (connectionMode === 'apikey'
-          ? `直接使用连接「${accountName}」保存的 API Key`
+          ? `直接使用连接「${accountName}」保存的 API Key${context.sourceModel ? `，来源模型 ${context.sourceModel}` : ''}`
           : (defaultToken
               ? `当前生效：${defaultToken.name}；以后账号默认变化时会自动切换`
               : '以后账号默认变化时会自动切换')),

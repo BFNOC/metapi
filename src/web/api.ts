@@ -606,7 +606,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ranking }),
     }) as Promise<{ success: boolean; updatedCount: number }>,
-  batchAddChannels: (routeId: number, channels: Array<{ accountId: number; tokenId?: number; sourceModel?: string }>) =>
+  batchAddChannels: (routeId: number, channels: Array<{ accountId: number; tokenId?: number | null; sourceModel?: string }>) =>
     request(`/api/routes/${routeId}/channels/batch`, { method: 'POST', body: JSON.stringify({ channels }) }),
   addRoute: (data: any) => request('/api/routes', { method: 'POST', body: JSON.stringify(data) }),
   updateRoute: (id: number, data: any) => request(`/api/routes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

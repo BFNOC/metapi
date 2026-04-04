@@ -67,12 +67,12 @@ describe('tokenBindingPresentation', () => {
       accountName: 'elysiver_api',
     });
 
-    expect(result.bindingModeLabel).toBe('API令牌');
+    expect(result.bindingModeLabel).toBe('账号主凭证');
     expect(result.badgeTone).toBe('warning');
     expect(result.isFollowingAccountDefault).toBe(false);
     expect(result.effectiveTokenName).toBe('elysiver_api');
     expect(result.helperText).toContain('连接「elysiver_api」保存的 API Key');
-    expect(result.followOptionLabel).toBe('固定使用：elysiver_api(跟随 API Key 设置)');
+    expect(result.followOptionLabel).toBe('账号主凭证');
     expect(result.followOptionDescription).toContain('API Key');
   });
 
@@ -82,13 +82,13 @@ describe('tokenBindingPresentation', () => {
       accountName: 'mail@urlk.cn',
     });
 
-    expect(result.bindingModeLabel).toBe('OAuth授权');
+    expect(result.bindingModeLabel).toBe('账号主凭证');
     expect(result.badgeTone).toBe('warning');
     expect(result.isFollowingAccountDefault).toBe(false);
     expect(result.effectiveTokenName).toBe('mail@urlk.cn');
     expect(result.helperText).toContain('OAuth 授权');
     expect(result.helperText).not.toContain('默认令牌');
-    expect(result.followOptionLabel).toBe('固定使用：mail@urlk.cn(OAuth 授权)');
+    expect(result.followOptionLabel).toBe('账号主凭证');
     expect(result.followOptionDescription).toContain('OAuth 授权');
   });
 
@@ -102,9 +102,20 @@ describe('tokenBindingPresentation', () => {
     });
 
     expect(result.bindingModeLabel).toBe('固定令牌');
-    expect(result.followOptionLabel).toBe('OAuth授权');
+    expect(result.followOptionLabel).toBe('账号主凭证');
     expect(result.followOptionDescription).toContain('mail@urlk.cn');
     expect(result.followOptionDescription).not.toContain('当前生效：default');
+  });
+
+  it('includes source model hints in direct-account option copy when provided', () => {
+    const result = describeTokenBinding([], 0, null, {
+      connectionMode: 'apikey',
+      accountName: 'welfare-key',
+      sourceModel: 'gpt-4o-mini',
+    });
+
+    expect(result.followOptionLabel).toBe('账号主凭证 [gpt-4o-mini]');
+    expect(result.followOptionDescription).toContain('来源模型 gpt-4o-mini');
   });
 
   it('resolves token binding connection mode from stored account fields', () => {

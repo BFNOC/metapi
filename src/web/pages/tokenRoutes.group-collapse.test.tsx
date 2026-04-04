@@ -519,8 +519,8 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       const text = collectText(root.root);
-      expect(text).toContain('缺少分组');
-      expect(text).toContain('香草api');
+      expect(text).not.toContain('缺少分组');
+      expect(text).not.toContain('香草api');
       expect(text).not.toContain('待注册站点');
     } finally {
       root?.unmount();

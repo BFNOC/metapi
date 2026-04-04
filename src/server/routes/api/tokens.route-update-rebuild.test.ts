@@ -453,7 +453,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
       success: false,
-      message: 'Invalid displayName. Expected string or null.',
+      message: 'displayName 必须是字符串或 null',
     });
   });
 
@@ -471,7 +471,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
       success: false,
-      message: 'Invalid sourceRouteIds. Expected number[].',
+      message: 'sourceRouteIds 必须是 number[]',
     });
   });
 
@@ -492,7 +492,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
       success: false,
-      message: 'Invalid enabled. Expected boolean.',
+      message: 'enabled 必须是布尔值',
     });
   });
 
@@ -515,7 +515,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
       success: false,
-      message: 'Invalid accountId. Expected positive number.',
+      message: 'accountId 必须是大于 0 的数字',
     });
   });
 
@@ -547,7 +547,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
       success: false,
-      message: 'Invalid enabled. Expected boolean.',
+      message: 'enabled 必须是布尔值',
     });
   });
 
@@ -574,7 +574,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
       success: false,
-      message: 'Invalid channels[].accountId. Expected positive number.',
+      message: 'channels[].accountId 必须是大于 0 的数字',
     });
   });
 
@@ -612,18 +612,18 @@ describe('PUT /api/routes/:id route rebuild', () => {
       method: 'PUT',
       url: `/api/channels/${channel.id}`,
       payload: {
-        tokenId: null,
+        tokenId: 0,
       },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       id: channel.id,
-      tokenId: seeded.token.id,
+      tokenId: null,
     });
 
     const updated = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).get();
-    expect(updated?.tokenId).toBe(seeded.token.id);
+    expect(updated?.tokenId).toBeNull();
   });
   it('prefers an exact route over a colliding explicit-group display name', async () => {
     const exactCandidate = await seedAccountWithToken('claude-opus-4-6');

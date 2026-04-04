@@ -30,6 +30,16 @@ vi.mock('../components/BrandIcon.js', () => ({
   normalizeBrandIconKey: (icon: string) => icon,
 }));
 
+vi.mock('./token-routes/RouteCard.js', () => ({
+  default: ({ route, onRoutingStrategyChange }: { route: { id: number; routingStrategy?: string | null }; onRoutingStrategyChange: (route: { id: number; routingStrategy?: string | null }, next: 'weighted' | 'round_robin' | 'stable_first') => void }) => (
+    <div className="mock-route-card">
+      <span className="mock-route-strategy">{route.routingStrategy || 'weighted'}</span>
+      <button type="button" onClick={() => onRoutingStrategyChange(route, 'round_robin')}>切到轮询</button>
+      <button type="button" onClick={() => onRoutingStrategyChange(route, 'stable_first')}>切到稳定优先</button>
+    </div>
+  ),
+}));
+
 function collectText(node: ReactTestInstance): string {
   return (node.children || []).map((child) => {
     if (typeof child === 'string') return child;
@@ -92,37 +102,25 @@ describe('TokenRoutes routing strategy updates', () => {
       });
       await flushMicrotasks();
 
-      const expandButton = root.root.find((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-      ));
-      await act(async () => {
-        expandButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      const roundRobinOption = root.root.find((node) => (
+      const roundRobinButton = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-option')
-        && collectText(node).includes('轮询')
+        && collectText(node).includes('切到轮询')
       ));
 
       await act(async () => {
-        roundRobinOption.props.onClick();
+        roundRobinButton.props.onClick();
       });
       await flushMicrotasks();
 
       expect(apiMock.updateRoute).toHaveBeenCalledWith(1, { routingStrategy: 'round_robin' });
       expect(apiMock.getRoutesSummary).toHaveBeenCalledTimes(2);
 
-      const strategyTrigger = root.root.find((node) => (
-        node.type === 'button'
+      const strategyText = root.root.find((node) => (
+        node.type === 'span'
         && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-trigger')
-        && collectText(node).includes('轮询')
+        && node.props.className.includes('mock-route-strategy')
       ));
-      expect(collectText(strategyTrigger)).toContain('轮询');
+      expect(collectText(strategyText)).toContain('round_robin');
     } finally {
       root?.unmount();
     }
@@ -142,36 +140,24 @@ describe('TokenRoutes routing strategy updates', () => {
       });
       await flushMicrotasks();
 
-      const expandButton = root.root.find((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-      ));
-      await act(async () => {
-        expandButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      const stableFirstOption = root.root.find((node) => (
+      const stableFirstButton = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-option')
-        && collectText(node).includes('稳定优先')
+        && collectText(node).includes('切到稳定优先')
       ));
 
       await act(async () => {
-        stableFirstOption.props.onClick();
+        stableFirstButton.props.onClick();
       });
       await flushMicrotasks();
 
       expect(apiMock.updateRoute).toHaveBeenCalledWith(1, { routingStrategy: 'stable_first' });
 
-      const strategyTrigger = root.root.find((node) => (
-        node.type === 'button'
+      const strategyText = root.root.find((node) => (
+        node.type === 'span'
         && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-trigger')
-        && collectText(node).includes('稳定优先')
+        && node.props.className.includes('mock-route-strategy')
       ));
-      expect(collectText(strategyTrigger)).toContain('稳定优先');
+      expect(collectText(strategyText)).toContain('stable_first');
     } finally {
       root?.unmount();
     }

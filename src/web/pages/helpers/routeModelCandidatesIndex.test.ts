@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildRouteModelCandidatesIndex,
+  type DirectAccountCandidatesByModelName,
   type IndexedRouteModelCandidate,
   type RouteModelCandidatesByModelName,
 } from './routeModelCandidatesIndex.js';
@@ -67,8 +68,30 @@ describe('buildRouteModelCandidatesIndex', () => {
         },
       ],
     };
+    const directAccountCandidates: DirectAccountCandidatesByModelName = {
+      'claude-sonnet-4-6': [
+        {
+          modelName: 'will-be-overwritten',
+          accountId: 11,
+          username: 'alice',
+          siteId: 1,
+          siteName: 'site-a',
+          connectionMode: 'apikey',
+        },
+      ],
+      'gpt-4o-mini': [
+        {
+          modelName: 'will-be-overwritten',
+          accountId: 22,
+          username: 'bob',
+          siteId: 2,
+          siteName: 'site-b',
+          connectionMode: 'oauth',
+        },
+      ],
+    };
 
-    const index = buildRouteModelCandidatesIndex(routes, modelCandidates, matchesModelPattern);
+    const index = buildRouteModelCandidatesIndex(routes, modelCandidates, directAccountCandidates, matchesModelPattern);
 
     expect(index[1]).toBeTruthy();
     expect(index[2]).toBeTruthy();
@@ -87,10 +110,16 @@ describe('buildRouteModelCandidatesIndex', () => {
       '102:claude-sonnet-4-6:true',
       '101:claude-opus-4-6:false',
     ]);
+    expect(index[1].directBindingOptionsByAccountId?.[11]).toEqual([
+      { connectionMode: 'apikey', sourceModel: 'claude-sonnet-4-6' },
+    ]);
 
     expect(index[2].routeCandidates).toHaveLength(1);
     expect(index[2].routeCandidates[0].modelName).toBe('gpt-4o-mini');
     expect(index[2].accountOptions).toEqual([{ id: 22, label: 'bob @ site-b' }]);
+    expect(index[2].directBindingOptionsByAccountId?.[22]).toEqual([
+      { connectionMode: 'oauth', sourceModel: 'gpt-4o-mini' },
+    ]);
   });
 
   it('returns empty structures when route model pattern is blank', () => {
@@ -107,10 +136,34 @@ describe('buildRouteModelCandidatesIndex', () => {
         siteName: 'site',
       } satisfies IndexedRouteModelCandidate],
     };
+    const directAccountCandidates: DirectAccountCandidatesByModelName = {};
 
-    const index = buildRouteModelCandidatesIndex(routes, modelCandidates, matchesModelPattern);
+    const index = buildRouteModelCandidatesIndex(routes, modelCandidates, directAccountCandidates, matchesModelPattern);
     expect(index[1].routeCandidates).toEqual([]);
     expect(index[1].accountOptions).toEqual([]);
     expect(index[1].tokenOptionsByAccountId).toEqual({});
+    expect(index[1].directBindingOptionsByAccountId).toEqual({});
+  });
+
+  it('keeps direct-account-only candidates visible even without token candidates', () => {
+    const routes = [{ id: 7, modelPattern: 'gpt-*' }];
+    const modelCandidates: RouteModelCandidatesByModelName = {};
+    const directAccountCandidates: DirectAccountCandidatesByModelName = {
+      'gpt-4o-mini': [{
+        modelName: 'ignored',
+        accountId: 9,
+        username: 'welfare',
+        siteId: 3,
+        siteName: 'site-c',
+        connectionMode: 'apikey',
+      }],
+    };
+
+    const index = buildRouteModelCandidatesIndex(routes, modelCandidates, directAccountCandidates, matchesModelPattern);
+    expect(index[7].routeCandidates).toEqual([]);
+    expect(index[7].accountOptions).toEqual([{ id: 9, label: 'welfare @ site-c' }]);
+    expect(index[7].directBindingOptionsByAccountId?.[9]).toEqual([
+      { connectionMode: 'apikey', sourceModel: 'gpt-4o-mini' },
+    ]);
   });
 });

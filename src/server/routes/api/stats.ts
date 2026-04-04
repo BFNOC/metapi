@@ -16,7 +16,11 @@ import {
 } from '../../services/proxyLogStore.js';
 import { getEndpointAffinityRuntimeView } from '../../services/endpointAffinityRuntime.js';
 import { parseProxyLogMessageMeta } from '../proxy/logPathMeta.js';
-import { requiresManagedAccountTokens } from '../../services/accountExtraConfig.js';
+import {
+  hasOauthProvider,
+  requiresManagedAccountTokens,
+  supportsDirectAccountRoutingConnection,
+} from '../../services/accountExtraConfig.js';
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from '../../services/accountTokenService.js';
 import { boundEndpointRuntimeModelKey } from '../proxy/upstreamEndpoint.js';
 import {
@@ -1291,6 +1295,13 @@ export async function statsRoutes(app: FastifyInstance) {
       siteId: number;
       siteName: string;
     }>> = {};
+    const directAccountsByModel: Record<string, Array<{
+      accountId: number;
+      username: string | null;
+      siteId: number;
+      siteName: string;
+      connectionMode: 'apikey' | 'oauth';
+    }>> = {};
     const modelsMissingTokenGroups: Record<string, Array<{
       accountId: number;
       username: string | null;
@@ -1390,9 +1401,23 @@ export async function statsRoutes(app: FastifyInstance) {
     }
 
     for (const row of availableModelRows) {
-      if (!requiresManagedAccountTokens(row)) continue;
       const modelName = (row.modelName || '').trim();
       if (!modelName) continue;
+
+      if (supportsDirectAccountRoutingConnection(row) && !requiresManagedAccountTokens(row)) {
+        if (!directAccountsByModel[modelName]) directAccountsByModel[modelName] = [];
+        if (!directAccountsByModel[modelName].some((item) => item.accountId === row.accountId)) {
+          directAccountsByModel[modelName].push({
+            accountId: row.accountId,
+            username: row.username,
+            siteId: row.siteId,
+            siteName: row.siteName,
+            connectionMode: hasOauthProvider(row.extraConfig) ? 'oauth' : 'apikey',
+          });
+        }
+      }
+
+      if (!requiresManagedAccountTokens(row)) continue;
       const coverageKey = `${row.accountId}::${modelName.toLowerCase()}`;
       if (coveredAccountModelSet.has(coverageKey)) continue;
       if (!modelsWithoutToken[modelName]) modelsWithoutToken[modelName] = [];
@@ -1522,6 +1547,7 @@ export async function statsRoutes(app: FastifyInstance) {
 
     return {
       models: result,
+      directAccountsByModel,
       modelsWithoutToken,
       modelsMissingTokenGroups,
       endpointTypesByModel,

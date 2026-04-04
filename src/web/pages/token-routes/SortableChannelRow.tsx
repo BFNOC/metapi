@@ -322,6 +322,7 @@ export function SortableChannelRow({
     {
       connectionMode: resolveTokenBindingConnectionMode(channel.account),
       accountName: channel.account?.username || `account-${channel.accountId}`,
+      sourceModel: channel.sourceModel || undefined,
     },
   );
 

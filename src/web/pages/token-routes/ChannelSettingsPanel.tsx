@@ -30,6 +30,8 @@ export function ChannelSettingsPanel({
   onSave,
   actions,
 }: ChannelSettingsPanelProps) {
+  const connectionMode = resolveTokenBindingConnectionMode(channel.account);
+
   // --- Draft state ---
   const [draftTokenId, setDraftTokenId] = useState<number>(activeTokenId || 0);
   const [draftPriority, setDraftPriority] = useState<number>(channel.priority ?? 0);
@@ -89,8 +91,13 @@ export function ChannelSettingsPanel({
 
     const updates: { tokenId?: number | null; priority?: number; weight?: number } = {};
     if (dirtyTokenId) {
-      // 0 means "follow account default" → send null to backend
-      updates.tokenId = draftTokenId > 0 ? draftTokenId : null;
+      if (draftTokenId > 0) {
+        updates.tokenId = draftTokenId;
+      } else {
+        updates.tokenId = connectionMode === 'apikey' || connectionMode === 'oauth'
+          ? null
+          : 0;
+      }
     }
     if (dirtyPriority) {
       updates.priority = draftPriority;
@@ -107,10 +114,26 @@ export function ChannelSettingsPanel({
     draftTokenId,
     channel.token?.name ?? null,
     {
-      connectionMode: resolveTokenBindingConnectionMode(channel.account),
+      connectionMode,
       accountName: channel.account?.username || `account-${channel.accountId}`,
+      sourceModel: channel.sourceModel || undefined,
     },
   );
+  const selectValue = String(draftTokenId);
+  const selectOptions = [
+    {
+      value: '0',
+      label: tokenBinding.followOptionLabel,
+      description: tokenBinding.followOptionDescription,
+    },
+    ...tokenOptions.map((token) => ({
+      value: String(token.id),
+      label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
+      description: buildFixedTokenOptionDescription(token),
+    })),
+  ];
+  const helperText = tokenBinding.helperText;
+  const invalidTokenSelection = draftTokenId === 0 && connectionMode === 'session' && tokenOptions.length === 0;
 
   const inputDisabled = isUpdatingToken || disabled;
 
@@ -121,25 +144,14 @@ export function ChannelSettingsPanel({
         <div style={{ width: '100%' }}>
           <ModernSelect
             size="sm"
-            value={String(draftTokenId)}
+            value={selectValue}
             onChange={handleTokenChange}
             disabled={inputDisabled}
-            options={[
-              {
-                value: '0',
-                label: tokenBinding.followOptionLabel,
-                description: tokenBinding.followOptionDescription,
-              },
-              ...tokenOptions.map((token) => ({
-                value: String(token.id),
-                label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
-                description: buildFixedTokenOptionDescription(token),
-              })),
-            ]}
+            options={selectOptions}
             placeholder="选择令牌绑定方式"
           />
           <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
-            {tokenBinding.helperText}
+            {helperText}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 16 }}>
@@ -180,7 +192,7 @@ export function ChannelSettingsPanel({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
           <button
             onClick={handleSave}
-            disabled={inputDisabled || !hasDirty}
+            disabled={inputDisabled || !hasDirty || invalidTokenSelection}
             className="btn btn-link btn-link-info"
             data-tooltip={!hasDirty ? '没有未保存的修改' : undefined}
           >
@@ -198,25 +210,14 @@ export function ChannelSettingsPanel({
       <div style={{ minWidth: 180, flex: 1 }}>
         <ModernSelect
           size="sm"
-          value={String(draftTokenId)}
+          value={selectValue}
           onChange={handleTokenChange}
           disabled={inputDisabled}
-          options={[
-            {
-              value: '0',
-              label: tokenBinding.followOptionLabel,
-              description: tokenBinding.followOptionDescription,
-            },
-            ...tokenOptions.map((token) => ({
-              value: String(token.id),
-              label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
-              description: buildFixedTokenOptionDescription(token),
-            })),
-          ]}
+          options={selectOptions}
           placeholder="选择令牌绑定方式"
         />
         <div style={{ marginTop: 2, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.3 }}>
-          {tokenBinding.helperText}
+          {helperText}
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
@@ -256,7 +257,7 @@ export function ChannelSettingsPanel({
       </div>
       <button
         onClick={handleSave}
-        disabled={inputDisabled || !hasDirty}
+        disabled={inputDisabled || !hasDirty || invalidTokenSelection}
         className="btn btn-link btn-link-info"
         data-tooltip={!hasDirty ? '没有未保存的修改' : undefined}
       >

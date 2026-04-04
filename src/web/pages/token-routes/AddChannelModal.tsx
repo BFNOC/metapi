@@ -4,7 +4,11 @@ import ModernSelect from '../../components/ModernSelect.js';
 import { api } from '../../api.js';
 import { useToast } from '../../components/Toast.js';
 import { tr } from '../../i18n.js';
-import type { RouteCandidateView, RouteAccountOption, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
+import type {
+  RouteCandidateView,
+  RouteAccountOption,
+  RouteTokenOption,
+} from '../helpers/routeModelCandidatesIndex.js';
 import type { RouteMissingTokenHint } from '../helpers/routeMissingTokenHints.js';
 import {
   buildFixedTokenOptionDescription,
@@ -14,6 +18,7 @@ import {
 
 type ChannelSelection = {
   accountId: number;
+  bindingTarget?: 'default' | 'direct' | 'fixed';
   tokenId?: number;
   sourceModel?: string;
 };
@@ -83,24 +88,32 @@ export default function AddChannelModal({
         delete next[account.id];
         return next;
       }
-      const tokens = candidateView.tokenOptionsByAccountId[account.id] || [];
+      const directOptions = candidateView.directBindingOptionsByAccountId?.[account.id] || [];
       return {
         ...prev,
         [account.id]: {
           accountId: account.id,
+          bindingTarget: directOptions.length > 0 ? 'direct' : 'default',
+          sourceModel: directOptions[0]?.sourceModel || undefined,
         },
       };
     });
   };
 
-  const updateTokenForAccount = (accountId: number, tokenId: number, sourceModel: string) => {
+  const updateBindingForAccount = (
+    accountId: number,
+    bindingTarget: 'default' | 'direct' | 'fixed',
+    tokenId: number,
+    sourceModel: string,
+  ) => {
     setSelectedAccounts((prev) => {
       if (!prev[accountId]) return prev;
       return {
         ...prev,
         [accountId]: {
           ...prev[accountId],
-          tokenId: tokenId || undefined,
+          bindingTarget,
+          tokenId: bindingTarget === 'fixed' && tokenId > 0 ? tokenId : undefined,
           sourceModel: sourceModel || undefined,
         },
       };
@@ -108,7 +121,13 @@ export default function AddChannelModal({
   };
 
   const handleSubmit = async () => {
-    const channels = Object.values(selectedAccounts);
+    const channels = Object.values(selectedAccounts).map(({ accountId, bindingTarget, tokenId, sourceModel }) => ({
+      accountId,
+      tokenId: bindingTarget === 'direct'
+        ? null
+        : (bindingTarget === 'fixed' ? tokenId : 0),
+      sourceModel,
+    }));
     if (channels.length === 0) return;
 
     setSubmitting(true);
@@ -183,7 +202,7 @@ export default function AddChannelModal({
           {filteredAccounts.length === 0 && filteredMissingAccounts.length === 0 ? (
             <div style={{ fontSize: 13, color: 'var(--color-text-muted)', padding: '12px 0', textAlign: 'center' }}>
               {candidateView.accountOptions.length === 0 && missingAccounts.length === 0
-                ? tr('当前没有可用的账号，请确认已有账号的令牌支持调用此模型')
+                ? tr('当前没有可用的账号，请确认已有账号主凭证或账号令牌支持调用此模型')
                 : tr('没有匹配的账号')}
             </div>
           ) : (
@@ -191,9 +210,25 @@ export default function AddChannelModal({
               {filteredAccounts.map((account) => {
                 const isSelected = !!selectedAccounts[account.id];
                 const tokens = candidateView.tokenOptionsByAccountId[account.id] || [];
+                const directOptions = candidateView.directBindingOptionsByAccountId?.[account.id] || [];
                 const selection = selectedAccounts[account.id];
                 const isExisting = existingChannelAccountIds?.has(account.id);
-                const tokenBinding = describeTokenBinding(tokens, selection?.tokenId || 0);
+                const tokenBinding = describeTokenBinding(tokens, selection?.tokenId || 0, null, {
+                  connectionMode: directOptions[0]?.connectionMode,
+                  accountName: account.label,
+                  sourceModel: selection?.bindingTarget === 'direct' ? selection.sourceModel : undefined,
+                });
+                const bindingValue = (() => {
+                  if (!selection) return 'default';
+                  if (selection.bindingTarget === 'fixed' && selection.tokenId) {
+                    return `token::${selection.tokenId}::${selection.sourceModel || ''}`;
+                  }
+                  if (selection.bindingTarget === 'direct') {
+                    const connectionMode = directOptions[0]?.connectionMode || 'apikey';
+                    return `direct::${connectionMode}::${selection.sourceModel || ''}`;
+                  }
+                  return 'default';
+                })();
 
                 return (
                   <div
@@ -220,31 +255,43 @@ export default function AddChannelModal({
                       )}
                     </div>
 
-                    {isSelected && tokens.length > 0 && (
+                    {isSelected && (tokens.length > 0 || directOptions.length > 0) && (
                       <div style={{ marginTop: 6, paddingLeft: 24 }} onClick={(e) => e.stopPropagation()}>
                         <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>{tr('令牌绑定')}:</div>
                         <ModernSelect
                           size="sm"
-                          value={(() => {
-                            if (!selection?.tokenId) return '0';
-                            return `${selection.tokenId}::${selection.sourceModel || ''}`;
-                          })()}
+                          value={bindingValue}
                           onChange={(nextValue) => {
-                            if (nextValue === '0') {
-                              updateTokenForAccount(account.id, 0, '');
+                            if (nextValue === 'default') {
+                              updateBindingForAccount(account.id, 'default', 0, '');
                               return;
                             }
-                            const [tokenRaw, ...sourceParts] = nextValue.split('::');
-                            updateTokenForAccount(account.id, Number.parseInt(tokenRaw, 10) || 0, sourceParts.join('::'));
+                            if (nextValue.startsWith('direct::')) {
+                              const [, , ...sourceParts] = nextValue.split('::');
+                              updateBindingForAccount(account.id, 'direct', 0, sourceParts.join('::'));
+                              return;
+                            }
+                            if (nextValue.startsWith('token::')) {
+                              const [, tokenRaw, ...sourceParts] = nextValue.split('::');
+                              updateBindingForAccount(account.id, 'fixed', Number.parseInt(tokenRaw, 10) || 0, sourceParts.join('::'));
+                            }
                           }}
                           options={[
-                            {
-                              value: '0',
-                              label: tr('跟随账号默认'),
-                              description: tokenBinding.followOptionDescription,
-                            },
+                            ...(directOptions.length > 0
+                              ? directOptions.map((option) => ({
+                                value: `direct::${option.connectionMode}::${option.sourceModel || ''}`,
+                                label: option.sourceModel ? `账号主凭证 [${option.sourceModel}]` : '账号主凭证',
+                                description: option.connectionMode === 'oauth'
+                                  ? `直接使用当前连接的 OAuth 授权${option.sourceModel ? `，来源模型 ${option.sourceModel}` : ''}`
+                                  : `直接使用当前连接保存的 API Key${option.sourceModel ? `，来源模型 ${option.sourceModel}` : ''}`,
+                              }))
+                              : [{
+                                value: 'default',
+                                label: tokenBinding.followOptionLabel,
+                                description: tokenBinding.followOptionDescription,
+                              }]),
                             ...tokens.map((token: RouteTokenOption) => ({
-                              value: `${token.id}::${token.sourceModel || ''}`,
+                              value: `token::${token.id}::${token.sourceModel || ''}`,
                               label: buildFixedTokenOptionLabel(token, {
                                 includeDefaultTag: true,
                                 includeSourceModel: true,

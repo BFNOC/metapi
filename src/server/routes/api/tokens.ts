@@ -8,6 +8,11 @@ import {
   isUsableAccountToken,
 } from '../../services/accountTokenService.js';
 import {
+  getCredentialModeFromExtraConfig,
+  hasOauthProvider,
+  supportsDirectAccountRoutingConnection,
+} from '../../services/accountExtraConfig.js';
+import {
   DEFAULT_ROUTE_ROUTING_STRATEGY,
   normalizeRouteRoutingStrategy,
   type RouteRoutingStrategy,
@@ -257,6 +262,128 @@ async function getDefaultTokenId(accountId: number): Promise<number | null> {
   return isUsableAccountToken(token ?? null) ? token!.id : null;
 }
 
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && Math.trunc(value) > 0;
+}
+
+function validateOptionalBooleanField(value: unknown, fieldName: string): { ok: true } | { ok: false; message: string } {
+  if (value === undefined || typeof value === 'boolean') return { ok: true };
+  return { ok: false, message: `${fieldName} 必须是布尔值` };
+}
+
+function validateOptionalDisplayName(value: unknown): { ok: true } | { ok: false; message: string } {
+  if (value === undefined || value === null || typeof value === 'string') return { ok: true };
+  return { ok: false, message: 'displayName 必须是字符串或 null' };
+}
+
+function validateOptionalSourceRouteIds(value: unknown): { ok: true } | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'number' || !Number.isFinite(item))) {
+    return { ok: false, message: 'sourceRouteIds 必须是 number[]' };
+  }
+  return { ok: true };
+}
+
+async function getAccountRoutingContext(accountId: number): Promise<typeof schema.accounts.$inferSelect | null> {
+  return await db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId)).get() ?? null;
+}
+
+type RouteChannelBindingResolution =
+  | {
+    ok: true;
+    account: typeof schema.accounts.$inferSelect;
+    storedTokenId: number | null;
+    effectiveTokenId: number | null;
+  }
+  | {
+    ok: false;
+    message: string;
+  };
+
+async function resolveRouteChannelBinding(input: {
+  accountId: number;
+  rawTokenId: unknown;
+  allowImplicitDefault: boolean;
+}): Promise<RouteChannelBindingResolution> {
+  const account = await getAccountRoutingContext(input.accountId);
+  if (!account) {
+    return { ok: false, message: `账号 ${input.accountId} 不存在` };
+  }
+  const supportsDirectRouting = supportsDirectAccountRoutingConnection(account);
+  const prefersDirectPrincipal = hasOauthProvider(account.extraConfig) || getCredentialModeFromExtraConfig(account.extraConfig) === 'apikey';
+  const resolveDefaultTokenFallback = async (): Promise<RouteChannelBindingResolution> => {
+    const defaultTokenId = await getDefaultTokenId(input.accountId);
+    if (defaultTokenId === null) {
+      if (prefersDirectPrincipal) {
+        return { ok: false, message: '当前账号主凭证不可用' };
+      }
+      return { ok: false, message: `账号 ${input.accountId} 没有可用的默认令牌` };
+    }
+    return {
+      ok: true,
+      account,
+      storedTokenId: null,
+      effectiveTokenId: defaultTokenId,
+    };
+  };
+
+  if (input.rawTokenId === undefined) {
+    if (supportsDirectRouting) {
+      return {
+        ok: true,
+        account,
+        storedTokenId: null,
+        effectiveTokenId: null,
+      };
+    }
+    if (prefersDirectPrincipal) {
+      return { ok: false, message: '当前账号主凭证不可用' };
+    }
+    if (!input.allowImplicitDefault) {
+      return { ok: false, message: '当前账号不支持绑定账号主凭证' };
+    }
+    return await resolveDefaultTokenFallback();
+  }
+
+  if (input.rawTokenId === null) {
+    if (prefersDirectPrincipal) {
+      if (!supportsDirectRouting) {
+        return { ok: false, message: '当前账号主凭证不可用' };
+      }
+      return {
+        ok: true,
+        account,
+        storedTokenId: null,
+        effectiveTokenId: null,
+      };
+    }
+    return { ok: false, message: '当前账号不支持绑定账号主凭证' };
+  }
+
+  if (input.rawTokenId === 0) {
+    if (supportsDirectRouting) {
+      return { ok: false, message: '当前账号请使用账号主凭证，不能跟随默认令牌' };
+    }
+    return await resolveDefaultTokenFallback();
+  }
+
+  if (typeof input.rawTokenId !== 'number' || !Number.isFinite(input.rawTokenId) || input.rawTokenId <= 0) {
+    return { ok: false, message: 'tokenId 必须是正整数、0、null 或省略' };
+  }
+
+  const requestedTokenId = Math.trunc(input.rawTokenId);
+  if (!await checkTokenBelongsToAccount(requestedTokenId, input.accountId)) {
+    return { ok: false, message: `令牌 ${requestedTokenId} 不属于账号 ${input.accountId}` };
+  }
+
+  return {
+    ok: true,
+    account,
+    storedTokenId: requestedTokenId,
+    effectiveTokenId: requestedTokenId,
+  };
+}
+
 function canonicalModelAlias(modelName: string): string {
   const normalized = modelName.trim().toLowerCase();
   if (!normalized) return '';
@@ -279,6 +406,22 @@ async function tokenSupportsModel(tokenId: number, modelName: string): Promise<b
       and(
         eq(schema.tokenModelAvailability.tokenId, tokenId),
         eq(schema.tokenModelAvailability.available, true),
+      ),
+    )
+    .all();
+  return rows.some((row) => {
+    const availableModelName = row.modelName?.trim();
+    if (!availableModelName) return false;
+    return availableModelName === modelName || isModelAliasEquivalent(availableModelName, modelName);
+  });
+}
+
+async function accountSupportsModel(accountId: number, modelName: string): Promise<boolean> {
+  const rows = await db.select().from(schema.modelAvailability)
+    .where(
+      and(
+        eq(schema.modelAvailability.accountId, accountId),
+        eq(schema.modelAvailability.available, true),
       ),
     )
     .all();
@@ -925,7 +1068,7 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Batch add channels to a route
-  app.post<{ Params: { id: string }; Body: { channels: Array<{ accountId: number; tokenId?: number; sourceModel?: string }> } }>('/api/routes/:id/channels/batch', async (request, reply) => {
+  app.post<{ Params: { id: string }; Body: { channels: Array<{ accountId: number; tokenId?: number | null; sourceModel?: string }> } }>('/api/routes/:id/channels/batch', async (request, reply) => {
     const routeId = parseInt(request.params.id, 10);
     const body = request.body;
 
@@ -939,6 +1082,11 @@ export async function tokensRoutes(app: FastifyInstance) {
 
     if (!body?.channels || !Array.isArray(body.channels) || body.channels.length === 0) {
       return reply.code(400).send({ success: false, message: 'channels 必须是非空数组' });
+    }
+    for (const item of body.channels) {
+      if (!isPositiveInteger(item?.accountId)) {
+        return reply.code(400).send({ success: false, message: 'channels[].accountId 必须是大于 0 的数字' });
+      }
     }
 
     const existingChannels = await db.select().from(schema.routeChannels)
@@ -957,22 +1105,32 @@ export async function tokensRoutes(app: FastifyInstance) {
     const errors: string[] = [];
 
     for (const item of body.channels) {
-      if (!item?.accountId || typeof item.accountId !== 'number') {
-        errors.push('无效的 accountId');
-        continue;
-      }
-
       const sourceModel = typeof item.sourceModel === 'string'
         ? item.sourceModel.trim()
         : (isExactModelPattern(route.modelPattern) ? route.modelPattern.trim() : '');
-      const effectiveTokenId = item.tokenId ?? await getDefaultTokenId(item.accountId);
-
-      if (item.tokenId && !await checkTokenBelongsToAccount(item.tokenId, item.accountId)) {
-        errors.push(`令牌 ${item.tokenId} 不属于账号 ${item.accountId}`);
+      const binding = await resolveRouteChannelBinding({
+        accountId: item.accountId,
+        rawTokenId: item.tokenId,
+        allowImplicitDefault: true,
+      });
+      if (!binding.ok) {
+        errors.push(binding.message);
         continue;
       }
 
-      const tokenIdForKey = typeof effectiveTokenId === 'number' && Number.isFinite(effectiveTokenId) ? effectiveTokenId : 0;
+      if (isExactModelPattern(route.modelPattern)) {
+        if (binding.effectiveTokenId) {
+          if (!await tokenSupportsModel(binding.effectiveTokenId, route.modelPattern)) {
+            errors.push(`令牌 ${binding.effectiveTokenId} 不支持模型 ${route.modelPattern}`);
+            continue;
+          }
+        } else if (!await accountSupportsModel(binding.account.id, route.modelPattern)) {
+          errors.push(`账号 ${binding.account.id} 的主凭证不支持模型 ${route.modelPattern}`);
+          continue;
+        }
+      }
+
+      const tokenIdForKey = typeof binding.storedTokenId === 'number' && Number.isFinite(binding.storedTokenId) ? binding.storedTokenId : 0;
       const pairKey = `${item.accountId}::${tokenIdForKey}::${sourceModel.toLowerCase()}`;
       if (existingPairs.has(pairKey)) {
         skipped += 1;
@@ -983,7 +1141,7 @@ export async function tokensRoutes(app: FastifyInstance) {
         await db.insert(schema.routeChannels).values({
           routeId,
           accountId: item.accountId,
-          tokenId: effectiveTokenId,
+          tokenId: binding.storedTokenId,
           sourceModel: sourceModel || null,
           priority: 0,
           weight: 10,
@@ -1122,6 +1280,18 @@ export async function tokensRoutes(app: FastifyInstance) {
   // Create a route
   app.post<{ Body: { routeMode?: string; modelPattern?: string; displayName?: string; displayIcon?: string; modelMapping?: string; routingStrategy?: string; enabled?: boolean; sourceRouteIds?: number[] } }>('/api/routes', async (request, reply) => {
     const body = request.body;
+    const displayNameValidation = validateOptionalDisplayName(body.displayName);
+    if (!displayNameValidation.ok) {
+      return reply.code(400).send({ success: false, message: displayNameValidation.message });
+    }
+    const sourceRouteIdsValidation = validateOptionalSourceRouteIds(body.sourceRouteIds);
+    if (!sourceRouteIdsValidation.ok) {
+      return reply.code(400).send({ success: false, message: sourceRouteIdsValidation.message });
+    }
+    const enabledValidation = validateOptionalBooleanField(body.enabled, 'enabled');
+    if (!enabledValidation.ok) {
+      return reply.code(400).send({ success: false, message: enabledValidation.message });
+    }
     const routeMode = normalizeRouteMode(body.routeMode);
     const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
     const sourceRouteIds = normalizeSourceRouteIdsInput(body.sourceRouteIds);
@@ -1182,6 +1352,18 @@ export async function tokensRoutes(app: FastifyInstance) {
     const existingRoute = await getRouteWithSources(id);
     if (!existingRoute) {
       return reply.code(404).send({ success: false, message: '路由不存在' });
+    }
+    const displayNameValidation = validateOptionalDisplayName(body.displayName);
+    if (!displayNameValidation.ok) {
+      return reply.code(400).send({ success: false, message: displayNameValidation.message });
+    }
+    const sourceRouteIdsValidation = validateOptionalSourceRouteIds(body.sourceRouteIds);
+    if (!sourceRouteIdsValidation.ok) {
+      return reply.code(400).send({ success: false, message: sourceRouteIdsValidation.message });
+    }
+    const enabledValidation = validateOptionalBooleanField(body.enabled, 'enabled');
+    if (!enabledValidation.ok) {
+      return reply.code(400).send({ success: false, message: enabledValidation.message });
     }
     const routeMode = normalizeRouteMode(body.routeMode ?? existingRoute.routeMode);
     if (routeMode !== existingRoute.routeMode) {
@@ -1316,7 +1498,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     return { success: true, updatedCount: Number(updateResult?.changes || 0) };
   });
   // Add a channel to a route
-  app.post<{ Params: { id: string }; Body: { accountId: number; tokenId?: number; sourceModel?: string; priority?: number; weight?: number } }>('/api/routes/:id/channels', async (request, reply) => {
+  app.post<{ Params: { id: string }; Body: { accountId: number; tokenId?: number | null; sourceModel?: string; priority?: number; weight?: number } }>('/api/routes/:id/channels', async (request, reply) => {
     const routeId = parseInt(request.params.id, 10);
     const body = request.body;
 
@@ -1327,19 +1509,29 @@ export async function tokensRoutes(app: FastifyInstance) {
     if (isExplicitGroupRoute(route)) {
       return reply.code(400).send({ success: false, message: '显式群组不支持直接维护通道' });
     }
+    if (!isPositiveInteger(body.accountId)) {
+      return reply.code(400).send({ success: false, message: 'accountId 必须是大于 0 的数字' });
+    }
     const sourceModel = typeof body.sourceModel === 'string'
       ? body.sourceModel.trim()
       : (isExactModelPattern(route.modelPattern) ? route.modelPattern.trim() : '');
-    // Normalize tokenId: 0 and falsy → null ("follow account default")
-    const normalizedTokenId = (typeof body.tokenId === 'number' && body.tokenId > 0) ? body.tokenId : null;
-    const effectiveTokenId = normalizedTokenId ?? await getDefaultTokenId(body.accountId);
-
-    if (normalizedTokenId !== null && !await checkTokenBelongsToAccount(normalizedTokenId, body.accountId)) {
-      return reply.code(400).send({ success: false, message: '令牌不存在或不属于当前账号' });
+    const binding = await resolveRouteChannelBinding({
+      accountId: body.accountId,
+      rawTokenId: body.tokenId,
+      allowImplicitDefault: true,
+    });
+    if (!binding.ok) {
+      return reply.code(400).send({ success: false, message: binding.message });
     }
 
-    if (isExactModelPattern(route.modelPattern) && effectiveTokenId && !await tokenSupportsModel(effectiveTokenId, route.modelPattern)) {
-      return reply.code(400).send({ success: false, message: '该令牌不支持当前模型' });
+    if (isExactModelPattern(route.modelPattern)) {
+      if (binding.effectiveTokenId) {
+        if (!await tokenSupportsModel(binding.effectiveTokenId, route.modelPattern)) {
+          return reply.code(400).send({ success: false, message: '该令牌不支持当前模型' });
+        }
+      } else if (!await accountSupportsModel(binding.account.id, route.modelPattern)) {
+        return reply.code(400).send({ success: false, message: '该账号主凭证不支持当前模型' });
+      }
     }
 
     const duplicate = (await db.select().from(schema.routeChannels)
@@ -1347,7 +1539,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       .all())
       .some((channel) =>
         channel.accountId === body.accountId
-        && (channel.tokenId ?? null) === (normalizedTokenId ?? null)
+        && (channel.tokenId ?? null) === (binding.storedTokenId ?? null)
         && (channel.sourceModel || '').trim().toLowerCase() === sourceModel.toLowerCase(),
       );
     if (duplicate) {
@@ -1357,7 +1549,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     const insertedChannel = await db.insert(schema.routeChannels).values({
       routeId,
       accountId: body.accountId,
-      tokenId: normalizedTokenId,
+      tokenId: binding.storedTokenId,
       sourceModel: sourceModel || null,
       priority: typeof body.priority === 'number' && Number.isFinite(body.priority) ? Math.max(0, Math.trunc(body.priority)) : 0,
       weight: typeof body.weight === 'number' && Number.isFinite(body.weight) ? Math.max(0, Math.min(1000, Math.trunc(body.weight))) : 10,
@@ -1556,22 +1748,34 @@ export async function tokensRoutes(app: FastifyInstance) {
     if (!route) {
       return reply.code(404).send({ success: false, message: '路由不存在' });
     }
-
-    if (body.tokenId !== undefined && body.tokenId !== null) {
-      const tokenId = Number(body.tokenId);
-      if (!Number.isFinite(tokenId) || !await checkTokenBelongsToAccount(tokenId, channel.accountId)) {
-        return reply.code(400).send({ success: false, message: '令牌不存在或不属于通道账号' });
-      }
+    const enabledValidation = validateOptionalBooleanField(body.enabled, 'enabled');
+    if (!enabledValidation.ok) {
+      return reply.code(400).send({ success: false, message: enabledValidation.message });
     }
 
-    const nextTokenId = body.tokenId === undefined
-      ? (channel.tokenId ?? await getDefaultTokenId(channel.accountId))
-      : (body.tokenId === null ? await getDefaultTokenId(channel.accountId) : Number(body.tokenId));
+    const binding = body.tokenId === undefined
+      ? null
+      : await resolveRouteChannelBinding({
+        accountId: channel.accountId,
+        rawTokenId: body.tokenId,
+        allowImplicitDefault: true,
+      });
+    if (binding && !binding.ok) {
+      return reply.code(400).send({ success: false, message: binding.message });
+    }
+
+    const nextTokenId = binding ? binding.effectiveTokenId : channel.tokenId;
 
     // Only validate model support when the token is actually being changed
-    const tokenChanged = body.tokenId !== undefined && Number(body.tokenId) !== channel.tokenId;
-    if (tokenChanged && isExactModelPattern(route.modelPattern) && nextTokenId && !await tokenSupportsModel(nextTokenId, route.modelPattern)) {
-      return reply.code(400).send({ success: false, message: '该令牌不支持当前模型' });
+    const tokenChanged = body.tokenId !== undefined && nextTokenId !== channel.tokenId;
+    if (tokenChanged && isExactModelPattern(route.modelPattern)) {
+      if (nextTokenId) {
+        if (!await tokenSupportsModel(nextTokenId, route.modelPattern)) {
+          return reply.code(400).send({ success: false, message: '该令牌不支持当前模型' });
+        }
+      } else if (binding?.ok && !await accountSupportsModel(binding.account.id, route.modelPattern)) {
+        return reply.code(400).send({ success: false, message: '该账号主凭证不支持当前模型' });
+      }
     }
 
     const updates: Record<string, unknown> = { manualOverride: true };
@@ -1594,12 +1798,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
     if (body.enabled !== undefined) updates.enabled = body.enabled;
     if (body.tokenId !== undefined) {
-      // Normalize: null = follow default, positive int = specific token, 0/falsy -> null
-      if (body.tokenId === null) {
-        updates.tokenId = nextTokenId;
-      } else {
-        updates.tokenId = (typeof body.tokenId === 'number' && body.tokenId > 0) ? body.tokenId : null;
-      }
+      updates.tokenId = binding?.storedTokenId ?? null;
     }
 
     await db.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, channelId)).run();

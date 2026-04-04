@@ -12,6 +12,7 @@ import { useIsMobile } from '../components/useIsMobile.js';
 import { tr } from '../i18n.js';
 import {
   buildRouteModelCandidatesIndex,
+  type DirectAccountCandidatesByModelName,
   type RouteCandidateView,
   type RouteModelCandidatesByModelName,
 } from './helpers/routeModelCandidatesIndex.js';
@@ -79,6 +80,7 @@ const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
   routeCandidates: [],
   accountOptions: [],
   tokenOptionsByAccountId: {},
+  directBindingOptionsByAccountId: {},
 };
 const EMPTY_MISSING_ITEMS: MissingTokenRouteSiteActionItem[] = [];
 const EMPTY_MISSING_GROUP_ITEMS: MissingTokenGroupRouteSiteActionItem[] = [];
@@ -123,6 +125,7 @@ export default function TokenRoutes() {
   const navigate = useNavigate();
   const [routeSummaries, setRouteSummaries] = useState<RouteSummaryRow[]>([]);
   const [modelCandidates, setModelCandidates] = useState<RouteModelCandidatesByModelName>({});
+  const [directAccountCandidates, setDirectAccountCandidates] = useState<DirectAccountCandidatesByModelName>({});
   const [missingTokenModelsByName, setMissingTokenModelsByName] = useState<MissingTokenModelsByName>({});
   const [missingTokenGroupModelsByName, setMissingTokenGroupModelsByName] = useState<MissingTokenModelsByName>({});
   const [endpointTypesByModel, setEndpointTypesByModel] = useState<Record<string, string[]>>({});
@@ -359,6 +362,7 @@ export default function TokenRoutes() {
         if (candidatesSeqRef.current !== seq) return; // stale
         startTransition(() => {
           setModelCandidates((candidateRows?.models || {}) as RouteModelCandidatesByModelName);
+          setDirectAccountCandidates((candidateRows?.directAccountsByModel || {}) as DirectAccountCandidatesByModelName);
           setMissingTokenModelsByName(
             normalizeMissingTokenModels((candidateRows?.modelsWithoutToken || {}) as MissingTokenModelsByName),
           );
@@ -1027,7 +1031,7 @@ export default function TokenRoutes() {
 
   // Lazy per-route candidate index — only computes for routes actually accessed
   const candidateIndexCacheRef = useRef<{ key: string; cache: Map<number, RouteCandidateView> }>({ key: '', cache: new Map() });
-  const candidateIndexCacheKey = `${routePatternsKey}|${Object.keys(modelCandidates).length}|${candidatesVersionRef.current}`;
+  const candidateIndexCacheKey = `${routePatternsKey}|${Object.keys(modelCandidates).length}|${Object.keys(directAccountCandidates).length}|${candidatesVersionRef.current}`;
   if (candidateIndexCacheRef.current.key !== candidateIndexCacheKey) {
     candidateIndexCacheRef.current = { key: candidateIndexCacheKey, cache: new Map() };
   }
@@ -1038,7 +1042,7 @@ export default function TokenRoutes() {
     if (cached) return cached;
     const route = routePatterns.find((r) => r.id === routeId);
     if (!route) return EMPTY_ROUTE_CANDIDATE_VIEW;
-    const index = buildRouteModelCandidatesIndex([route], modelCandidates, matchesModelPattern);
+    const index = buildRouteModelCandidatesIndex([route], modelCandidates, directAccountCandidates, matchesModelPattern);
     const view = index[routeId] || EMPTY_ROUTE_CANDIDATE_VIEW;
     cache.set(routeId, view);
     return view;

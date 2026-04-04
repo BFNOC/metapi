@@ -20,6 +20,7 @@ describe('buildSiteSaveAction', () => {
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
         globalWeight: 1.2,
+        probeDisabled: false,
       },
     );
 
@@ -34,6 +35,7 @@ describe('buildSiteSaveAction', () => {
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
         globalWeight: 1.2,
+        probeDisabled: false,
       },
     });
   });
@@ -50,6 +52,7 @@ describe('buildSiteSaveAction', () => {
         useSystemProxy: true,
         customHeaders: '',
         globalWeight: 0.8,
+        probeDisabled: false,
       },
     );
 
@@ -65,6 +68,7 @@ describe('buildSiteSaveAction', () => {
         useSystemProxy: true,
         customHeaders: '',
         globalWeight: 0.8,
+        probeDisabled: false,
       },
     });
   });
@@ -82,6 +86,7 @@ describe('buildSiteSaveAction', () => {
           useSystemProxy: false,
           customHeaders: '',
           globalWeight: 1,
+          probeDisabled: false,
         },
       ),
     ).toThrow('editingSiteId is required in edit mode');

@@ -149,10 +149,26 @@ describe('/api/models/token-candidates', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
+      directAccountsByModel: Record<string, Array<{
+        accountId: number;
+        username: string | null;
+        siteId: number;
+        siteName: string;
+        connectionMode: 'apikey' | 'oauth';
+      }>>;
       modelsWithoutToken: Record<string, Array<{ accountId: number }>>;
       modelsMissingTokenGroups: Record<string, Array<{ accountId: number }>>;
     };
 
+    expect(body.directAccountsByModel['gpt-5.2-codex']).toEqual([
+      {
+        accountId: account.id,
+        username: 'shenmo-direct',
+        siteId: site.id,
+        siteName: 'site-apikey',
+        connectionMode: 'apikey',
+      },
+    ]);
     expect(body.modelsWithoutToken['gpt-5.2-codex']).toBeUndefined();
     expect(body.modelsMissingTokenGroups['gpt-5.2-codex']).toBeUndefined();
   });
@@ -195,10 +211,26 @@ describe('/api/models/token-candidates', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
+      directAccountsByModel: Record<string, Array<{
+        accountId: number;
+        username: string | null;
+        siteId: number;
+        siteName: string;
+        connectionMode: 'apikey' | 'oauth';
+      }>>;
       modelsWithoutToken: Record<string, Array<{ accountId: number }>>;
       modelsMissingTokenGroups: Record<string, Array<{ accountId: number }>>;
     };
 
+    expect(body.directAccountsByModel['gpt-5.2-codex']).toEqual([
+      {
+        accountId: account.id,
+        username: 'codex-user@example.com',
+        siteId: site.id,
+        siteName: 'codex-site',
+        connectionMode: 'oauth',
+      },
+    ]);
     expect(body.modelsWithoutToken['gpt-5.2-codex']).toBeUndefined();
     expect(body.modelsMissingTokenGroups['gpt-5.2-codex']).toBeUndefined();
   });

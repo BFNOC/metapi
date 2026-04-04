@@ -2,6 +2,55 @@
 
 > 记录每次从上游 `cita-777/metapi` 同步的变更。
 
+## 2026-04-04 同步
+
+**上游已审阅到**：`63f6b07`（upstream/main HEAD）
+
+### 已合入的 Commit
+
+| Commit | 说明 | 合入方式 | 备注 |
+|--------|------|---------|------|
+| `6ad9ec6` | strip codex responses max_output_tokens (#399) | 手工移植 | 2026-04-04 合入，本地提交 `12d357f` |
+
+<details>
+<summary>#399 合并详情（2026-04-04）</summary>
+
+**功能说明**：将 Codex responses 兼容性逻辑从 `upstreamEndpoint.ts` 提取到独立模块，并修复 token 限制字段导致的请求失败问题。
+
+**核心改动**：
+- 新增 `src/server/transformers/openai/responses/codexCompatibility.ts` (90行)
+- 新增 `src/server/transformers/openai/responses/codexCompatibility.test.ts` (46行)
+- 修改 `src/server/routes/proxy/upstreamEndpoint.ts`：删除 54 行内联函数，添加 import，简化两处调用
+- 更新 `upstreamEndpoint.test.ts`、`chat.codex-oauth.test.ts` 测试断言
+- 新增 `architecture-boundaries.test.ts` 边界测试
+
+**关键修复**：
+- 删除 Codex responses API 不支持的 3 个字段：`max_output_tokens`、`max_completion_tokens`、`max_tokens`
+- 在 `applyConfiguredPayloadRules()` 前后都调用清洗函数，防止配置规则再次注入不支持的字段
+- 保留其他 Codex 字段：`previous_response_id`、`prompt_cache_key`、`include`
+
+**Bug 严重性**：高（针对 Codex 用户）
+- OpenAI/Claude 风格请求转 Codex 时，`conversion.ts` 会自动补充 `max_output_tokens: 4096`
+- 本地旧代码不会删除这些字段，导致所有转 Codex 的请求都会失败
+- 不需要用户显式配置，默认就会触发
+
+**合入方式**：手工移植（不是 cherry-pick）
+- 原因：本地 `upstreamEndpoint.ts` 已分叉 1299 行（上游 1060 行）
+- 策略：按 Codex 分析文档的 5 步骤执行
+- 工作量：约 3 小时（分析 + 编码 + 测试）
+
+**验证结果**：
+- ✅ `codexCompatibility.test.ts` - 2 passed
+- ✅ `upstreamEndpoint.test.ts` - 58 passed
+- ✅ `chat.codex-oauth.test.ts` - 6 passed
+- ✅ `responses.codex-oauth.test.ts` - 21 passed
+- ✅ `architecture-boundaries.test.ts` - 14 passed
+- ✅ `repo:drift-check` - Violations: 0
+
+</details>
+
+---
+
 ## 2026-04-03 同步
 
 **上游已审阅到**：`63f6b07`（upstream/main HEAD）
@@ -12,12 +61,6 @@
 |--------|------|---------|------|
 | `b9b553d` | fix: sqlite migration journal recovery (#400) | `git cherry-pick` | 2026-04-03 合入，本地提交 `2d0ba35` |
 | `63f6b07` | cap sqlite migration recovery retries (#410) | `git cherry-pick` | 2026-04-03 合入，本地提交 `28e1b11` |
-
-### 待合入的 Commit（已分析，待执行）
-
-| Commit | 说明 | 优先级 | 冲突预估 |
-|--------|------|--------|----------|
-| `6ad9ec6` | strip codex responses max_output_tokens (#399) | P2 | ⚠️ 高冲突，upstreamEndpoint.ts 已分叉 1434 行 |
 
 ### 验证备注
 
@@ -32,12 +75,43 @@
 | `bc3893f` | refine token routes workspace motion and hierarchy (#394) | 14 文件 +2470/-733 行，本地 TokenRoutes UI 已独立演进（+8261 行差异），合入会破坏探活/健康度/优先级编辑等现有功能 |
 | `19bfed2` | refresh integration and settings docs for current UI and provider coverage (#398) | 12 文件 +982/-238 行，纯文档更新，本地已有完善的自定义文档体系（docs/custom/），冲突大价值低 |
 | `082891a` | fix runtime settings restart hydration (#392) | 8 文件 +365/-279 行，纯重构（提取 runtimeSettingsHydration.ts），冲突极高（需重构 5+ 文件），价值不足以抵消成本 |
+| `2be0603` | fix expired connection health recovery (#393) | 10 文件 +406/-17 行，**不适合当前部署场景**（详见下方分析） |
+
+<details>
+<summary>#393 深度分析（2026-04-04）</summary>
+
+**功能说明**：当账号状态为 `expired` 时，用户编辑并替换新的 API Key，系统自动尝试刷新模型，成功则自动激活账号。
+
+**核心改动**：
+- 新增 `accountUpdateWorkflow.ts`（65行）：封装账号更新工作流
+- 修改 `accounts.ts` PUT 路由：智能检测"替换 key"vs"只改状态"
+- 修改 `accountHealthService.ts`：允许对 expired 账号刷新模型
+- 216 行测试用例
+
+**不合入原因（当前部署场景分析）**：
+
+本地部署为**单租户/小团队模式**，所有 API Key 由管理员集中管理，主要后端为 new-api（余额制），导致 `expired` 状态的所有场景都不适合通过"替换 key"恢复：
+
+1. **余额不足** → 需在 new-api 后台充值，换 key 无意义
+2. **账号被封** → 整个账号不可用，换 key 无意义
+3. **手动删除** → 既然删了就不想用，无需恢复
+4. **公益站免费 key** → 过期后用户无法自己生成新 key
+
+**可能适用的场景（Codex 分析）**：
+- 定期密钥轮换（安全合规要求）
+- 多提供商支持（某些提供商的 key 有时间限制）
+- 多租户部署（用户自己管理 key）
+- 安全事件后重新生成 key
+- 开发/测试环境（测试 key 定期过期）
+
+**结论**：当前部署不涉及上述场景，维护成本 > 收益，建议跳过。如未来扩展为多租户或增加其他 API 提供商，可重新评估。
+
+</details>
 
 ### 待定的 Commit（需进一步评估）
 
 | Commit | 说明 | 待定原因 |
 |--------|------|----------|
-| `2be0603` | fix expired connection health recovery (#393) | 10 文件 +406/-17 行，功能价值高（过期 API Key 自动恢复），但依赖 #392（已建议跳过），需评估是否手工移植核心逻辑 |
 | `af5b62f` | fix codex responses continuation across channel drift (#404) | 3 文件 +288/-6 行，修复 Codex responses 多轮对话续接问题，但缺失前置依赖 `codexSessionResponseStore.ts`（在上游 #330 中引入，本地手工移植时未包含） |
 
 ---

@@ -29,4 +29,5 @@ check_tokens.ts
 # Local planning docs
 docs/plan/
 docs/plans/
+docs/custom/plans/
 tmp_cherry

@@ -61,6 +61,16 @@ function getSessionStoreKeys(sessionId: string): string[] {
   ];
 }
 
+function reconcileScopedSessionFallback(bareSessionKey: string): void {
+  if (!bareSessionKey) return;
+
+  for (const key of codexSessionResponseIds.keys()) {
+    if (key === bareSessionKey) continue;
+    if (getBareSessionStoreKey(key) !== bareSessionKey) continue;
+    codexSessionResponseIds.delete(key);
+  }
+}
+
 export function buildCodexSessionResponseStoreKey(input: {
   sessionId: string;
   siteId?: number | null;
@@ -87,7 +97,10 @@ export function getCodexSessionResponseId(sessionId: string): string | null {
 
   for (const fallbackKey of getFallbackSessionStoreKeys(normalized)) {
     const fallback = codexSessionResponseIds.get(fallbackKey);
-    if (fallback) return fallback;
+    if (fallback) {
+      reconcileScopedSessionFallback(fallbackKey);
+      return fallback;
+    }
   }
 
   return null;

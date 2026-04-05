@@ -393,3 +393,38 @@
 | `2bd80d1` | feat(路由健康): 通道级冷却重置 + 站点惩罚 DB 同步 + WebUI 操作按钮 |
 | `884855a` | feat(探活): 路由级批量探活 + 单通道探活 + 按性能应急排序 — channelProbeService / SSE 流式批量探活 / 三段式排序写回 / 前端会话管理 + UI |
 | `40b9894` | feat(探活): 路由探活结果持久化 + 权重优先级混合排序 — localStorage 快照 + 拓扑失效检测 + 权重分档(200/100/30) + CenteredModal 确认 + 三态渲染 |
+
+---
+
+## 2026-04-05 跟进
+
+**上游主线状态**：`63f6b07`（`upstream/main` 未前进）
+
+### 新发现的分支提交（未进入 upstream/main）
+
+| Commit | 分支 | 说明 | 处理结果 |
+|--------|------|------|----------|
+| `060f28b` | `upstream/codex/daily-codex-session-roundtrip` | keep codex continuation current across scope roundtrips | 已审阅并按本地语义手工补齐到当前工作区 |
+
+### `060f28b` 跟进说明
+
+**背景**：本地已在 2026-04-04 合入 Codex continuation 与跨 channel/account drift 续接能力，但 `codexSessionResponseStore` 只覆盖了“单向漂移”语义，未处理同一 downstream session 发生 `A -> B -> A` 的 scope roundtrip。
+
+**上游修复点**：
+- 在 `codexSessionResponseStore.ts` 新增 `reconcileScopedSessionFallback()`
+- 当 `getCodexSessionResponseId()` 命中 bare-session fallback 时，清理同 bare session 下的旧 scoped key
+- 避免回到旧 scope 时继续命中过期的 `previous_response_id`
+
+**本地手工补齐内容**：
+- `src/server/proxy-core/runtime/codexSessionResponseStore.ts`
+  - fallback 命中时追加旧 scoped key 清理逻辑
+- `src/server/proxy-core/runtime/codexSessionResponseStore.test.ts`
+  - 新增 roundtrip 回归用例：同一 downstream session 从原 scope 漂到新 scope，再漂回原 scope 时，应始终返回最新 continuation id
+
+**验证结果**：
+- ✅ `npx vitest run src/server/proxy-core/runtime/codexSessionResponseStore.test.ts` - 6 passed
+- ✅ `npx vitest run src/server/routes/proxy/responses.codex-oauth.test.ts` - 24 passed
+
+**结论**：
+- 该提交不是上游主线前进，而是 `#330/#404` 之后的一个小型 continuation follow-up
+- 改动面很小，但能补齐当前本地 continuation store 在 scope roundtrip 场景下的一致性缺口

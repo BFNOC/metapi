@@ -16,6 +16,14 @@ export type SiteHealthFailureSummary = {
   occurredAt: string | null;
 };
 
+export type SiteHealthSuccessSummary = {
+  modelName: string | null;
+  httpStatus: number | null;
+  firstByteLatencyMs: number | null;
+  latencyMs: number | null;
+  occurredAt: string | null;
+};
+
 export type SiteHealthCooldownSummary = {
   activeChannelCooldownCount: number;
   affectedRouteCount: number;
@@ -36,6 +44,7 @@ export type SiteHealthStateRow = {
   latencyEmaMs: number | null;
   cooldownSummary: SiteHealthCooldownSummary;
   lastSuccessAt: string | null;
+  recentSuccessSummary: SiteHealthSuccessSummary | null;
   lastFailureAt: string | null;
   recentFailureSummary: SiteHealthFailureSummary | null;
   activeModelCount: number;
@@ -83,6 +92,11 @@ type SiteRecentFailureAggregate = {
   latestFailureAtMs: number | null;
   topFailureType: SiteHealthFailureKind | null;
   latestSummary: SiteHealthFailureSummary | null;
+};
+
+type SiteRecentSuccessAggregate = {
+  latestSuccessAtMs: number | null;
+  latestSummary: SiteHealthSuccessSummary | null;
 };
 
 const SITE_HEALTH_LOOKBACK_MS = 24 * 60 * 60 * 1000;
@@ -136,6 +150,13 @@ function buildEmptyRecentFailureAggregate(): SiteRecentFailureAggregate {
     severeFailureCount: 0,
     latestFailureAtMs: null,
     topFailureType: null,
+    latestSummary: null,
+  };
+}
+
+function buildEmptyRecentSuccessAggregate(): SiteRecentSuccessAggregate {
+  return {
+    latestSuccessAtMs: null,
     latestSummary: null,
   };
 }
@@ -297,6 +318,45 @@ export async function listSiteHealthStates(nowMs = Date.now()): Promise<SiteHeal
   }
 
   const recentFailureSince = new Date(nowMs - SITE_HEALTH_LOOKBACK_MS).toISOString();
+  const successRows = await db.select({
+    siteId: schema.sites.id,
+    modelActual: schema.proxyLogs.modelActual,
+    httpStatus: schema.proxyLogs.httpStatus,
+    firstByteLatencyMs: schema.proxyLogs.firstByteLatencyMs,
+    latencyMs: schema.proxyLogs.latencyMs,
+    createdAt: schema.proxyLogs.createdAt,
+  }).from(schema.proxyLogs)
+    .innerJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .where(and(
+      inArray(schema.sites.id, siteIds),
+      gte(schema.proxyLogs.createdAt, recentFailureSince),
+      eq(schema.proxyLogs.status, 'success'),
+    ))
+    .orderBy(desc(schema.proxyLogs.createdAt))
+    .all();
+
+  const recentSuccessBySiteId = new Map<number, SiteRecentSuccessAggregate>();
+  for (const row of successRows) {
+    const aggregate = recentSuccessBySiteId.get(row.siteId) || buildEmptyRecentSuccessAggregate();
+    if (!aggregate.latestSummary) {
+      aggregate.latestSummary = {
+        modelName: (row.modelActual || '').trim() || null,
+        httpStatus: row.httpStatus ?? null,
+        firstByteLatencyMs: row.firstByteLatencyMs ?? null,
+        latencyMs: row.latencyMs ?? null,
+        occurredAt: row.createdAt || null,
+      };
+    }
+    if (row.createdAt) {
+      const createdAtMs = Date.parse(row.createdAt);
+      if (Number.isFinite(createdAtMs)) {
+        aggregate.latestSuccessAtMs = Math.max(aggregate.latestSuccessAtMs ?? 0, createdAtMs);
+      }
+    }
+    recentSuccessBySiteId.set(row.siteId, aggregate);
+  }
+
   const failureRows = await db.select({
     siteId: schema.sites.id,
     errorMessage: schema.proxyLogs.errorMessage,
@@ -378,6 +438,7 @@ export async function listSiteHealthStates(nowMs = Date.now()): Promise<SiteHeal
   return sites
     .map((site) => {
       const runtime = runtimeBySiteId.get(site.id) || buildEmptyRuntimeAggregate();
+      const recentSuccess = recentSuccessBySiteId.get(site.id) || buildEmptyRecentSuccessAggregate();
       const recentFailures = recentFailuresBySiteId.get(site.id) || buildEmptyRecentFailureAggregate();
       const cooldown = cooldownBySiteId.get(site.id) || buildEmptyCooldownSummary();
       const state = deriveSiteHealthState({
@@ -411,7 +472,8 @@ export async function listSiteHealthStates(nowMs = Date.now()): Promise<SiteHeal
         penaltyScore: Number(runtime.penaltyScore.toFixed(3)),
         latencyEmaMs,
         cooldownSummary: cooldown,
-        lastSuccessAt: toIsoOrNull(runtime.lastSuccessAtMs),
+        lastSuccessAt: toIsoOrNull(recentSuccess.latestSuccessAtMs ?? runtime.lastSuccessAtMs),
+        recentSuccessSummary: recentSuccess.latestSummary,
         lastFailureAt: toIsoOrNull(Math.max(runtime.lastFailureAtMs ?? 0, recentFailures.latestFailureAtMs ?? 0) || null),
         recentFailureSummary: recentFailures.latestSummary,
         activeModelCount: runtime.activeModelCount,

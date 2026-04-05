@@ -536,6 +536,14 @@ export type SiteHealthFailureSummary = {
   occurredAt: string | null;
 };
 
+export type SiteHealthSuccessSummary = {
+  modelName: string | null;
+  httpStatus: number | null;
+  firstByteLatencyMs: number | null;
+  latencyMs: number | null;
+  occurredAt: string | null;
+};
+
 export type SiteHealthStateRow = {
   siteId: number;
   siteName: string;
@@ -549,6 +557,7 @@ export type SiteHealthStateRow = {
   latencyEmaMs: number | null;
   cooldownSummary: SiteHealthCooldownSummary;
   lastSuccessAt: string | null;
+  recentSuccessSummary: SiteHealthSuccessSummary | null;
   lastFailureAt: string | null;
   recentFailureSummary: SiteHealthFailureSummary | null;
   activeModelCount: number;

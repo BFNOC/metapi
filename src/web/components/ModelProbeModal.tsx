@@ -38,6 +38,7 @@ type Props = {
 };
 
 type SortMode = 'latency' | 'name' | 'status';
+type FilterPresetMode = 'allow-list' | 'deny-list' | 'none' | 'unknown';
 
 export default function ModelProbeModal({ open, onClose, siteId, siteName, initialModels, tokenId, accountId }: Props) {
   const [prompt, setPrompt] = useState(pickRandomProbePrompt);
@@ -51,6 +52,10 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
   const [sortMode, setSortMode] = useState<SortMode>('latency');
   const [loadingModels, setLoadingModels] = useState(false);
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
+  const [filterPreset, setFilterPreset] = useState<{ mode: FilterPresetMode; filteredCount: number | null }>({
+    mode: 'unknown',
+    filteredCount: null,
+  });
 
   // Multi-select model state
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
@@ -70,11 +75,13 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
     setError(null);
     setModelSearch('');
     setManualInput('');
+    setFilterPreset({ mode: 'unknown', filteredCount: null });
 
     // If caller provided explicit initialModels, use them
     if (initialModels && initialModels.length > 0) {
       setAvailableModels(initialModels.map((name) => ({ name })));
       setSelectedModels(new Set(initialModels));
+      setFilterPreset({ mode: 'none', filteredCount: null });
       return;
     }
 
@@ -101,12 +108,14 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
 
         // Filter fetch is optional — failure means "unknown filter", fall back to select all
         if (filterResult.status === 'rejected') {
+          setFilterPreset({ mode: 'unknown', filteredCount: null });
           setSelectedModels(new Set(modelList.map((m) => m.name)));
           return;
         }
         const filterRes = filterResult.value as any;
-        const mode = filterRes?.modelFilterMode || 'none';
+        const mode = (filterRes?.modelFilterMode || 'none') as FilterPresetMode;
         const filtered: string[] = Array.isArray(filterRes?.filteredModels) ? filterRes.filteredModels : [];
+        setFilterPreset({ mode, filteredCount: filtered.length });
         if (mode === 'allow-list') {
           // Whitelist: only select the allowed models (confirmed empty allow-list = select nothing)
           setSelectedModels(filtered.length > 0 ? new Set(filtered) : new Set());
@@ -150,6 +159,13 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
         const filterMode = site?.modelFilterMode ?? null; // null = site fetch failed or site not found
         const allowedModels: string[] | null = allowedRes ? (Array.isArray(allowedRes.models) ? allowedRes.models : []) : null;
         const disabledModels: string[] | null = disabledRes ? (Array.isArray(disabledRes.models) ? disabledRes.models : []) : null;
+        if (filterMode === 'allow-list') {
+          setFilterPreset({ mode: 'allow-list', filteredCount: allowedModels?.length ?? 0 });
+        } else if (filterMode === 'deny-list') {
+          setFilterPreset({ mode: 'deny-list', filteredCount: disabledModels?.length ?? 0 });
+        } else {
+          setFilterPreset({ mode: sitesRes ? 'none' : 'unknown', filteredCount: null });
+        }
 
         if (filterMode === 'allow-list' && allowedModels !== null) {
           // Whitelist with confirmed data: empty allow-list = select nothing
@@ -195,6 +211,13 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
         const filterMode = site?.modelFilterMode ?? null;
         const allowedModels: string[] | null = allowedRes ? (Array.isArray(allowedRes.models) ? allowedRes.models : []) : null;
         const disabledModels: string[] | null = disabledRes ? (Array.isArray(disabledRes.models) ? disabledRes.models : []) : null;
+        if (filterMode === 'allow-list') {
+          setFilterPreset({ mode: 'allow-list', filteredCount: allowedModels?.length ?? 0 });
+        } else if (filterMode === 'deny-list') {
+          setFilterPreset({ mode: 'deny-list', filteredCount: disabledModels?.length ?? 0 });
+        } else {
+          setFilterPreset({ mode: sitesRes ? 'none' : 'unknown', filteredCount: null });
+        }
 
         if (filterMode === 'allow-list' && allowedModels !== null) {
           if (allowedModels.length > 0) {
@@ -449,6 +472,18 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
   } as const;
 
   const probeModelCount = resolveProbeModels().length;
+  const filterPresetHint = useMemo(() => {
+    if (filterPreset.mode === 'allow-list') {
+      return `当前按白名单预选，已选 ${selectedModels.size} / ${availableModels.length} 个模型`;
+    }
+    if (filterPreset.mode === 'deny-list') {
+      return `当前按黑名单预选，已排除 ${filterPreset.filteredCount || 0} 个模型`;
+    }
+    if (filterPreset.mode === 'none') {
+      return '当前未启用模型黑白名单，默认预选全部已发现模型';
+    }
+    return '未能读取模型过滤规则，当前按默认策略预选模型';
+  }, [availableModels.length, filterPreset.filteredCount, filterPreset.mode, selectedModels.size]);
 
   return (
     <CenteredModal
@@ -557,6 +592,9 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
                     </button>
                   </div>
                 )}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+                {filterPresetHint}
               </div>
 
               {loadingModels ? (

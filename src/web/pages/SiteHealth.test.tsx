@@ -67,10 +67,17 @@ const rows = [
       latestCooldownUntil: '2099-01-01T00:00:00.000Z',
     },
     lastSuccessAt: '2026-04-05T16:00:00.000Z',
+    recentSuccessSummary: {
+      modelName: 'gpt-4o-mini',
+      httpStatus: 200,
+      firstByteLatencyMs: 420,
+      latencyMs: 860,
+      occurredAt: '2026-04-05T16:00:00.000Z',
+    },
     lastFailureAt: '2026-04-05T15:00:00.000Z',
     recentFailureSummary: {
       kind: 'challenge',
-      message: '最近失败：挑战页',
+      message: '最近失败：挑战页，返回了一段很长的错误内容用于验证 tooltip 和截断行为是否生效。',
       httpStatus: 503,
       occurredAt: '2026-04-05T15:00:00.000Z',
     },
@@ -99,6 +106,13 @@ const rows = [
       latestCooldownUntil: null,
     },
     lastSuccessAt: '2026-04-05T16:30:00.000Z',
+    recentSuccessSummary: {
+      modelName: 'claude-3-5-haiku',
+      httpStatus: 200,
+      firstByteLatencyMs: 180,
+      latencyMs: 540,
+      occurredAt: '2026-04-05T16:30:00.000Z',
+    },
     lastFailureAt: null,
     recentFailureSummary: null,
     activeModelCount: 1,
@@ -144,8 +158,11 @@ describe('SiteHealth page', () => {
       expect(text).toContain('总站点');
       expect(text).toContain('隔离中');
       expect(text).toContain('正常');
+      expect(text).toContain('gpt-4o-mini / HTTP 200 / TTFT 420ms / 总耗时 860ms');
       expect(text).toContain('冷却通道 1 / 影响路由 1');
       expect(root.root.findByType('table').props.className).toContain('data-table');
+      const tooltipNodes = root.root.findAll((node) => typeof node.props?.['data-tooltip'] === 'string');
+      expect(tooltipNodes.some((node) => String(node.props['data-tooltip']).includes('时间：'))).toBe(true);
     } finally {
       root?.unmount();
     }

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { api, type SiteHealthFailureSummary, type SiteHealthState, type SiteHealthStateRow } from '../api.js';
+import { api, type SiteHealthFailureSummary, type SiteHealthState, type SiteHealthStateRow, type SiteHealthSuccessSummary } from '../api.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import ModelProbeModal from '../components/ModelProbeModal.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
@@ -73,13 +73,23 @@ function describeCooldown(row: SiteHealthStateRow): string {
   return `冷却通道 ${cooldownCount}${affectedRouteCount > 0 ? ` / 影响路由 ${affectedRouteCount}` : ''}${earliestCooldownUntil ? ` / 最早恢复 ${formatDateTime(earliestCooldownUntil)}` : ''}`;
 }
 
-function describeRecentFailure(summary: SiteHealthFailureSummary | string | null, lastFailureAt: string | null): string {
-  if (!summary) return formatDateTime(lastFailureAt);
+function describeRecentFailure(summary: SiteHealthFailureSummary | string | null): string {
+  if (!summary) return '';
   if (typeof summary === 'string') return summary;
   const prefix = [summary.kind || null, summary.httpStatus ? `HTTP ${summary.httpStatus}` : null]
     .filter(Boolean)
     .join(' / ');
-  return [prefix, summary.message || ''].filter(Boolean).join('：') || formatDateTime(lastFailureAt);
+  return [prefix, summary.message || ''].filter(Boolean).join('：');
+}
+
+function describeRecentSuccess(summary: SiteHealthSuccessSummary | null): string {
+  if (!summary) return '';
+  return [
+    summary.modelName || null,
+    summary.httpStatus ? `HTTP ${summary.httpStatus}` : null,
+    typeof summary.firstByteLatencyMs === 'number' ? `TTFT ${Math.round(summary.firstByteLatencyMs)}ms` : null,
+    typeof summary.latencyMs === 'number' ? `总耗时 ${Math.round(summary.latencyMs)}ms` : null,
+  ].filter(Boolean).join(' / ');
 }
 
 function describeRuntime(row: SiteHealthStateRow): string {
@@ -87,6 +97,44 @@ function describeRuntime(row: SiteHealthStateRow): string {
   if (row.breakerOpen) parts.push('breaker open');
   if (typeof row.latencyEmaMs === 'number') parts.push(`延迟 ${Math.round(row.latencyEmaMs)}ms`);
   return parts.join(' / ');
+}
+
+function renderEventCell(options: {
+  time: string | null;
+  summary: string;
+  emptySummaryLabel: string;
+}) {
+  const timeLabel = formatDateTime(options.time);
+  const summaryLabel = options.summary || options.emptySummaryLabel;
+  const tooltip = [
+    options.time ? `时间：${timeLabel}` : null,
+    summaryLabel ? `详情：${summaryLabel}` : null,
+  ].filter(Boolean).join(' ｜ ');
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>{timeLabel}</div>
+      <div
+        data-tooltip={tooltip || undefined}
+        data-tooltip-align="start"
+        tabIndex={tooltip ? 0 : undefined}
+        style={{
+          fontSize: 12,
+          color: 'var(--color-text-primary)',
+          whiteSpace: 'normal',
+          wordBreak: 'break-word',
+          overflow: 'hidden',
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          lineHeight: 1.45,
+          cursor: tooltip ? 'help' : 'default',
+        }}
+      >
+        {summaryLabel}
+      </div>
+    </div>
+  );
 }
 
 export default function SiteHealth() {
@@ -125,7 +173,8 @@ export default function SiteHealth() {
       if (!keyword) return true;
       return row.siteName.toLowerCase().includes(keyword)
         || (row.siteUrl || '').toLowerCase().includes(keyword)
-        || describeRecentFailure(row.recentFailureSummary, row.lastFailureAt).toLowerCase().includes(keyword);
+        || describeRecentFailure(row.recentFailureSummary).toLowerCase().includes(keyword)
+        || describeRecentSuccess(row.recentSuccessSummary).toLowerCase().includes(keyword);
     });
   }, [rows, search, stateFilter]);
 
@@ -301,8 +350,24 @@ export default function SiteHealth() {
                 </span>
               </div>
               <MobileField label={tr('运行状态')} value={describeRuntime(row)} stacked />
-              <MobileField label={tr('最近成功')} value={formatDateTime(row.lastSuccessAt)} />
-              <MobileField label={tr('最近失败')} value={describeRecentFailure(row.recentFailureSummary, row.lastFailureAt)} stacked />
+              <MobileField
+                label={tr('最近成功')}
+                value={renderEventCell({
+                  time: row.recentSuccessSummary?.occurredAt ?? row.lastSuccessAt,
+                  summary: describeRecentSuccess(row.recentSuccessSummary),
+                  emptySummaryLabel: '最近成功请求已记录，但暂无摘要',
+                })}
+                stacked
+              />
+              <MobileField
+                label={tr('最近失败')}
+                value={renderEventCell({
+                  time: row.recentFailureSummary?.occurredAt ?? row.lastFailureAt,
+                  summary: describeRecentFailure(row.recentFailureSummary),
+                  emptySummaryLabel: '失败详情缺失',
+                })}
+                stacked
+              />
               <MobileField label={tr('冷却')} value={describeCooldown(row)} stacked />
             </MobileCard>
           ))}
@@ -357,10 +422,20 @@ export default function SiteHealth() {
                       </div>
                     </div>
                   </td>
-                  <td style={{ color: 'var(--color-text-primary)' }}>{formatDateTime(row.lastSuccessAt)}</td>
+                  <td style={{ whiteSpace: 'normal' }}>
+                    {renderEventCell({
+                      time: row.recentSuccessSummary?.occurredAt ?? row.lastSuccessAt,
+                      summary: describeRecentSuccess(row.recentSuccessSummary),
+                      emptySummaryLabel: '最近成功请求已记录，但暂无摘要',
+                    })}
+                  </td>
                   <td style={{ whiteSpace: 'normal' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <span style={{ color: 'var(--color-text-primary)' }}>{describeRecentFailure(row.recentFailureSummary, row.lastFailureAt)}</span>
+                      {renderEventCell({
+                        time: row.recentFailureSummary?.occurredAt ?? row.lastFailureAt,
+                        summary: describeRecentFailure(row.recentFailureSummary),
+                        emptySummaryLabel: '失败详情缺失',
+                      })}
                       {row.severeFailureCount > 0 ? <span className="badge badge-warning">{tr('严重失败')} {row.severeFailureCount}</span> : null}
                     </div>
                   </td>

@@ -29,4 +29,12 @@ describe('App sidebar config', () => {
     expect(source).toContain("const OAuthManagement = lazy(() => import('./pages/OAuthManagement.js'));");
     expect(source).toContain('<Route path="/oauth" element={<OAuthManagement />} />');
   });
+
+  it('adds site health navigation entry under 控制台', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
+
+    expect(source).toContain("{ to: '/site-health', label: '站点健康'");
+    expect(source).toContain("const SiteHealth = lazy(() => import('./pages/SiteHealth.js'));");
+    expect(source).toContain('<Route path="/site-health" element={<SiteHealth />} />');
+  });
 });

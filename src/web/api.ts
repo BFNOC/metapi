@@ -509,6 +509,79 @@ export type OAuthConnectionsResponse = {
   offset: number;
 };
 
+export type SiteHealthState = 'active' | 'penalized' | 'quarantined' | 'recovering';
+export type SiteHealthFailureCategory =
+  | 'auth'
+  | 'rate_limit_429'
+  | 'quota_exhausted'
+  | 'upstream_5xx'
+  | 'challenge'
+  | 'empty'
+  | 'timeout'
+  | 'other'
+  | null;
+export type SiteHealthProbePolicy = 'allow_recovery_probe' | 'manual_only' | 'forbid_batch_probe';
+
+export type SiteHealthCooldownSummary = {
+  activeChannelCooldownCount: number;
+  affectedRouteCount: number;
+  earliestCooldownUntil: string | null;
+  latestCooldownUntil: string | null;
+};
+
+export type SiteHealthFailureSummary = {
+  kind: SiteHealthFailureCategory;
+  message: string | null;
+  httpStatus: number | null;
+  occurredAt: string | null;
+};
+
+export type SiteHealthStateRow = {
+  siteId: number;
+  siteName: string;
+  siteUrl: string | null;
+  platform: string | null;
+  siteStatus: string;
+  state: SiteHealthState;
+  probePolicy: SiteHealthProbePolicy;
+  breakerOpen: boolean;
+  penaltyScore: number;
+  latencyEmaMs: number | null;
+  cooldownSummary: SiteHealthCooldownSummary;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  recentFailureSummary: SiteHealthFailureSummary | null;
+  activeModelCount: number;
+  unhealthyModelCount: number;
+  recentFailureCount: number;
+  severeFailureCount: number;
+  isPinned: boolean;
+  sortOrder: number;
+};
+
+export type SiteHealthStatesResponse = {
+  enabled: boolean;
+  items: SiteHealthStateRow[];
+};
+
+export type SiteHealthManualVerifyResponse = {
+  success: boolean;
+  siteId: number;
+  siteName: string;
+  probePolicy: SiteHealthProbePolicy;
+  candidateModel: string | null;
+  candidateSource: 'route' | 'availability' | 'allow_list' | 'none';
+  recoveryHint: boolean;
+  message: string;
+  result: {
+    modelName: string | null;
+    status: string | null;
+    ttftMs: number | null;
+    httpStatus: number | null;
+    error: string | null;
+  } | null;
+};
+
 export const api = {
   // Sites
   getSites: () => request('/api/sites'),
@@ -519,6 +592,12 @@ export const api = {
   detectSite: (url: string) => request('/api/sites/detect', { method: 'POST', body: JSON.stringify({ url }) }),
   getSiteDisabledModels: (siteId: number) => request(`/api/sites/${siteId}/disabled-models`),
   updateSiteDisabledModels: (siteId: number, models: string[]) => request(`/api/sites/${siteId}/disabled-models`, { method: 'PUT', body: JSON.stringify({ models }) }),
+  getSiteHealthStates: () => request('/api/site-health/states') as Promise<SiteHealthStatesResponse>,
+  manualVerifySiteHealth: (siteId: number) =>
+    request(`/api/site-health/manual-verify/${siteId}`, {
+      method: 'POST',
+      timeoutMs: 30_000,
+    }) as Promise<SiteHealthManualVerifyResponse>,
   resetSiteHealth: (siteId: number) => request(`/api/sites/${siteId}/reset-health`, { method: 'POST' }),
   getSiteAvailableModels: (siteId: number) => request(`/api/sites/${siteId}/available-models`),
   probeModels: (siteId: number, data: { modelNames?: string[]; prompt?: string; concurrency?: number; timeoutMs?: number }) =>

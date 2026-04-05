@@ -169,10 +169,47 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
         }
       }).finally(() => setLoadingModels(false));
     } else {
-      // Site-level probe without specific account: no pre-loaded model list
-      setAvailableModels([]);
-      setSelectedModels(new Set());
-      setLoadingModels(false);
+      // Site-level probe: load site's discovered models + site filter.
+      Promise.allSettled([
+        api.getSiteAvailableModels(siteId),
+        api.getSiteAllowedModels(siteId),
+        api.getSiteDisabledModels(siteId),
+        api.getSites(),
+      ]).then(([modelsResult, allowedResult, disabledResult, sitesResult]) => {
+        if (modelsResult.status === 'rejected') {
+          setAvailableModels([]);
+          setSelectedModels(new Set());
+          return;
+        }
+        const modelsRes = modelsResult.value as any;
+        const modelList: AvailableModel[] = Array.isArray(modelsRes?.models)
+          ? modelsRes.models.map((m: any) => ({ name: String(m.name || m) }))
+          : [];
+        setAvailableModels(modelList);
+
+        const allowedRes = allowedResult.status === 'fulfilled' ? allowedResult.value as any : null;
+        const disabledRes = disabledResult.status === 'fulfilled' ? disabledResult.value as any : null;
+        const sitesRes = sitesResult.status === 'fulfilled' ? sitesResult.value as any : null;
+
+        const site = Array.isArray(sitesRes) ? sitesRes.find((s: any) => s.id === siteId) : null;
+        const filterMode = site?.modelFilterMode ?? null;
+        const allowedModels: string[] | null = allowedRes ? (Array.isArray(allowedRes.models) ? allowedRes.models : []) : null;
+        const disabledModels: string[] | null = disabledRes ? (Array.isArray(disabledRes.models) ? disabledRes.models : []) : null;
+
+        if (filterMode === 'allow-list' && allowedModels !== null) {
+          if (allowedModels.length > 0) {
+            const allowedSet = new Set(allowedModels.map((m) => m.toLowerCase()));
+            setSelectedModels(new Set(modelList.filter((m) => allowedSet.has(m.name.toLowerCase())).map((m) => m.name)));
+          } else {
+            setSelectedModels(new Set());
+          }
+        } else if (filterMode === 'deny-list' && disabledModels !== null && disabledModels.length > 0) {
+          const disabledSet = new Set(disabledModels.map((m) => m.toLowerCase()));
+          setSelectedModels(new Set(modelList.filter((m) => !disabledSet.has(m.name.toLowerCase())).map((m) => m.name)));
+        } else {
+          setSelectedModels(new Set(modelList.map((m) => m.name)));
+        }
+      }).finally(() => setLoadingModels(false));
     }
   }, [open, initialModels, tokenId, accountId, siteId]);
 

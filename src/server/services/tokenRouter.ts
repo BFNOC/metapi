@@ -43,6 +43,34 @@ interface RouteMatch {
 
 type RouteChannelCandidate = RouteMatch['channels'][number];
 
+export type SiteHealthFailureKind =
+  | 'auth'
+  | 'rate_limit_429'
+  | 'quota_exhausted'
+  | 'upstream_5xx'
+  | 'challenge'
+  | 'empty'
+  | 'timeout'
+  | 'other';
+
+export type SiteRuntimeHealthSnapshot = {
+  siteId: number;
+  modelKey: string;
+  penaltyScore: number;
+  latencyEmaMs: number | null;
+  transientFailureStreak: number;
+  breakerLevel: number;
+  breakerOpen: boolean;
+  breakerUntilMs: number | null;
+  lastUpdatedAtMs: number;
+  lastFailureAtMs: number | null;
+  lastSuccessAtMs: number | null;
+  recentSuccessStreak: number;
+  lastFailureKind: SiteHealthFailureKind | null;
+};
+
+export type SiteRuntimeHealthSnapshotEntry = SiteRuntimeHealthSnapshot;
+
 interface SelectedChannel {
   channel: typeof schema.routeChannels.$inferSelect;
   account: typeof schema.accounts.$inferSelect;
@@ -59,10 +87,11 @@ type FailureAwareChannel = {
   lastFailAt?: string | null;
 };
 
-type SiteRuntimeFailureContext = {
+export type SiteRuntimeFailureContext = {
   status?: number | null;
   errorText?: string | null;
   modelName?: string | null;
+  failureKind?: SiteHealthFailureKind | null;
 };
 
 type SiteRuntimeHealthState = {
@@ -78,6 +107,7 @@ type SiteRuntimeHealthState = {
   // Tracks consecutive successes to dampen soft failure penalties.
   // Reset only by hard (admission-health) failures.
   recentSuccessStreak: number;
+  lastFailureKind: SiteHealthFailureKind | null;
 };
 
 const FAILURE_BACKOFF_BASE_SEC = 60;              // Aggressive: 60s base (was 15s), uses consecutiveFailCount now
@@ -186,6 +216,16 @@ const SITE_SOFT_STREAM_FAILURE_PATTERNS: RegExp[] = [
 const SITE_EMPTY_CONTENT_FAILURE_PATTERNS: RegExp[] = [
   /upstream\s+returned\s+empty\s+content/i,
   /empty\s+response/i,
+];
+
+const SITE_CHALLENGE_FAILURE_PATTERNS: RegExp[] = [
+  /cloudflare/i,
+  /cf[-_\s]?challenge/i,
+  /turnstile/i,
+  /captcha/i,
+  /attention\s+required/i,
+  /just\s+a\s+moment/i,
+  /please\s+enable\s+javascript/i,
 ];
 
 // Client-initiated cancellations — not the site's fault at all.
@@ -309,6 +349,43 @@ function readNullableTimestamp(value: unknown): number | null {
   return normalized;
 }
 
+function normalizeSiteHealthFailureKind(value: unknown): SiteHealthFailureKind | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case 'auth':
+    case 'rate_limit_429':
+    case 'quota_exhausted':
+    case 'upstream_5xx':
+    case 'challenge':
+    case 'empty':
+    case 'timeout':
+    case 'other':
+      return normalized;
+    default:
+      return null;
+  }
+}
+
+export function classifySiteHealthFailureKind(context: SiteRuntimeFailureContext = {}): SiteHealthFailureKind {
+  const explicit = normalizeSiteHealthFailureKind(context.failureKind);
+  if (explicit) return explicit;
+
+  const status = typeof context.status === 'number' ? context.status : 0;
+  const errorText = (context.errorText || '').trim();
+
+  if (!errorText && status <= 0) return 'other';
+  if (matchesAnyPattern(SITE_EMPTY_CONTENT_FAILURE_PATTERNS, errorText)) return 'empty';
+  if (matchesAnyPattern(RETRYABLE_TIMEOUT_PATTERNS, errorText)) return 'timeout';
+  if (matchesAnyPattern(SITE_CHALLENGE_FAILURE_PATTERNS, errorText)) return 'challenge';
+  if (status === 429) return 'rate_limit_429';
+  if (status === 402) return 'quota_exhausted';
+  if (status === 401 || status === 403) return 'auth';
+  if (status >= 500) return 'upstream_5xx';
+  if (matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText)) return 'upstream_5xx';
+  return 'other';
+}
+
 function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {}): number {
   const status = typeof context.status === 'number' ? context.status : 0;
   const errorText = (context.errorText || '').trim();
@@ -328,20 +405,44 @@ function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {
     return 0.35;   // Empty content — site responded but no useful output
   }
 
-  if (status >= 500 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText)) {
-    return 2.5;
+  if (!config.enableSiteHealthSignals) {
+    if (status >= 500 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText)) {
+      return 2.5;
+    }
+
+    if (status === 429) {
+      return 2.2;
+    }
+
+    if (status === 402) {
+      return 5.0;
+    }
+
+    if (status === 401 || status === 403) {
+      return 4.0;
+    }
   }
 
-  if (status === 429) {
+  const failureKind = classifySiteHealthFailureKind(context);
+
+  if (failureKind === 'challenge' || failureKind === 'upstream_5xx') {
+    return (5 / 3) * config.siteHealthSevereFailureMultiplier;
+  }
+
+  if (failureKind === 'rate_limit_429') {
     return 2.2;
   }
 
-  if (status === 402) {
+  if (failureKind === 'quota_exhausted') {
     return 5.0; // Quota exhausted — near-permanent, heavy penalty
   }
 
-  if (status === 401 || status === 403) {
-    return 4.0; // Aggressive: auth/forbidden errors hit hard (was 1.8)
+  if (failureKind === 'auth') {
+    return 2.0 * config.siteHealthAuthFailureMultiplier;
+  }
+
+  if (failureKind === 'timeout') {
+    return 2.5;
   }
 
   if (matchesAnyPattern(SITE_PROTOCOL_FAILURE_PATTERNS, errorText)) {
@@ -370,7 +471,16 @@ function isTransientSiteRuntimeFailure(context: SiteRuntimeFailureContext = {}):
   if (matchesAnyPattern(SITE_CLIENT_CANCELLATION_PATTERNS, errorText)) return false;
   if (matchesAnyPattern(SITE_SOFT_STREAM_FAILURE_PATTERNS, errorText)) return false;
   if (matchesAnyPattern(SITE_EMPTY_CONTENT_FAILURE_PATTERNS, errorText)) return false;
-  return status >= 500 || status === 429 || status === 402 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText);
+  if (!config.enableSiteHealthSignals) {
+    return status >= 500 || status === 429 || status === 402 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText);
+  }
+  const failureKind = classifySiteHealthFailureKind(context);
+  return failureKind === 'challenge'
+    || failureKind === 'upstream_5xx'
+    || failureKind === 'rate_limit_429'
+    || failureKind === 'quota_exhausted'
+    || failureKind === 'timeout'
+    || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText);
 }
 
 function isSoftCompletionFailure(context: SiteRuntimeFailureContext = {}): boolean {
@@ -396,6 +506,7 @@ function hydrateSiteRuntimeHealthState(raw: unknown): SiteRuntimeHealthState | n
   if (!isRecord(raw)) return null;
 
   const lastUpdatedAtMs = readFiniteInteger(raw.lastUpdatedAtMs) ?? Date.now();
+  const lastFailureKind = normalizeSiteHealthFailureKind(raw.lastFailureKind);
   return {
     penaltyScore: Math.max(0, readFiniteNumber(raw.penaltyScore) ?? 0),
     latencyEmaMs: readFiniteNumber(raw.latencyEmaMs),
@@ -407,6 +518,7 @@ function hydrateSiteRuntimeHealthState(raw: unknown): SiteRuntimeHealthState | n
     lastFailureAtMs: readNullableTimestamp(raw.lastFailureAtMs),
     lastSuccessAtMs: readNullableTimestamp(raw.lastSuccessAtMs),
     recentSuccessStreak: Math.max(0, readFiniteInteger(raw.recentSuccessStreak) ?? 0),
+    lastFailureKind,
   };
 }
 
@@ -422,6 +534,7 @@ function cloneSiteRuntimeHealthState(state: SiteRuntimeHealthState): SiteRuntime
     lastFailureAtMs: state.lastFailureAtMs,
     lastSuccessAtMs: state.lastSuccessAtMs,
     recentSuccessStreak: state.recentSuccessStreak,
+    lastFailureKind: state.lastFailureKind,
   };
 }
 
@@ -439,6 +552,7 @@ function getOrCreateRuntimeHealthState<K>(states: Map<K, SiteRuntimeHealthState>
       lastFailureAtMs: null,
       lastSuccessAtMs: null,
       recentSuccessStreak: 0,
+      lastFailureKind: null,
     };
     states.set(key, initial);
     return initial;
@@ -520,6 +634,7 @@ function applyRuntimeHealthFailure(
   // Client cancellation — not the site's fault, skip entirely
   if (isClientCancellation(context)) return;
 
+  const failureKind = classifySiteHealthFailureKind(context);
   const basePenalty = resolveSiteRuntimeFailurePenalty(context);
 
   if (isSoftCompletionFailure(context)) {
@@ -558,6 +673,7 @@ function applyRuntimeHealthFailure(
     state.lastTransientFailureAtMs = null;
   }
   state.lastFailureAtMs = nowMs;
+  state.lastFailureKind = failureKind;
 }
 
 function applyRuntimeHealthSuccess(state: SiteRuntimeHealthState, latencyMs: number, nowMs = Date.now()): void {
@@ -849,6 +965,35 @@ export function resetStableFirstObservationState(): void {
   stableFirstSelectionCount = 0;
   stableFirstObservationSiteCooldownUntilMs.clear();
 }
+
+export async function listSiteRuntimeHealthSnapshots(nowMs = Date.now()): Promise<SiteRuntimeHealthSnapshot[]> {
+  await ensureSiteRuntimeHealthStateLoaded();
+  const snapshots: SiteRuntimeHealthSnapshot[] = [];
+
+  for (const [siteId, modelStates] of siteModelRuntimeHealthStates.entries()) {
+    for (const [modelKey, state] of modelStates.entries()) {
+      snapshots.push({
+        siteId,
+        modelKey,
+        penaltyScore: getDecayedSiteRuntimePenalty(state, nowMs),
+        latencyEmaMs: state.latencyEmaMs,
+        transientFailureStreak: state.transientFailureStreak,
+        breakerLevel: state.breakerLevel,
+        breakerOpen: isRuntimeHealthBreakerOpen(state, nowMs),
+        breakerUntilMs: state.breakerUntilMs,
+        lastUpdatedAtMs: state.lastUpdatedAtMs,
+        lastFailureAtMs: state.lastFailureAtMs,
+        lastSuccessAtMs: state.lastSuccessAtMs,
+        recentSuccessStreak: state.recentSuccessStreak,
+        lastFailureKind: state.lastFailureKind,
+      });
+    }
+  }
+
+  return snapshots;
+}
+
+export const getSiteRuntimeHealthSnapshots = listSiteRuntimeHealthSnapshots;
 
 function buildRuntimeBreakerReason(details: SiteRuntimeHealthDetails): string {
   if (details.breakerOpen) {

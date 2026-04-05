@@ -22,6 +22,11 @@ function parseNumber(value: string | undefined, fallback: number): number {
   return parsed;
 }
 
+function parseClampedNumber(value: string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = parseNumber(value, fallback);
+  return Math.max(min, Math.min(max, parsed));
+}
+
 function parseCsvList(value: string | undefined): string[] {
   if (!value) return [];
   return value
@@ -141,6 +146,10 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     proxyLogRetentionPruneIntervalMinutes: Math.max(1, Math.trunc(parseNumber(env.PROXY_LOG_RETENTION_PRUNE_INTERVAL_MINUTES, 30))),
     proxyFileRetentionDays: Math.max(0, Math.trunc(parseNumber(env.PROXY_FILE_RETENTION_DAYS, 30))),
     proxyFileRetentionPruneIntervalMinutes: Math.max(1, Math.trunc(parseNumber(env.PROXY_FILE_RETENTION_PRUNE_INTERVAL_MINUTES, 60))),
+    enableSiteHealthSignals: parseBoolean(env.ENABLE_SITE_HEALTH_SIGNALS, true),
+    siteHealthSevereFailureMultiplier: parseClampedNumber(env.SITE_HEALTH_SEVERE_FAILURE_MULTIPLIER, 1.5, 1, 10),
+    siteHealthAuthFailureMultiplier: parseClampedNumber(env.SITE_HEALTH_AUTH_FAILURE_MULTIPLIER, 2, 1, 10),
+    siteHealthEnableManualVerifyEntry: parseBoolean(env.SITE_HEALTH_ENABLE_MANUAL_VERIFY_ENTRY, true),
     proxyErrorKeywords: parseCsvList(env.PROXY_ERROR_KEYWORDS),
     proxyEmptyContentFailEnabled: parseBoolean(env.PROXY_EMPTY_CONTENT_FAIL, false),
     globalBlockedBrands: [] as string[],

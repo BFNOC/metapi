@@ -99,6 +99,17 @@ type SiteRecentSuccessAggregate = {
   latestSummary: SiteHealthSuccessSummary | null;
 };
 
+type SiteHealthSiteRecord = {
+  id: number;
+  name: string;
+  url: string | null;
+  platform: string | null;
+  status: string;
+  probeDisabled: boolean | null;
+  isPinned: boolean | null;
+  sortOrder: number | null;
+};
+
 const SITE_HEALTH_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const SITE_HEALTH_RECOVERING_WINDOW_MS = 45 * 60 * 1000;
 const SITE_HEALTH_PENALIZED_PENALTY_THRESHOLD = 0.75;
@@ -276,7 +287,7 @@ export function deriveSiteHealthState(input: SiteHealthStateInput): SiteHealthDe
 }
 
 export async function listSiteHealthStates(nowMs = Date.now()): Promise<SiteHealthStateRow[]> {
-  const sites = await db.select({
+  const sites: SiteHealthSiteRecord[] = await db.select({
     id: schema.sites.id,
     name: schema.sites.name,
     url: schema.sites.url,

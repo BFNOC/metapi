@@ -634,3 +634,77 @@
   - compact 专用 fallback matcher
   - 可配置的 `compact -> /responses` 回退开关
   - Settings UI 与持久化开关控制
+
+---
+
+## 2026-04-06 实施（#429）
+
+**处理结果**：`#429` 已按“完全跟随上游 detection 边界”的口径完成 repo-local 手工移植；当前工作区已完成实现，待提交
+
+### 本次落地的上游 Commit
+
+| Commit | 说明 | 合入方式 | 备注 |
+|--------|------|---------|------|
+| `6feda0e` | fix downstream client detection boundaries (#429) | 手工移植 | 只吸收 detection 边界修复与对应回归测试，不跟随后续 owner 迁移 |
+
+### 本地实现说明
+
+**核心实现**：
+- `src/server/proxy-core/cliProfiles/codexProfile.ts`
+  - `Codex` detection 不再识别 `/v1/messages`
+  - `/v1/responses` 从宽前缀收紧为：
+    - 精确 `/v1/responses`
+    - `/v1/responses/` 子路径
+  - 避免 `/v1/responsesfoo` 这类 sibling 被误判为 `codex`
+- `src/server/proxy-core/cliProfiles/claudeCodeProfile.ts`
+  - 保持 `metadata.user_id -> sessionId` 为第一优先级
+  - 新增 `claude-cli` header fallback：
+    - `user-agent=claude-cli/<semver>`
+    - `anthropic-beta`
+    - `anthropic-version`
+    - `x-app=cli`
+  - 无 `sessionId` 时只识别 `claude_code` family，不伪造 `sessionId/traceHint`
+- `src/server/routes/proxy/downstreamClientContext.ts`
+  - 新增 `OpenCode` app fingerprint：
+    - `x-title` / `referer` / `http-referer` / `origin` / `user-agent` 命中时记为 exact
+  - 新增 `OpenCode` system prompt heuristic：
+    - 支持 `system: string`
+    - 支持 `system: Array<string | { text: string }>`
+  - `OpenCode` 只补 `clientAppId/clientAppName/clientConfidence`，不改变 `clientKind`
+
+**测试改动**：
+- `src/server/proxy-core/cliProfiles/registry.test.ts`
+  - 新增 `/v1/responsesfoo` 不应命中 `codex`
+  - 新增 `/v1/messages + Codex headers` 应保持 `generic`
+  - 新增 `claude-cli` headers 无 `metadata.user_id` 仍识别 `claude_code`
+- `src/server/routes/proxy/downstreamClientContext.test.ts`
+  - 新增 `claude-cli` headers 在 `/v1/messages` 下优先识别 `claude_code`
+  - 新增 `/v1/messages + Codex-only headers` 保持 `generic`
+  - 新增 `OpenCode` exact / heuristic 覆盖
+- `src/server/routes/proxy/downstreamClientContext.routes.test.ts`
+  - 新增 `claude-cli` header-based `/v1/messages` failure log 回归
+  - 按当前 fork route harness 现状补齐最小测试桩，使该 suite 在当前 surface 依赖链下可运行
+
+### repo-local 差异点
+
+- 当前 fork 明确选择 **完全跟随 upstream**：
+  - downstream client detection 层不再保留 `/v1/messages` 的 `codex` 识别
+- 本次仍 **不跟** 上游后续的 owner 迁移：
+  - 不将 `downstreamClientContext.ts` 下沉到 `src/server/proxy-core/`
+  - 不改现有 route / surface import 结构
+
+### 验证结果
+
+- ✅ `npx vitest run src/server/proxy-core/cliProfiles/registry.test.ts` - 10 passed
+- ✅ `npx vitest run src/server/routes/proxy/downstreamClientContext.test.ts` - 23 passed
+- ✅ `npx vitest run src/server/routes/proxy/downstreamClientContext.routes.test.ts` - 5 passed
+- ✅ `npm run repo:drift-check` - Violations: 0
+
+### 结论
+
+- `#429` 现在已从“第二批候选”变为“已完成 repo-local 手工移植”
+- 当前 fork 的 downstream client detection 已具备：
+  - upstream 对齐的 `Codex` path 边界
+  - `Claude Code` header fallback
+  - `OpenCode` app-level fingerprint / heuristic
+  - 对应的 detection / route logging 回归测试覆盖

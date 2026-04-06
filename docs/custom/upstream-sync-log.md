@@ -708,3 +708,92 @@
   - `Claude Code` header fallback
   - `OpenCode` app-level fingerprint / heuristic
   - 对应的 detection / route logging 回归测试覆盖
+
+---
+
+## 2026-04-06 实施（#441）
+
+**处理结果**：`#441` 已按 repo-local 方案完成手工移植；当前工作区已完成实现，待提交
+
+### 本次落地的上游 Commit
+
+| Commit | 说明 | 合入方式 | 备注 |
+|--------|------|---------|------|
+| `a789ddf` | add sub2api managed refresh resilience (#441) | 手工移植 | 按本 fork owner 拆成 helper / singleflight / scheduler 三层落地，不直接 cherry-pick 上游 4 个连续提交 |
+
+### 本地实现说明
+
+**P0 helper + failure detail**：
+- `src/server/services/sub2apiManagedAuth.ts`
+  - 抽出 `isSub2ApiPlatform(...)`
+  - 抽出 `isManagedSub2ApiTokenDue(...)`
+  - 抽出 `refreshSub2ApiManagedSession(...)`
+  - refresh 失败时保留：
+    - HTTP status
+    - upstream `message / error / error_description`
+    - `reason`
+    - 原始文本片段 fallback
+
+**P1 singleflight + balance 路径统一**：
+- `src/server/services/sub2apiRefreshSingleflight.ts`
+  - 新增按 `account.id` 粒度的 refresh singleflight
+  - refresh reject 后清理 in-flight，允许后续重试
+- `src/server/services/balanceService.ts`
+  - Sub2API token 临近过期时的 proactive refresh 改走 singleflight
+  - balance `401` 后的一次 retry refresh 改走 singleflight
+  - 保持当前 fork 原有的 auto relogin / runtime health / reportExpired 链路不变
+
+**P2 scheduler + startup 接入**：
+- `src/server/services/sub2apiRefreshScheduler.ts`
+  - 每分钟执行一次 scheduled pass
+  - 仅扫描：
+    - active account
+    - active site
+    - `sub2api` platform
+  - 仅 refresh 真正 due 的 managed session 账号
+  - 采用 bounded concurrency `4`
+  - pass 级别使用 in-flight guard，避免重叠 sweep
+- `src/server/index.ts`
+  - 按当前 fork startup owner reality，在独立后台服务区接入：
+    - `startSub2ApiManagedRefreshScheduler()`
+    - `stopSub2ApiManagedRefreshScheduler()`
+
+**测试补齐**：
+- `src/server/services/balanceService.autoRelogin.test.ts`
+  - 新增 refresh 被 upstream 明确拒绝时，错误信息保留 detail 的覆盖
+- `src/server/services/sub2apiRefreshSingleflight.test.ts`
+  - 覆盖同账号并发 coalesce
+  - 覆盖 reject 后允许下次重试
+- `src/server/services/sub2apiRefreshScheduler.test.ts`
+  - 覆盖 active/due 过滤
+  - 覆盖 bounded concurrency
+  - 覆盖 scheduled pass stop / wait 语义
+
+### repo-local 差异点
+
+- helper 继续遵守本 fork 当前 proxy owner：
+  - 使用 `getProxyUrlFromExtraConfig(...)`
+  - 使用 `withSiteRecordProxyRequestInit(...)`
+- scheduler 继续挂在 `src/server/index.ts` 的独立后台服务区：
+  - 不塞进 `startScheduler()`
+  - 不顺势重构现有 scheduler 体系
+- 本次没有扩到：
+  - settings 开关
+  - Web UI
+  - schema
+  - 其他 managed-token 平台
+
+### 验证结果
+
+- ✅ `npx vitest run src/server/services/balanceService.autoRelogin.test.ts src/server/services/sub2apiRefreshSingleflight.test.ts src/server/services/sub2apiRefreshScheduler.test.ts` - 16 passed
+- ✅ `npm run build:server` - 通过
+- ✅ `npm run repo:drift-check` - Violations: 0
+
+### 结论
+
+- `#441` 现在已从“第二批候选”变为“已完成 repo-local 手工移植”
+- 当前 fork 的 Sub2API managed refresh 已具备：
+  - 可复用的 shared helper
+  - 更具体的 upstream refresh failure detail
+  - 按账号粒度的 refresh singleflight
+  - 独立后台 scheduler 主动补刷即将过期的 managed session token

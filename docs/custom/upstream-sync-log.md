@@ -548,3 +548,89 @@
 
 - 本次没有顺手并入 `#426` compact fallback；仍保持为后续独立候选
 - `#422` 的 repo-local 差异点是：内部控制头与上游 passthrough 头继续分层处理，避免 allowlist 收紧后误伤本地 Codex websocket transport 默认行为
+
+---
+
+## 2026-04-06 补充说明（上游可见性）
+
+针对本次 `#422 / #439` 的一个额外确认：
+
+- 当前 fork 里出现的 `x-metapi-*` 头，仅作为 **metapi 内部 hint** 使用
+- 其中：
+  - `x-metapi-responses-websocket-mode` 只参与本地 responses 分支逻辑，不进入上游 header
+  - `x-metapi-responses-websocket-transport` 只在 Codex provider header 默认值判定时参与内部处理，不作为上游透传头发出
+
+**结论**：
+
+- 上游不会直接看到 `x-metapi-*` 命名的 header
+- 当前实现的目标是“让上游看起来像目标客户端生态请求”，而不是把 metapi 自身标识暴露给上游
+- 这不等于“完全透明原样透传”，但至少满足“不让上游一眼识别为 metapi 请求”的目标
+
+---
+
+## 2026-04-06 实施（#426）
+
+**处理结果**：`#426` 已按 repo-local 语义完成手工移植；本地提交：`f7b6ad9`
+
+### 本次落地的上游 Commit
+
+| Commit | 说明 | 合入方式 | 备注 |
+|--------|------|---------|------|
+| `df75a80` | Fix responses compact fallback handling (#426) | 手工移植 | 按当前 fork 的 compact 语义拆成 `P0 + P1` 完成，不直接 cherry-pick 上游 patch |
+
+### 本地实现说明
+
+**P0 核心补齐**：
+- `src/server/proxy-core/surfaces/openAiResponsesSurface.ts`
+  - compact 请求固定只走 `responses` 候选，不再继续降级到 `chat / messages`
+  - Codex compact 不再被强制拉回上游流式
+  - 发往 `/responses/compact` 前剥离 `stream` / `stream_options`
+- `src/server/proxy-core/capabilities/responsesCompact.ts`
+  - 新增 `sanitizeCompactResponsesRequestBody(...)`
+  - 新增 `shouldFallbackCompactResponsesToResponses(...)`
+- `src/server/routes/proxy/responses.compact-upstream.test.ts`
+  - 补齐 compact 不跨协议降级与 Codex compact 非流式请求覆盖
+
+**P1 运行时开关与 fallback 接线**：
+- `src/server/config.ts`
+  - 新增 `responsesCompactFallbackToResponsesEnabled`，默认 `false`
+- `src/server/index.ts`
+  - 在 `applyRuntimeSettings(...)` 中接入 `responses_compact_fallback_to_responses_enabled`
+- `src/server/routes/api/settings.ts`
+  - 接入 runtime settings 返回、更新与持久化
+- `src/web/api.ts`
+  - 接入前端 runtime settings payload 类型
+- `src/web/pages/Settings.tsx`
+  - 新增「Compact 明确不支持时回退到普通 Responses」开关
+- `src/web/pages/settings.proxy-transport.test.tsx`
+  - 覆盖开关初始值、切换与保存 payload
+
+### repo-local 差异点
+
+- fallback 仍只允许：
+  - `/responses/compact -> /responses`
+- 不允许：
+  - `compact -> chat`
+  - `compact -> messages`
+- 吸收外部审查意见后，对 `404` fallback matcher 做了额外收紧：
+  - 只有带 compact hint 的 `404` 才允许触发 fallback
+  - 避免“模型不存在”类 `404` 误判成 compact endpoint 不支持
+
+### 验证结果
+
+- ✅ `npx vitest run src/server/proxy-core/capabilities/responsesCompact.test.ts` - 3 passed
+- ✅ `npx vitest run src/server/routes/proxy/responses.compact-upstream.test.ts` - 8 passed
+- ✅ `npx vitest run src/server/routes/proxy/responses.compact.test.ts` - 2 passed
+- ✅ `npx vitest run src/server/transformers/openai/responses/outbound.test.ts` - 11 passed
+- ✅ `npx vitest run src/web/pages/settings.proxy-transport.test.tsx` - 1 passed
+- ✅ 合计 targeted tests - 25 passed
+- ✅ `npm run repo:drift-check` - Violations: 0
+
+### 结论
+
+- `#426` 现在已从“第二批候选”变为“已完成 repo-local 手工移植”
+- 当前 fork 的 `/v1/responses/compact` 已具备：
+  - 非流式请求 sanitize
+  - compact 专用 fallback matcher
+  - 可配置的 `compact -> /responses` 回退开关
+  - Settings UI 与持久化开关控制

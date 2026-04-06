@@ -40,6 +40,10 @@ import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } f
 import { startSiteAnnouncementPolling } from './services/siteAnnouncementPollingService.js';
 import { startChannelRecoveryProbeService, stopChannelRecoveryProbeService } from './services/channelRecoveryProbeService.js';
 import { startModelAvailabilityScheduler, stopModelAvailabilityScheduler } from './services/modelAvailabilityScheduler.js';
+import {
+  startSub2ApiManagedRefreshScheduler,
+  stopSub2ApiManagedRefreshScheduler,
+} from './services/sub2apiRefreshScheduler.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
@@ -472,6 +476,7 @@ await reloadBackupWebdavScheduler();
 startSiteAnnouncementPolling();
 startChannelRecoveryProbeService();
 startModelAvailabilityScheduler();
+startSub2ApiManagedRefreshScheduler();
 try {
   await startOAuthLoopbackCallbackServers();
 } catch (error) {
@@ -484,6 +489,7 @@ app.addHook('onClose', async () => {
   stopProxyLogRetentionService();
   stopChannelRecoveryProbeService();
   stopModelAvailabilityScheduler();
+  await stopSub2ApiManagedRefreshScheduler();
   await stopOAuthLoopbackCallbackServers();
 });
 

@@ -183,4 +183,36 @@ describe('resolveProviderProfile', () => {
     });
     expect((result.body as Record<string, unknown>).request).toBe(protocolBody);
   });
+
+  it('routes antigravity special-model non-stream requests through streamGenerateContent while preserving downstream non-stream intent', () => {
+    const profile = resolveProviderProfile('antigravity');
+    expect(profile?.id).toBe('antigravity');
+
+    const protocolBody = {
+      contents: [{ role: 'user', parts: [{ text: 'hello antigravity special model' }] }],
+    };
+
+    const result = profile!.prepareRequest({
+      endpoint: 'chat',
+      modelName: 'gemini-3-pro-preview',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      oauthProjectId: 'project-demo',
+      sitePlatform: 'antigravity',
+      baseHeaders: {
+        Authorization: 'Bearer oauth-access-token',
+      },
+      body: protocolBody,
+    });
+
+    expect(result.path).toBe('/v1internal:streamGenerateContent?alt=sse');
+    expect(result.headers.Accept).toBe('text/event-stream');
+    expect(result.runtime).toMatchObject({
+      executor: 'antigravity',
+      modelName: 'gemini-3-pro-preview',
+      oauthProjectId: 'project-demo',
+      stream: false,
+      action: 'streamGenerateContent',
+    });
+  });
 });

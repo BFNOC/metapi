@@ -42,10 +42,13 @@ function createDbSelectChain() {
   };
 }
 
-vi.mock('undici', () => ({
-  fetch: (...args: unknown[]) => fetchMock(...args),
-  Response: globalThis.Response,
-}));
+vi.mock('undici', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('undici')>();
+  return {
+    ...actual,
+    fetch: (...args: unknown[]) => fetchMock(...args),
+  };
+});
 
 vi.mock('../../services/modelPricingService.js', () => ({
   fetchModelPricingCatalog: (...args: unknown[]) => fetchModelPricingCatalogMock(...args),
@@ -76,36 +79,43 @@ vi.mock('../../services/downstreamApiKeyService.js', () => ({
   isModelAllowedByPolicyOrAllowedRoutes: (...args: unknown[]) => isModelAllowedByPolicyOrAllowedRoutesMock(...args),
 }));
 
-vi.mock('../../db/index.js', () => ({
-  db: {
-    select: (..._args: unknown[]) => createDbSelectChain(),
-    insert: (arg: unknown) => dbInsertMock(arg),
-  },
-  hasProxyLogBillingDetailsColumn: async () => false,
-  hasProxyLogClientColumns: async () => false,
-  hasProxyLogDownstreamApiKeyIdColumn: async () => false,
-  schema: {
-    proxyLogs: {},
-    modelAvailability: {
-      modelName: Symbol('modelAvailability.modelName'),
-      accountId: Symbol('modelAvailability.accountId'),
-      available: Symbol('modelAvailability.available'),
+vi.mock('../../db/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../db/index.js')>();
+  return {
+    ...actual,
+    db: {
+      ...actual.db,
+      select: (..._args: unknown[]) => createDbSelectChain(),
+      insert: (arg: unknown) => dbInsertMock(arg),
     },
-    accounts: {
-      id: Symbol('accounts.id'),
-      siteId: Symbol('accounts.siteId'),
-      status: Symbol('accounts.status'),
+    hasProxyLogBillingDetailsColumn: async () => false,
+    hasProxyLogClientColumns: async () => false,
+    hasProxyLogDownstreamApiKeyIdColumn: async () => false,
+    hasProxyLogStreamTimingColumns: async () => false,
+    schema: {
+      ...actual.schema,
+      proxyLogs: {},
+      modelAvailability: {
+        modelName: Symbol('modelAvailability.modelName'),
+        accountId: Symbol('modelAvailability.accountId'),
+        available: Symbol('modelAvailability.available'),
+      },
+      accounts: {
+        id: Symbol('accounts.id'),
+        siteId: Symbol('accounts.siteId'),
+        status: Symbol('accounts.status'),
+      },
+      sites: {
+        id: Symbol('sites.id'),
+        status: Symbol('sites.status'),
+      },
+      tokenRoutes: {
+        displayName: Symbol('tokenRoutes.displayName'),
+        enabled: Symbol('tokenRoutes.enabled'),
+      },
     },
-    sites: {
-      id: Symbol('sites.id'),
-      status: Symbol('sites.status'),
-    },
-    tokenRoutes: {
-      displayName: Symbol('tokenRoutes.displayName'),
-      enabled: Symbol('tokenRoutes.enabled'),
-    },
-  },
-}));
+  };
+});
 
 function parseSsePayloads(body: string): Array<Record<string, unknown>> {
   return body
@@ -1025,7 +1035,7 @@ describe('gemini native proxy routes', () => {
     expect(targetUrl).toBe('https://api.openai.com/v1/responses');
   });
 
-  it('routes Gemini native generateContent requests to antigravity upstreams through the internal content endpoint', async () => {
+  it('routes Gemini native generateContent requests to antigravity special models through the internal stream endpoint and aggregates back to Gemini JSON', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 43, routeId: 22 },
       site: { id: 79, name: 'antigravity-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'antigravity' },
@@ -1044,28 +1054,16 @@ describe('gemini native proxy routes', () => {
       tokenValue: 'antigravity-access-token',
       actualModel: 'gemini-3-pro-preview',
     });
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({
-      response: {
-        responseId: 'antigravity-response-1',
-        modelVersion: 'gemini-3-pro-preview',
-        candidates: [
-          {
-            content: {
-              role: 'model',
-              parts: [{ text: 'hello from antigravity' }],
-            },
-            finishReason: 'STOP',
-          },
-        ],
-        usageMetadata: {
-          promptTokenCount: 8,
-          candidatesTokenCount: 4,
-          totalTokenCount: 12,
-        },
-      },
-    }), {
+    fetchMock.mockResolvedValue(new Response([
+      'data: {"response":{"responseId":"antigravity-response-1","modelVersion":"gemini-3-pro-preview","candidates":[{"content":{"role":"model","parts":[{"text":"hello "}]},"index":0}]}}',
+      '',
+      'data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"from antigravity"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":4,"totalTokenCount":12}}}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'), {
       status: 200,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
     }));
 
     const response = await app.inject({
@@ -1086,11 +1084,11 @@ describe('gemini native proxy routes', () => {
 
     expect(response.statusCode).toBe(200);
     const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(targetUrl).toBe('https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent');
+    expect(targetUrl).toBe('https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse');
     expect(requestInit.headers).toMatchObject({
       Authorization: 'Bearer antigravity-access-token',
       'Content-Type': 'application/json',
-      Accept: 'application/json',
+      Accept: 'text/event-stream',
       'User-Agent': 'antigravity/1.19.6 darwin/arm64',
     });
     const upstreamBody = JSON.parse(String(requestInit.body));

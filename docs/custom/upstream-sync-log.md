@@ -428,3 +428,123 @@
 **结论**：
 - 该提交不是上游主线前进，而是 `#330/#404` 之后的一个小型 continuation follow-up
 - 改动面很小，但能补齐当前本地 continuation store 在 scope roundtrip 场景下的一致性缺口
+
+---
+
+## 2026-04-06 审阅（v1.3.0）
+
+**上游已审阅到**：`63c435c`（`v1.3.0` tag）
+
+**Release 信息**：
+- `v1.3.0` 发布时间：`2026-04-06T07:55:55Z`
+- 相对上次审阅基线 `63f6b07`，上游主线新增 `26` 个 commit
+
+### 已有本地等价覆盖 / 状态修正
+
+| Commit | 说明 | 处理结果 | 备注 |
+|--------|------|----------|------|
+| `b3e987a` | keep codex continuation current across scope roundtrips (#416) | 无需重复合入 | 本地已在 `2026-04-05` 先按分支提交 `060f28b` 手工补齐，并落地为本地提交 `dc86d9f`；本次只需确认该修复已进入 upstream/main |
+| `193f3e7` | fix proxy log usage source metadata (#428) | 无需重复合入 | 本地当前已把 `usageSource` 透传到 proxy log message，收益已基本等价覆盖 |
+
+### 建议优先合入
+
+| Commit | 说明 | 建议 | 原因 |
+|--------|------|------|------|
+| `5b005d8` | fix: tighten generic upstream passthrough headers (#422) | 手工移植（repo-local 最小修正） | 当前 `upstreamEndpoint.ts` 的 generic passthrough 仍按“仅过滤 hop-by-hop / blocked headers”直透，范围偏宽；适合按本地 owner 收紧 allowlist，并保留 Codex 所需 `Version` 与 `x-responsesapi-include-timing-metrics` |
+| `3e8d69b` | fix codex compact non-stream accept header (#439) | 手工移植 | 本地已支持 `/v1/responses/compact` 且显式禁止 stream，但 `headerUtils.ts` 中 Codex runtime header 仍固定 `Accept: text/event-stream`；这是一个直接的 repo-local 缺口 |
+
+### 第二批候选（按真实使用量 / 线上痛点再跟）
+
+| Commit | 说明 | 建议 | 原因 |
+|--------|------|------|------|
+| `df75a80` | Fix responses compact fallback handling (#426) | 条件性手工移植 | 若当前确实有 `responses/compact` 使用量，值得继续补上 compact 失败回退到普通 responses 的兜底与 sanitize；否则优先级次于 `#439` |
+| `6feda0e` | fix downstream client detection boundaries (#429) | 只摘边界 heuristics / 测试 | 本地已有自己的 downstream client detection owner；上游价值主要在边界修复，适合小范围吸收，不适合整块重排 |
+| `a789ddf` | add sub2api managed refresh resilience (#441) | 有明确痛点再单开 | 本地已有 sub2api managed refresh 能力，但上游这条是 scheduler / singleflight / 启动调度级增强，不是简单小修 |
+| `42f9049` | align antigravity special-model non-stream path with CPA (#444) | 有真实流量问题再跟 | 本地已有 antigravity runtime executor；只有在 special-model 非流式路径出现真实问题时，才值得专门吸收 |
+
+### 建议继续跳过
+
+| Commit | 说明 | 跳过原因 |
+|--------|------|----------|
+| `afbbc4c` | fix failed expired api-key recovery route preservation (#421) | 仍属于 `#393 expired connection health recovery` follow-up；当前部署场景与 owner 边界未变，继续不适合 |
+| `3edeb6e` | refine OAuth proxy controls and quota UI (#433) | 属于 OAuth proxy / quota 管理线扩展，本地当前优先级低 |
+| `2f0e63a` | add oauth route pools and proxy save flow (#440) | 引入 `drizzle/0021_young_shriek.sql` 与 OAuth route pool 新体系，超出当前 fork “repo-local 最小修正”边界 |
+| `2b9200e` | fix proxy debug undici response header capture (#442) | 依赖此前已跳过的 proxy debug tracing 体系（`#299` 线） |
+| `d1b42b2` | support oauth route unit inserts on postgres (#443) | 依赖 `#440` 的 OAuth route unit 线 |
+| `448f488` | improve oauth route unit feedback (#445) | 依赖 `#440/#443` 的 OAuth route unit 线 |
+| `ff43fce` / `9045a48` / `ef1962d` / `d5560fb` / `b3f6fa0` / `c10b1e7` | `#419/#420/#423/#424/#425/#427` | UI / 桌面 / 文案调整为主，本地对应 area 已明显分叉，当前收益不高 |
+| `492f43c` / `38721cb` / `287c5aa` | `#430/#431/#432` | OAuth / downstream key 管理面增强，本轮不作为合入候选 |
+| `566501b` / `f18aa98` / `63c435c` | 发版流水线提交 | 版本号、桌面打包修复、release tests 调整，不需要同步到当前 fork |
+
+<details>
+<summary>v1.3.0 本轮筛选说明（2026-04-06）</summary>
+
+**本轮结论**：
+- 第一批建议合入：`#422`、`#439`
+- 第二批按使用量或痛点决定：`#426`、`#429`、`#441`、`#444`
+- `#416`、`#428` 已有本地等价覆盖，不需要重复实现
+- OAuth route pool / proxy / quota / unit 这条线（`#433/#440/#443/#445`）继续跳过
+
+**repo-local 锚点**：
+- `src/server/routes/proxy/upstreamEndpoint.ts`
+  - 当前 `extractSafePassthroughHeaders()` 仍是宽透传策略，因此 `#422` 有现实收益
+- `src/server/proxy-core/providers/headerUtils.ts`
+  - 当前 Codex runtime header 固定 `Accept: text/event-stream`，因此 `#439` 与本地 `/v1/responses/compact` 能力存在直接错位
+- `src/server/proxy-core/surfaces/openAiResponsesSurface.ts`
+  - 本地已支持 `/v1/responses/compact`，并对 compact 请求禁止 stream；后续如要继续跟 `#426/#439`，应以这里的现有语义为准
+
+**落地方式**：
+- 不建议直接 cherry-pick `#422/#439`
+- 继续沿用当前 fork 的做法：按 owner 手工摘取能力点，保持本地语义与调用链不被上游新体系反向牵动
+
+</details>
+
+---
+
+## 2026-04-06 实施（#422 / #439）
+
+**处理结果**：`#422`、`#439` 已按 repo-local 语义手工移植到当前工作区
+
+### 本次落地的上游 Commit
+
+| Commit | 说明 | 合入方式 | 备注 |
+|--------|------|---------|------|
+| `5b005d8` | fix: tighten generic upstream passthrough headers (#422) | 手工移植 | 收紧 generic passthrough allowlist，并为 Codex 单独保留 `version` / `x-responsesapi-include-timing-metrics` |
+| `3e8d69b` | fix codex compact non-stream accept header (#439) | 手工移植 | `buildCodexRuntimeHeaders()` 改为根据 `stream` 决定 `Accept`，非流式返回 `application/json` |
+
+### 本地实现说明
+
+**代码改动**：
+- `src/server/routes/proxy/upstreamEndpoint.ts`
+  - generic passthrough 从黑名单式过滤改为 allowlist
+  - 新增 Codex 专用 passthrough，仅保留 `version` 与 `x-responsesapi-include-timing-metrics`
+  - 额外保留 `x-metapi-responses-websocket-transport` 作为内部 provider hint，只用于本地 Codex header 默认值判定，不作为上游透传头
+- `src/server/proxy-core/providers/headerUtils.ts`
+  - `buildCodexRuntimeHeaders()` 新增 `stream` 参数
+  - `stream === false` 时发送 `Accept: application/json`
+- `src/server/proxy-core/providers/codexProviderProfile.ts`
+  - 调用 header builder 时显式透传 `input.stream`
+
+**测试改动**：
+- `src/server/routes/proxy/upstreamEndpoint.test.ts`
+  - 新增 generic allowlist 覆盖用例
+  - 新增 Codex 兼容头保留用例
+  - 更新 Codex 非流式 `Accept` 断言
+- `src/server/proxy-core/providers/headerUtils.test.ts`
+  - 覆盖 Codex 非流式 `Accept: application/json`
+- `src/server/routes/proxy/responses.compact-upstream.test.ts`
+  - 补齐当前 runtime / proxy log 路径需要的测试夹具导出，恢复该 suite 在当前 fork 下的可运行性
+
+### 验证结果
+
+- ✅ `npx vitest run src/server/proxy-core/providers/headerUtils.test.ts` - 7 passed
+- ✅ `npx vitest run src/server/routes/proxy/upstreamEndpoint.test.ts` - 65 passed
+- ✅ `npx vitest run src/server/routes/proxy/responses.compact-upstream.test.ts` - 4 passed
+- ✅ `npx vitest run src/server/routes/proxy/responses.codex-oauth.test.ts` - 24 passed
+- ✅ `npm run repo:drift-check` - Violations: 0
+- ✅ `npm run typecheck` - passed
+
+### 备注
+
+- 本次没有顺手并入 `#426` compact fallback；仍保持为后续独立候选
+- `#422` 的 repo-local 差异点是：内部控制头与上游 passthrough 头继续分层处理，避免 allowlist 收紧后误伤本地 Codex websocket transport 默认行为

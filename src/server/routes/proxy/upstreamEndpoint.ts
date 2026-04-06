@@ -175,11 +175,29 @@ const BLOCKED_PASSTHROUGH_HEADERS = new Set([
   'forwarded',
   'via',
 ]);
+const GENERIC_PASSTHROUGH_ALLOWED_HEADERS = new Set([
+  'accept',
+  'accept-language',
+  'conversation-id',
+  'conversation_id',
+  'openai-beta',
+  'originator',
+  'session-id',
+  'session_id',
+  'user-agent',
+  'x-codex-beta-features',
+  'x-codex-turn-metadata',
+  'x-codex-turn-state',
+]);
 
 const ANTIGRAVITY_RUNTIME_USER_AGENT = 'antigravity/1.19.6 darwin/arm64';
 
 function shouldSkipPassthroughHeader(key: string): boolean {
-  return HOP_BY_HOP_HEADERS.has(key) || BLOCKED_PASSTHROUGH_HEADERS.has(key);
+  return (
+    HOP_BY_HOP_HEADERS.has(key)
+    || BLOCKED_PASSTHROUGH_HEADERS.has(key)
+    || !GENERIC_PASSTHROUGH_ALLOWED_HEADERS.has(key)
+  );
 }
 
 function extractSafePassthroughHeaders(
@@ -239,6 +257,46 @@ function extractResponsesPassthroughHeaders(
       || key === 'originator'
     );
     if (!shouldForward) continue;
+
+    const value = headerValueToString(rawValue);
+    if (!value) continue;
+    forwarded[key] = value;
+  }
+
+  return forwarded;
+}
+
+function extractCodexPassthroughHeaders(
+  headers?: Record<string, unknown>,
+): Record<string, string> {
+  if (!headers) return {};
+
+  const forwarded: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(headers)) {
+    const key = rawKey.toLowerCase();
+    const shouldForward = (
+      key === 'version'
+      || key === 'x-responsesapi-include-timing-metrics'
+    );
+    if (!shouldForward) continue;
+
+    const value = headerValueToString(rawValue);
+    if (!value) continue;
+    forwarded[key] = value;
+  }
+
+  return forwarded;
+}
+
+function extractMetapiInternalHeaders(
+  headers?: Record<string, unknown>,
+): Record<string, string> {
+  if (!headers) return {};
+
+  const forwarded: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(headers)) {
+    const key = rawKey.toLowerCase();
+    if (key !== 'x-metapi-responses-websocket-transport') continue;
 
     const value = headerValueToString(rawValue);
     if (!value) continue;
@@ -930,8 +988,12 @@ export function buildUpstreamEndpointRequest(input: {
   };
 
   const passthroughHeaders = extractSafePassthroughHeaders(input.downstreamHeaders);
+  const codexPassthroughHeaders = sitePlatform === 'codex'
+    ? extractCodexPassthroughHeaders(input.downstreamHeaders)
+    : {};
   const commonHeaders: Record<string, string> = {
     ...passthroughHeaders,
+    ...codexPassthroughHeaders,
     'Content-Type': 'application/json',
     ...(input.providerHeaders || {}),
   };
@@ -1128,6 +1190,7 @@ export function buildUpstreamEndpointRequest(input: {
         baseHeaders: {
           ...commonHeaders,
           ...responsesHeaders,
+          ...extractMetapiInternalHeaders(input.downstreamHeaders),
         },
         providerHeaders: input.providerHeaders,
         codexSessionCacheKey: input.codexSessionCacheKey,

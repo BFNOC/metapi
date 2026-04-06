@@ -797,3 +797,84 @@
   - 更具体的 upstream refresh failure detail
   - 按账号粒度的 refresh singleflight
   - 独立后台 scheduler 主动补刷即将过期的 managed session token
+
+---
+
+## 2026-04-06 实施（#444）
+
+**处理结果**：`#444` 已按 repo-local 方案完成手工移植；当前工作区已完成实现，待提交
+
+### 本次落地的上游 Commit
+
+| Commit | 说明 | 合入方式 | 备注 |
+|--------|------|---------|------|
+| `42f9049` | align antigravity special-model non-stream path with CPA (#444) | 手工移植 | 按本 fork owner 拆成 helper / provider-surface action 对齐 / executor 聚合三层落地，不直接 cherry-pick 上游 3 个连续提交 |
+
+### 本地实现说明
+
+**P0 shared helper**：
+- `src/server/proxy-core/providers/antigravityRuntime.ts`
+  - 新增 `shouldUseAntigravityStreamAction(modelName)`
+  - 新增 `resolveAntigravityProviderAction(action, stream, modelName)`
+  - special-model 范围与 upstream 保持一致：
+    - Claude-family
+    - `gemini-3-pro*`
+    - `gemini-3.1-flash-image`
+
+**P1 provider profile + gemini surface 对齐**：
+- `src/server/proxy-core/providers/antigravityProviderProfile.ts`
+  - provider action 不再只按 `stream` 决定
+  - `path / Accept / runtime.action` 统一复用 antigravityRuntime helper
+  - downstream non-stream 时保持 `runtime.stream=false`
+- `src/server/proxy-core/surfaces/geminiSurface.ts`
+  - antigravity special-model 在 downstream non-stream 时，也走 internal stream endpoint
+  - internal action 选择与 provider profile 对齐
+- `src/server/routes/proxy/upstreamEndpoint.test.ts`
+  - `gemini-3-pro-preview + stream:false` 改为期望 `/v1internal:streamGenerateContent?alt=sse`
+- `src/server/proxy-core/providers/registry.test.ts`
+  - 补齐 antigravity special-model non-stream 走 stream action 的 provider 级覆盖
+
+**P2 executor 聚合闭环 + follow-up**：
+- `src/server/proxy-core/executors/antigravityExecutor.ts`
+  - 识别何时实际走了 antigravity stream endpoint
+  - 对“upstream stream endpoint + downstream non-stream”增加聚合回 JSON 的闭环
+  - 复用现有 `geminiGenerateContentTransformer.stream` 解析 SSE
+  - 处理 antigravity `response` envelope
+  - `Accept` 改为跟实际 upstream action 对齐，而不再只跟 `runtime.stream` 绑定
+  - 一并补上 upstream review follow-up：
+    - tail aggregation
+    - fallback aggregation
+- `src/server/routes/proxy/runtimeExecutor.test.ts`
+  - 保留普通 non-stream 模型走 `generateContent` 的覆盖
+  - 新增 special-model non-stream 走 stream endpoint 并聚合回 JSON 的覆盖
+  - 新增 unterminated trailing event 聚合覆盖
+  - 新增 fallback success 聚合覆盖
+- `src/server/routes/proxy/gemini.test.ts`
+  - antigravity special-model 非流式路径改为期望 internal stream endpoint
+  - 上游 SSE 聚合后仍对下游返回标准 Gemini JSON
+
+### repo-local 差异点
+
+- 这次只处理 antigravity special-model non-stream 修复闭环：
+  - 不扩到 generic Gemini / gemini-cli owner 重构
+  - 不顺手抽 runtime executor 通用聚合框架
+- special-model heuristic 只保留一个 shared owner：
+  - `src/server/proxy-core/providers/antigravityRuntime.ts`
+- downstream contract 保持不变：
+  - special-model 即使 upstream 改走 stream endpoint
+  - downstream 非流式调用方仍收到聚合后的 JSON，而不是原始 SSE
+
+### 验证结果
+
+- ✅ `npx vitest run src/server/proxy-core/providers/registry.test.ts src/server/proxy-core/providers/antigravityRuntime.test.ts src/server/routes/proxy/upstreamEndpoint.test.ts src/server/routes/proxy/runtimeExecutor.test.ts src/server/routes/proxy/gemini.test.ts` - 111 passed
+- ✅ `npm run build:server` - 通过
+- ✅ `npm run repo:drift-check` - Violations: 0
+
+### 结论
+
+- `#444` 现在已从“有真实流量问题再跟”变为“已完成 repo-local 手工移植”
+- 当前 fork 的 antigravity special-model non-stream 路径已具备：
+  - shared special-model action 判定
+  - provider profile / gemini surface 一致的 internal stream action 选择
+  - upstream SSE 聚合回 downstream JSON 的 executor 闭环
+  - tail aggregation / fallback aggregation 的 follow-up 防呆覆盖

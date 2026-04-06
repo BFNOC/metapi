@@ -165,6 +165,27 @@ describe('detectDownstreamClientContext', () => {
     });
   });
 
+  it('recognizes Claude Code from claude-cli request headers on /v1/messages', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/messages',
+      headers: {
+        'user-agent': 'claude-cli/2.1.63 (external, cli)',
+        'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+        'anthropic-version': '2023-06-01',
+        'x-app': 'cli',
+        'x-stainless-lang': 'js',
+      },
+      body: {
+        model: 'claude-sonnet-4-5',
+      },
+    })).toEqual({
+      clientKind: 'claude_code',
+      clientAppId: 'claude_code',
+      clientAppName: 'Claude Code',
+      clientConfidence: 'exact',
+    });
+  });
+
   it('falls back to generic when Claude metadata.user_id is missing or invalid', () => {
     expect(detectDownstreamClientContext({
       downstreamPath: '/v1/messages',
@@ -183,6 +204,32 @@ describe('detectDownstreamClientContext', () => {
         metadata: {
           session_id: 'abc123',
         },
+      },
+    })).toEqual({
+      clientKind: 'generic',
+    });
+  });
+
+  it('does not classify /v1/messages codex headers as Codex after upstream-aligned path tightening', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/messages',
+      headers: {
+        originator: 'codex_cli_rs',
+        'x-stainless-lang': 'typescript',
+        Session_id: 'codex-session-123',
+      },
+    })).toEqual({
+      clientKind: 'generic',
+    });
+  });
+
+  it('treats /v1/messages requests with Codex-only headers as generic after following upstream boundaries', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/messages',
+      headers: {
+        'x-stainless-lang': 'typescript',
+        'x-codex-turn-state': 'turn-state-123',
+        session_id: 'codex-session-123',
       },
     })).toEqual({
       clientKind: 'generic',
@@ -253,4 +300,55 @@ describe('detectDownstreamClientContext', () => {
       clientConfidence: 'heuristic',
     });
   });
+
+  it('marks OpenCode anthropic prompts as an app-level heuristic without changing protocol family', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/messages',
+      body: {
+        model: 'claude-sonnet-4-5',
+        system: [
+          {
+            type: 'text',
+            text: 'You are OpenCode, an interactive CLI tool that helps users with software engineering tasks. If the current working directory contains a file called OpenCode.md, it will be automatically added to your context.',
+          },
+        ],
+      },
+    })).toEqual({
+      clientKind: 'generic',
+      clientAppId: 'opencode',
+      clientAppName: 'OpenCode',
+      clientConfidence: 'heuristic',
+    });
+  });
+
+  it('recognizes OpenCode request headers as an exact app-level fingerprint', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/chat/completions',
+      headers: {
+        'x-title': 'OpenCode',
+        origin: 'https://opencode.ai',
+      },
+    })).toEqual({
+      clientKind: 'generic',
+      clientAppId: 'opencode',
+      clientAppName: 'OpenCode',
+      clientConfidence: 'exact',
+    });
+  });
+
+  it('recognizes OpenCode anthropic prompts when system is provided as a plain string', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/messages',
+      body: {
+        model: 'claude-sonnet-4-5',
+        system: 'You are OpenCode, an interactive CLI tool that helps users with software engineering tasks. If the current working directory contains a file called OpenCode.md, it will be automatically added to your context.',
+      },
+    })).toEqual({
+      clientKind: 'generic',
+      clientAppId: 'opencode',
+      clientAppName: 'OpenCode',
+      clientConfidence: 'heuristic',
+    });
+  });
+
 });

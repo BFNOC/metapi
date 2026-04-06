@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
+const selectPreferredChannelMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -24,20 +25,29 @@ const dbInsertMock = vi.fn((_arg?: any) => ({
   values: (arg: any) => dbValuesMock(arg),
 }));
 
-vi.mock('undici', () => ({
-  fetch: (...args: unknown[]) => fetchMock(...args),
-}));
+vi.mock('undici', async () => {
+  const actual = await vi.importActual<typeof import('undici')>('undici');
+  return {
+    ...actual,
+    fetch: (...args: unknown[]) => fetchMock(...args),
+  };
+});
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
     selectChannel: (...args: unknown[]) => selectChannelMock(...args),
     selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
 }));
 
 vi.mock('../../services/modelService.js', () => ({
+  refreshModelsAndRebuildRoutes: (...args: unknown[]) => refreshModelsAndRebuildRoutesMock(...args),
+}));
+
+vi.mock('../../services/routeRefreshWorkflow.js', () => ({
   refreshModelsAndRebuildRoutes: (...args: unknown[]) => refreshModelsAndRebuildRoutesMock(...args),
 }));
 
@@ -58,6 +68,23 @@ vi.mock('../../services/modelPricingService.js', () => ({
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: () => false,
+  shouldAbortSameSiteEndpointFallback: () => false,
+  RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
+}));
+
+vi.mock('../../services/proxyChannelRetry.js', () => ({
+  getProxyMaxChannelRetries: () => 0,
+  canRetryProxyChannel: () => false,
+}));
+
+vi.mock('./runtimeExecutor.js', () => ({
+  dispatchRuntimeRequest: async ({ siteUrl, targetUrl, request, buildInit }: any) => {
+    const normalizedPath = String(request?.path || '').startsWith('/')
+      ? String(request.path)
+      : `/${String(request?.path || '')}`;
+    const requestUrl = targetUrl || `${String(siteUrl || '').replace(/\/+$/, '')}${normalizedPath}`;
+    return fetchMock(requestUrl, await buildInit(requestUrl, request));
+  },
 }));
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
@@ -67,13 +94,35 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({
+            all: async () => [],
+          }),
+        }),
+      }),
+    }),
+    update: () => ({
+      set: () => ({
+        where: () => ({
+          run: async () => undefined,
+        }),
+      }),
+    }),
   },
   schema: {
     proxyLogs: {},
+    siteApiEndpoints: {
+      id: {},
+      siteId: {},
+      sortOrder: {},
+    },
   },
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
+  hasProxyLogStreamTimingColumns: async () => false,
 }));
 
 describe('downstream client context route logging', () => {
@@ -91,6 +140,7 @@ describe('downstream client context route logging', () => {
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
+    selectPreferredChannelMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -103,20 +153,23 @@ describe('downstream client context route logging', () => {
     dbInsertMock.mockClear();
     dbValuesMock.mockClear();
 
-    selectChannelMock.mockReturnValue({
+    selectChannelMock.mockImplementation((requestedModel: string) => ({
       channel: { id: 11, routeId: 22 },
       site: { id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'sk-demo',
-      actualModel: 'upstream-gpt',
-    });
+      actualModel: requestedModel,
+    }));
     selectNextChannelMock.mockReturnValue(null);
+    selectPreferredChannelMock.mockReturnValue(null);
     fetchModelPricingCatalogMock.mockResolvedValue(null);
   });
 
   afterAll(async () => {
-    await app.close();
+    if (app) {
+      await app.close();
+    }
   });
 
   it('includes Codex client and session metadata in /v1/responses failure logs', async () => {
@@ -213,6 +266,43 @@ describe('downstream client context route logging', () => {
     expect(insertedLog.errorMessage).toContain('[client:claude_code]');
     expect(insertedLog.errorMessage).toContain('[session:f25958b8-e75c-455d-8b40-f006d87cc2a4]');
     expect(insertedLog.errorMessage).toContain('[downstream:/v1/messages]');
+  });
+
+  it('keeps claude-cli header-based /v1/messages requests on the Claude Code family even when metadata.user_id is absent', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        message: 'messages failed',
+        type: 'upstream_error',
+      },
+    }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      headers: {
+        'user-agent': 'claude-cli/2.1.63 (external, cli)',
+        'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+        'anthropic-version': '2023-06-01',
+        'x-app': 'cli',
+        'x-stainless-lang': 'js',
+      },
+      payload: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(dbValuesMock).toHaveBeenCalled();
+    const insertedLog = dbValuesMock.mock.calls.at(-1)?.[0];
+    expect(insertedLog.errorMessage).toContain('[client:claude_code]');
+    expect(insertedLog.errorMessage).toContain('[downstream:/v1/messages]');
+    expect(insertedLog.errorMessage).not.toContain('[client:codex]');
+    expect(insertedLog.errorMessage).not.toContain('[session:');
   });
 
   it('keeps invalid Claude metadata.user_id requests generic in failure logs', async () => {

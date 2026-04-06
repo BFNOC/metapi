@@ -39,6 +39,7 @@ interface RuntimeSettingsBody {
   proxyToken?: string;
   systemProxyUrl?: string;
   codexUpstreamWebsocketEnabled?: boolean;
+  responsesCompactFallbackToResponsesEnabled?: boolean;
   proxySessionChannelConcurrencyLimit?: number;
   proxySessionChannelQueueWaitMs?: number;
   checkinCron?: string;
@@ -391,6 +392,11 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.codexUpstreamWebsocketEnabled = value;
       return;
     }
+    case 'responses_compact_fallback_to_responses_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.responsesCompactFallbackToResponsesEnabled = value;
+      return;
+    }
     case 'proxy_error_keywords': {
       try {
         config.proxyErrorKeywords = parseProxyErrorKeywords(value);
@@ -592,6 +598,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     logCleanupProgramLogsEnabled: config.logCleanupProgramLogsEnabled,
     logCleanupRetentionDays: config.logCleanupRetentionDays,
     codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
+    responsesCompactFallbackToResponsesEnabled: config.responsesCompactFallbackToResponsesEnabled,
     proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
     proxySessionChannelQueueWaitMs: config.proxySessionChannelQueueWaitMs,
     routingFallbackUnitCost: config.routingFallbackUnitCost,
@@ -995,6 +1002,30 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.codexUpstreamWebsocketEnabled = nextValue;
       upsertSetting('codex_upstream_websocket_enabled', config.codexUpstreamWebsocketEnabled);
+    }
+
+    if (body.responsesCompactFallbackToResponsesEnabled !== undefined) {
+      let nextValue = false;
+      try {
+        nextValue = parseBooleanFlag(
+          body.responsesCompactFallbackToResponsesEnabled,
+          'Compact 回退到普通 Responses 开关',
+        );
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || 'Compact 回退到普通 Responses 开关格式无效',
+        });
+      }
+
+      if (nextValue !== config.responsesCompactFallbackToResponsesEnabled) {
+        changedLabels.push('Compact 回退到普通 Responses');
+      }
+      config.responsesCompactFallbackToResponsesEnabled = nextValue;
+      upsertSetting(
+        'responses_compact_fallback_to_responses_enabled',
+        config.responsesCompactFallbackToResponsesEnabled,
+      );
     }
 
     if (body.proxySessionChannelConcurrencyLimit !== undefined) {

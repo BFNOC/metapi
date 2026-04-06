@@ -17,6 +17,7 @@ import {
   recordUpstreamEndpointFailure,
   recordUpstreamEndpointSuccess,
   resolveUpstreamEndpointCandidates,
+  type UpstreamEndpoint,
 } from '../../routes/proxy/upstreamEndpoint.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../routes/proxy/downstreamPolicy.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
@@ -58,6 +59,10 @@ import {
   summarizeConversationFileInputsInOpenAiBody,
   summarizeConversationFileInputsInResponsesBody,
 } from '../capabilities/conversationFileCapabilities.js';
+import {
+  sanitizeCompactResponsesRequestBody,
+  shouldFallbackCompactResponsesToResponses,
+} from '../capabilities/responsesCompact.js';
 import { detectDownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import {
@@ -343,21 +348,23 @@ export async function handleOpenAiResponsesSurfaceRequest(
       const responsesConversationFileSummary = summarizeConversationFileInputsInResponsesBody(normalizedResponsesBody);
       const requiresNativeResponsesFileUrl = responsesConversationFileSummary.hasRemoteDocumentUrl
         || carriesResponsesFileUrlInput(normalizedResponsesBody.input);
-      const endpointCandidates = await resolveUpstreamEndpointCandidates(
-        {
-          site: selected.site,
-          account: selected.account,
-        },
-        modelName,
-        'responses',
-        requestedModel,
-        {
-          hasNonImageFileInput,
-          conversationFileSummary,
-          wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
-        },
-      );
-      if (endpointCandidates.length === 0) {
+      const endpointCandidates: UpstreamEndpoint[] = isCompactRequest
+        ? ['responses']
+        : await resolveUpstreamEndpointCandidates(
+          {
+            site: selected.site,
+            account: selected.account,
+          },
+          modelName,
+          'responses',
+          requestedModel,
+          {
+            hasNonImageFileInput,
+            conversationFileSummary,
+            wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
+          },
+        );
+      if (!isCompactRequest && endpointCandidates.length === 0) {
         endpointCandidates.push('responses', 'chat', 'messages');
       }
       const endpointRuntimeContext = {
@@ -377,8 +384,9 @@ export async function handleOpenAiResponsesSurfaceRequest(
           downstreamHeaders: request.headers as Record<string, unknown>,
         })
       );
+      const forceCodexUpstreamStream = isCodexSite && !isCompactRequest;
       const buildEndpointRequest = (endpoint: 'chat' | 'messages' | 'responses') => {
-        const upstreamStream = isStream || (isCodexSite && endpoint === 'responses');
+        const upstreamStream = isStream || (forceCodexUpstreamStream && endpoint === 'responses');
         const responsesOriginalBody = (
           endpoint === 'responses'
           && isCodexSite
@@ -413,11 +421,16 @@ export async function handleOpenAiResponsesSurfaceRequest(
             ? `${endpointRequest.path}/compact`
             : endpointRequest.path
         );
+        const requestBody = (
+          isCompactRequest && endpoint === 'responses'
+            ? sanitizeCompactResponsesRequestBody(endpointRequest.body as Record<string, unknown>)
+            : endpointRequest.body as Record<string, unknown>
+        );
         return {
           endpoint,
           path: upstreamPath,
           headers: endpointRequest.headers,
-          body: endpointRequest.body as Record<string, unknown>,
+          body: requestBody,
           runtime: endpointRequest.runtime,
         };
       };
@@ -441,7 +454,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
         );
       };
       const endpointStrategy = openAiResponsesTransformer.compatibility.createEndpointStrategy({
-        isStream: isStream || isCodexSite,
+        isStream: isStream || forceCodexUpstreamStream,
         requiresNativeResponsesFileUrl,
         dispatchRequest,
       });
@@ -491,6 +504,32 @@ export async function handleOpenAiResponsesSurfaceRequest(
             ctx.response = recoveredResponse;
             ctx.rawErrText = await readRuntimeResponseText(recoveredResponse).catch(() => 'unknown error');
           }
+        }
+        if (
+          isCompactRequest
+          && config.responsesCompactFallbackToResponsesEnabled
+          && ctx.request.endpoint === 'responses'
+          && ctx.request.path.endsWith('/responses/compact')
+          && shouldFallbackCompactResponsesToResponses({
+            status: ctx.response.status,
+            rawErrText: ctx.rawErrText,
+          })
+        ) {
+          const recoveredRequest = {
+            ...ctx.request,
+            path: ctx.request.path.replace(/\/compact$/, ''),
+          };
+          const recoveredResponse = await dispatchRequest(recoveredRequest);
+          if (recoveredResponse.ok) {
+            return {
+              upstream: recoveredResponse,
+              upstreamPath: recoveredRequest.path,
+              request: recoveredRequest,
+            };
+          }
+          ctx.request = recoveredRequest;
+          ctx.response = recoveredResponse;
+          ctx.rawErrText = await readRuntimeResponseText(recoveredResponse).catch(() => 'unknown error');
         }
         return endpointStrategy.tryRecover(ctx);
       };

@@ -50,6 +50,7 @@ type RuntimeSettings = {
   logCleanupProgramLogsEnabled: boolean;
   logCleanupRetentionDays: number;
   codexUpstreamWebsocketEnabled: boolean;
+  responsesCompactFallbackToResponsesEnabled: boolean;
   proxySessionChannelConcurrencyLimit: number;
   proxySessionChannelQueueWaitMs: number;
   routingFallbackUnitCost: number;
@@ -195,6 +196,7 @@ export default function Settings() {
     logCleanupProgramLogsEnabled: false,
     logCleanupRetentionDays: 30,
     codexUpstreamWebsocketEnabled: false,
+    responsesCompactFallbackToResponsesEnabled: false,
     proxySessionChannelConcurrencyLimit: 2,
     proxySessionChannelQueueWaitMs: 1500,
     routingFallbackUnitCost: 1,
@@ -422,6 +424,7 @@ export default function Settings() {
           ? Math.trunc(Number(runtimeInfo.logCleanupRetentionDays))
           : 30,
         codexUpstreamWebsocketEnabled: !!runtimeInfo.codexUpstreamWebsocketEnabled,
+        responsesCompactFallbackToResponsesEnabled: !!runtimeInfo.responsesCompactFallbackToResponsesEnabled,
         proxySessionChannelConcurrencyLimit: Number(runtimeInfo.proxySessionChannelConcurrencyLimit) >= 0
           ? Math.trunc(Number(runtimeInfo.proxySessionChannelConcurrencyLimit))
           : 2,
@@ -593,6 +596,7 @@ export default function Settings() {
     try {
       const res = await api.updateRuntimeSettings({
         codexUpstreamWebsocketEnabled: runtime.codexUpstreamWebsocketEnabled,
+        responsesCompactFallbackToResponsesEnabled: runtime.responsesCompactFallbackToResponsesEnabled,
         proxySessionChannelConcurrencyLimit: runtime.proxySessionChannelConcurrencyLimit,
         proxySessionChannelQueueWaitMs: runtime.proxySessionChannelQueueWaitMs,
       });
@@ -601,6 +605,9 @@ export default function Settings() {
         codexUpstreamWebsocketEnabled: typeof res?.codexUpstreamWebsocketEnabled === 'boolean'
           ? res.codexUpstreamWebsocketEnabled
           : prev.codexUpstreamWebsocketEnabled,
+        responsesCompactFallbackToResponsesEnabled: typeof res?.responsesCompactFallbackToResponsesEnabled === 'boolean'
+          ? res.responsesCompactFallbackToResponsesEnabled
+          : prev.responsesCompactFallbackToResponsesEnabled,
         proxySessionChannelConcurrencyLimit: Number(res?.proxySessionChannelConcurrencyLimit) >= 0
           ? Math.trunc(Number(res.proxySessionChannelConcurrencyLimit))
           : prev.proxySessionChannelConcurrencyLimit,
@@ -1287,6 +1294,14 @@ export default function Settings() {
             />
             允许 metapi 到 Codex 上游使用 WebSocket
           </label>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 14 }}>
+            <input
+              type="checkbox"
+              checked={runtime.responsesCompactFallbackToResponsesEnabled}
+              onChange={(e) => setRuntime((prev) => ({ ...prev, responsesCompactFallbackToResponsesEnabled: e.target.checked }))}
+            />
+            Compact 明确不支持时回退到普通 Responses
+          </label>
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 10 }}>
             <div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>会话通道并发上限</div>
@@ -1328,6 +1343,9 @@ export default function Settings() {
           </div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.7 }}>
             这组 lease 只作用于能识别稳定 `session_id` 的会话型请求；没有稳定会话标识的普通请求不会进入这个池。
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.7 }}>
+            默认只走原生 `/responses/compact`。开启回退后，只有当上游明确返回 compact 不支持或路径不存在时，才会退回普通 `/responses`。
           </div>
           <div>
             <button onClick={saveProxyTransportSettings} disabled={savingProxyTransport} className="btn btn-primary">

@@ -1,5 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { config } from '../../config.js';
+import { resetUpstreamEndpointRuntimeState } from './upstreamEndpoint.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
@@ -82,6 +84,7 @@ vi.mock('../../db/index.js', () => ({
 
 describe('responses proxy compact upstream routing', () => {
   let app: FastifyInstance;
+  const originalResponsesCompactFallbackToResponsesEnabled = config.responsesCompactFallbackToResponsesEnabled;
 
   beforeAll(async () => {
     const { responsesProxyRoute } = await import('./responses.js');
@@ -90,6 +93,8 @@ describe('responses proxy compact upstream routing', () => {
   });
 
   beforeEach(() => {
+    resetUpstreamEndpointRuntimeState();
+    config.responsesCompactFallbackToResponsesEnabled = false;
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
@@ -117,6 +122,7 @@ describe('responses proxy compact upstream routing', () => {
   });
 
   afterAll(async () => {
+    config.responsesCompactFallbackToResponsesEnabled = originalResponsesCompactFallbackToResponsesEnabled;
     await app.close();
   });
 
@@ -144,6 +150,118 @@ describe('responses proxy compact upstream routing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [targetUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(targetUrl).toContain('/v1/responses/compact');
+  });
+
+  it('does not downgrade compact requests into chat or messages when the upstream compact endpoint fails', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        message: 'Invalid URL (POST /v1/responses/compact)',
+        type: 'invalid_request_error',
+      },
+    }), {
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses/compact',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [targetUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toContain('/v1/responses/compact');
+    expect(targetUrl).not.toContain('/chat/completions');
+    expect(targetUrl).not.toContain('/messages');
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      error: {
+        type: 'upstream_error',
+      },
+    });
+    expect(response.json().error.message).toContain('[upstream:/v1/responses/compact]');
+    expect(response.json().error.message).toContain('Invalid URL (POST /v1/responses/compact)');
+  });
+
+  it('falls back to ordinary responses when compact is explicitly unsupported and the toggle is enabled', async () => {
+    config.responsesCompactFallbackToResponsesEnabled = true;
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          message: 'Invalid URL (POST /v1/responses/compact)',
+          type: 'invalid_request_error',
+        },
+      }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_123',
+        object: 'response',
+        output_text: 'hello from fallback',
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses/compact',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/v1/responses/compact');
+    expect(String(fetchMock.mock.calls[1]?.[0] || '')).toContain('/v1/responses');
+    expect(String(fetchMock.mock.calls[1]?.[0] || '')).not.toContain('/compact');
+    expect(response.json()).toMatchObject({
+      object: 'response.compaction',
+    });
+  });
+
+  it('does not fall back on unrelated 404 errors even when the toggle is enabled', async () => {
+    config.responsesCompactFallbackToResponsesEnabled = true;
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          message: 'Model not found',
+          type: 'invalid_request_error',
+        },
+      }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_ignored',
+        object: 'response',
+        output_text: 'should not fallback',
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses/compact',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/v1/responses/compact');
   });
 
   it('preserves native response.compaction payloads instead of coercing them into object=response', async () => {
@@ -305,5 +423,68 @@ describe('responses proxy compact upstream routing', () => {
       },
     });
     expect(body.created_at).toEqual(expect.any(Number));
+  });
+
+  it('strips compact stream fields and keeps codex compact upstream requests non-streaming', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      account: {
+        id: 33,
+        username: 'codex-user@example.com',
+        extraConfig: JSON.stringify({
+          credentialMode: 'session',
+          oauth: {
+            provider: 'codex',
+            accountId: 'chatgpt-account-123',
+            email: 'codex-user@example.com',
+            planType: 'plus',
+          },
+        }),
+      },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'gpt-5.4',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'cmp_123',
+      object: 'response.compaction',
+      input_tokens: 4,
+      output_tokens: 2,
+      total_tokens: 6,
+      output: [
+        {
+          id: 'rs_123',
+          type: 'compaction',
+          encrypted_content: 'enc-compact-payload',
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses/compact',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello',
+        stream_options: { include_obfuscation: true },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [targetUrl, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toContain('/responses/compact');
+    const forwardedBody = JSON.parse(String(options.body));
+    expect(forwardedBody.stream).toBeUndefined();
+    expect(forwardedBody.stream_options).toBeUndefined();
+    expect(forwardedBody.instructions).toBe('');
+    expect(forwardedBody.store).toBe(false);
+    const forwardedHeaders = (options.headers || {}) as Record<string, string>;
+    const acceptHeader = forwardedHeaders.Accept || forwardedHeaders.accept;
+    expect(acceptHeader).toBe('application/json');
   });
 });

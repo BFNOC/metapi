@@ -591,6 +591,51 @@ export type SiteHealthManualVerifyResponse = {
   } | null;
 };
 
+export type RuntimeSettingsPayload = {
+  codexUpstreamWebsocketEnabled?: boolean;
+  responsesCompactFallbackToResponsesEnabled?: boolean;
+  proxySessionChannelConcurrencyLimit?: number;
+  proxySessionChannelQueueWaitMs?: number;
+  systemProxyUrl?: string;
+  proxyErrorKeywords?: string[] | string;
+  proxyEmptyContentFailEnabled?: boolean;
+  adminIpAllowlist?: string[] | string;
+  routingFallbackUnitCost?: number;
+  proxyFirstByteTimeoutSec?: number;
+  tokenRouterFailureCooldownMaxSec?: number;
+  routingWeights?: Record<string, unknown>;
+  checkinCron?: string;
+  checkinScheduleMode?: 'cron' | 'interval';
+  checkinIntervalHours?: number;
+  balanceRefreshCron?: string;
+  logCleanupCron?: string;
+  logCleanupUsageLogsEnabled?: boolean;
+  logCleanupProgramLogsEnabled?: boolean;
+  logCleanupRetentionDays?: number;
+  webhookUrl?: string;
+  barkUrl?: string;
+  webhookEnabled?: boolean;
+  barkEnabled?: boolean;
+  serverChanEnabled?: boolean;
+  serverChanKey?: string;
+  telegramEnabled?: boolean;
+  telegramApiBaseUrl?: string;
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  telegramUseSystemProxy?: boolean;
+  telegramMessageThreadId?: string;
+  smtpEnabled?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpUser?: string;
+  smtpPass?: string;
+  smtpFrom?: string;
+  smtpTo?: string;
+  notifyCooldownSec?: number;
+  globalBlockedBrands?: string[];
+};
+
 export const api = {
   // Sites
   getSites: () => request('/api/sites'),
@@ -803,7 +848,7 @@ export const api = {
   }),
   getRuntimeSettings: () => request('/api/settings/runtime'),
   getBrandList: () => request('/api/settings/brand-list'),
-  updateRuntimeSettings: (data: any) => request('/api/settings/runtime', {
+  updateRuntimeSettings: (data: RuntimeSettingsPayload) => request('/api/settings/runtime', {
     method: 'PUT',
     body: JSON.stringify(data),
   }),

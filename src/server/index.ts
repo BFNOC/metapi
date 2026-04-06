@@ -151,6 +151,11 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.codexUpstreamWebsocketEnabled = codexUpstreamWebsocketEnabled;
   }
 
+  const responsesCompactFallbackToResponsesEnabled = parseSettingFromMap<boolean>(settingsMap, 'responses_compact_fallback_to_responses_enabled');
+  if (typeof responsesCompactFallbackToResponsesEnabled === 'boolean') {
+    config.responsesCompactFallbackToResponsesEnabled = responsesCompactFallbackToResponsesEnabled;
+  }
+
   const proxyErrorKeywords = parseSettingFromMap<string[] | string>(settingsMap, 'proxy_error_keywords');
   if (proxyErrorKeywords !== undefined) {
     config.proxyErrorKeywords = toStringList(proxyErrorKeywords);

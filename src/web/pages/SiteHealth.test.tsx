@@ -127,6 +127,8 @@ const rows = [
 describe('SiteHealth page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-05T18:30:00.000Z'));
     apiMock.getSiteHealthStates.mockResolvedValue({
       enabled: true,
       items: rows,
@@ -135,6 +137,7 @@ describe('SiteHealth page', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it('loads and renders site health rows', async () => {
@@ -158,11 +161,39 @@ describe('SiteHealth page', () => {
       expect(text).toContain('总站点');
       expect(text).toContain('隔离中');
       expect(text).toContain('正常');
+      expect(text).toContain('2小时前');
+      expect(text).toContain('3小时前');
       expect(text).toContain('gpt-4o-mini / HTTP 200 / TTFT 420ms / 总耗时 860ms');
       expect(text).toContain('冷却通道 1 / 影响路由 1');
       expect(root.root.findByType('table').props.className).toContain('data-table');
       const tooltipNodes = root.root.findAll((node) => typeof node.props?.['data-tooltip'] === 'string');
       expect(tooltipNodes.some((node) => String(node.props['data-tooltip']).includes('时间：'))).toBe(true);
+      expect(tooltipNodes.some((node) => String(node.props['data-tooltip']).includes('距今：2小时前'))).toBe(true);
+      const tableRows = root.root.findByType('tbody').findAllByType('tr');
+      expect(collectText(tableRows[0])).toContain('Beta Site');
+      expect(collectText(tableRows[1])).toContain('Alpha Site');
+      const logLinks = root.root.findAll((node) => (
+        node.type === 'a'
+        && typeof node.props?.href === 'string'
+        && collectText(node).includes('查看日志')
+      ));
+      expect(logLinks).toHaveLength(2);
+      const alphaSearch = new URL(
+        String(logLinks.find((node) => String(node.props.href || '').includes('siteId=1'))?.props.href || ''),
+        'https://metapi.test',
+      ).searchParams;
+      const betaSearch = new URL(
+        String(logLinks.find((node) => String(node.props.href || '').includes('siteId=2'))?.props.href || ''),
+        'https://metapi.test',
+      ).searchParams;
+      expect(alphaSearch.get('siteId')).toBe('1');
+      expect(alphaSearch.get('from')).toBeTruthy();
+      expect(alphaSearch.get('to')).toBeTruthy();
+      expect(alphaSearch.get('status')).toBeNull();
+      expect(betaSearch.get('siteId')).toBe('2');
+      expect(betaSearch.get('from')).toBeTruthy();
+      expect(betaSearch.get('to')).toBeTruthy();
+      expect(betaSearch.get('status')).toBeNull();
     } finally {
       root?.unmount();
     }
@@ -232,10 +263,10 @@ describe('SiteHealth page', () => {
 
       expect(modelProbeModalMock).toHaveBeenLastCalledWith(expect.objectContaining({
         open: true,
-        siteId: 1,
-        siteName: 'Alpha Site',
+        siteId: 2,
+        siteName: 'Beta Site',
       }));
-      expect(collectText(root.toJSON())).toContain('Alpha Site');
+      expect(collectText(root.toJSON())).toContain('Beta Site');
     } finally {
       root?.unmount();
     }

@@ -127,6 +127,13 @@ function compareIsoAsc(left: string | null, right: string | null): number {
   return left.localeCompare(right);
 }
 
+function compareIsoDesc(left: string | null, right: string | null): number {
+  if (!left && !right) return 0;
+  if (!left) return 1;
+  if (!right) return -1;
+  return right.localeCompare(left);
+}
+
 function rankState(state: SiteHealthDerivedState): number {
   if (state === 'quarantined') return 0;
   if (state === 'penalized') return 1;
@@ -497,6 +504,8 @@ export async function listSiteHealthStates(nowMs = Date.now()): Promise<SiteHeal
     })
     .sort((left, right) => {
       if (left.isPinned !== right.isPinned) return left.isPinned ? -1 : 1;
+      const successOrder = compareIsoDesc(left.lastSuccessAt, right.lastSuccessAt);
+      if (successOrder !== 0) return successOrder;
       const leftRank = rankState(left.state);
       const rightRank = rankState(right.state);
       if (leftRank !== rightRank) return leftRank - rightRank;

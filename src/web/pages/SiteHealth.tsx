@@ -5,6 +5,7 @@ import ModelProbeModal from '../components/ModelProbeModal.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { tr } from '../i18n.js';
+import { buildSiteLast24hLogsRoute } from './helpers/proxyLogsRoute.js';
 
 function formatDateTime(value: string | null): string {
   if (!value) return '-';
@@ -99,21 +100,87 @@ function describeRuntime(row: SiteHealthStateRow): string {
   return parts.join(' / ');
 }
 
+function parseTimeMs(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatRelativeTime(value: string | null, nowMs = Date.now()): string {
+  const timeMs = parseTimeMs(value);
+  if (timeMs == null) return '';
+  const diffMs = Math.max(0, nowMs - timeMs);
+  if (diffMs < 10_000) return '刚刚';
+
+  const diffSeconds = Math.floor(diffMs / 1_000);
+  if (diffSeconds < 60) return `${diffSeconds}秒前`;
+
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes}分钟前`;
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}小时前`;
+
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) return `${diffDays}天前`;
+
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths < 12) return `${diffMonths}个月前`;
+
+  const diffYears = Math.floor(diffDays / 365);
+  return `${diffYears}年前`;
+}
+
+function rankState(state: SiteHealthState): number {
+  switch (state) {
+    case 'quarantined':
+      return 0;
+    case 'penalized':
+      return 1;
+    case 'recovering':
+      return 2;
+    case 'active':
+    default:
+      return 3;
+  }
+}
+
+function compareNullableTimeDesc(left: number | null, right: number | null): number {
+  if (left == null && right == null) return 0;
+  if (left == null) return 1;
+  if (right == null) return -1;
+  return right - left;
+}
+
+function getRecentSuccessTimeMs(row: SiteHealthStateRow): number | null {
+  return parseTimeMs(row.recentSuccessSummary?.occurredAt ?? row.lastSuccessAt);
+}
+
+function getRecentFailureTimeMs(row: SiteHealthStateRow): number | null {
+  return parseTimeMs(row.recentFailureSummary?.occurredAt ?? row.lastFailureAt);
+}
+
 function renderEventCell(options: {
   time: string | null;
   summary: string;
   emptySummaryLabel: string;
+  nowMs?: number;
 }) {
   const timeLabel = formatDateTime(options.time);
+  const relativeLabel = formatRelativeTime(options.time, options.nowMs);
   const summaryLabel = options.summary || options.emptySummaryLabel;
   const tooltip = [
     options.time ? `时间：${timeLabel}` : null,
+    relativeLabel ? `距今：${relativeLabel}` : null,
     summaryLabel ? `详情：${summaryLabel}` : null,
   ].filter(Boolean).join(' ｜ ');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
-      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>{timeLabel}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12, color: 'var(--color-text-muted)' }}>
+        <span style={{ whiteSpace: 'nowrap' }}>{timeLabel}</span>
+        {relativeLabel ? <span>{relativeLabel}</span> : null}
+      </div>
       <div
         data-tooltip={tooltip || undefined}
         data-tooltip-align="start"
@@ -147,6 +214,7 @@ export default function SiteHealth() {
   const [stateFilter, setStateFilter] = useState<'all' | SiteHealthState>('all');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [probeTarget, setProbeTarget] = useState<null | { siteId: number; siteName: string }>(null);
+  const nowMs = Date.now();
 
   const loadRows = async () => {
     setLoading(true);
@@ -168,14 +236,31 @@ export default function SiteHealth() {
 
   const filteredRows = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    return rows.filter((row) => {
-      if (stateFilter !== 'all' && row.state !== stateFilter) return false;
-      if (!keyword) return true;
-      return row.siteName.toLowerCase().includes(keyword)
-        || (row.siteUrl || '').toLowerCase().includes(keyword)
-        || describeRecentFailure(row.recentFailureSummary).toLowerCase().includes(keyword)
-        || describeRecentSuccess(row.recentSuccessSummary).toLowerCase().includes(keyword);
-    });
+    return rows
+      .filter((row) => {
+        if (stateFilter !== 'all' && row.state !== stateFilter) return false;
+        if (!keyword) return true;
+        return row.siteName.toLowerCase().includes(keyword)
+          || (row.siteUrl || '').toLowerCase().includes(keyword)
+          || describeRecentFailure(row.recentFailureSummary).toLowerCase().includes(keyword)
+          || describeRecentSuccess(row.recentSuccessSummary).toLowerCase().includes(keyword);
+      })
+      .sort((left, right) => {
+        if (left.isPinned !== right.isPinned) return left.isPinned ? -1 : 1;
+
+        const successOrder = compareNullableTimeDesc(getRecentSuccessTimeMs(left), getRecentSuccessTimeMs(right));
+        if (successOrder !== 0) return successOrder;
+
+        const failureOrder = compareNullableTimeDesc(getRecentFailureTimeMs(left), getRecentFailureTimeMs(right));
+        if (failureOrder !== 0) return failureOrder;
+
+        const stateOrder = rankState(left.state) - rankState(right.state);
+        if (stateOrder !== 0) return stateOrder;
+
+        if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+
+        return left.siteName.localeCompare(right.siteName, undefined, { sensitivity: 'base' });
+      });
   }, [rows, search, stateFilter]);
 
   const summary = useMemo(() => rows.reduce((acc, row) => {
@@ -196,7 +281,9 @@ export default function SiteHealth() {
 
   const renderActions = (row: SiteHealthStateRow) => (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-      <a className="btn btn-link btn-link-info" href={`/logs?siteId=${row.siteId}`}>{tr('查看日志')}</a>
+      <a className="btn btn-link btn-link-info" href={buildSiteLast24hLogsRoute(row.siteId)}>
+        {tr('查看日志')}
+      </a>
       <button
         type="button"
         className="btn btn-link btn-link-primary"
@@ -222,7 +309,7 @@ export default function SiteHealth() {
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder={tr('搜索站点名 / URL / 最近失败')}
+          placeholder={tr('搜索站点名 / URL / 最近成功 / 最近失败')}
         />
       </div>
       <select
@@ -356,6 +443,7 @@ export default function SiteHealth() {
                   time: row.recentSuccessSummary?.occurredAt ?? row.lastSuccessAt,
                   summary: describeRecentSuccess(row.recentSuccessSummary),
                   emptySummaryLabel: '最近成功请求已记录，但暂无摘要',
+                  nowMs,
                 })}
                 stacked
               />
@@ -365,6 +453,7 @@ export default function SiteHealth() {
                   time: row.recentFailureSummary?.occurredAt ?? row.lastFailureAt,
                   summary: describeRecentFailure(row.recentFailureSummary),
                   emptySummaryLabel: '失败详情缺失',
+                  nowMs,
                 })}
                 stacked
               />
@@ -427,6 +516,7 @@ export default function SiteHealth() {
                       time: row.recentSuccessSummary?.occurredAt ?? row.lastSuccessAt,
                       summary: describeRecentSuccess(row.recentSuccessSummary),
                       emptySummaryLabel: '最近成功请求已记录，但暂无摘要',
+                      nowMs,
                     })}
                   </td>
                   <td style={{ whiteSpace: 'normal' }}>
@@ -435,6 +525,7 @@ export default function SiteHealth() {
                         time: row.recentFailureSummary?.occurredAt ?? row.lastFailureAt,
                         summary: describeRecentFailure(row.recentFailureSummary),
                         emptySummaryLabel: '失败详情缺失',
+                        nowMs,
                       })}
                       {row.severeFailureCount > 0 ? <span className="badge badge-warning">{tr('严重失败')} {row.severeFailureCount}</span> : null}
                     </div>

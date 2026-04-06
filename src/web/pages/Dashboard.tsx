@@ -4,10 +4,15 @@ import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { formatCompactTokenMetric } from '../numberFormat.js';
+import { buildSiteLast24hLogsRoute, buildSiteLogsRoute } from './helpers/proxyLogsRoute.js';
 
 const ModelAnalysisPanel = lazy(() => import('../components/ModelAnalysisPanel.js'));
 const SiteDistributionChart = lazy(() => import('../components/charts/SiteDistributionChart.js'));
 const SiteTrendChart = lazy(() => import('../components/charts/SiteTrendChart.js'));
+
+function padDateTimeSegment(value: number): string {
+  return String(value).padStart(2, '0');
+}
 
 function getGreeting(): string {
   const hour = new Date().getHours();
@@ -96,31 +101,6 @@ function getAvailabilityColor(value: number | null | undefined): string {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-function padDateTimeSegment(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-function formatDateTimeRouteValue(value: Date): string {
-  return `${value.getFullYear()}-${padDateTimeSegment(value.getMonth() + 1)}-${padDateTimeSegment(value.getDate())}T${padDateTimeSegment(value.getHours())}:${padDateTimeSegment(value.getMinutes())}`;
-}
-
-function buildSiteLogsRoute(siteId: number, range?: { from: Date; to: Date }): string {
-  const params = new URLSearchParams();
-  params.set('siteId', String(siteId));
-  if (range) {
-    params.set('from', formatDateTimeRouteValue(range.from));
-    params.set('to', formatDateTimeRouteValue(range.to));
-  }
-  return `/logs?${params.toString()}`;
-}
-
-function buildSiteLast24hLogsRoute(siteId: number): string {
-  const now = new Date();
-  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() - 23, 0, 0, 0);
-  const to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() + 1, 0, 0, 0);
-  return buildSiteLogsRoute(siteId, { from, to });
-}
-
 function parseAvailabilityBucketStart(startUtc?: string | null): Date | null {
   const text = (startUtc || '').trim();
   if (!text) return null;
@@ -156,7 +136,7 @@ function buildAvailabilityBucketLogsRoute(siteId: number, bucket: SiteAvailabili
   const start = parseAvailabilityBucketStart(bucket.startUtc) || parseAvailabilityBucketLabel(bucket.label);
   if (!start) return buildSiteLast24hLogsRoute(siteId);
   const end = new Date(start.getTime() + 60 * 60 * 1000);
-  return buildSiteLogsRoute(siteId, { from: start, to: end });
+  return buildSiteLogsRoute(siteId, { range: { from: start, to: end } });
 }
 
 export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminName?: string }) {

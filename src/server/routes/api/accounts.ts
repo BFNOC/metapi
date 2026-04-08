@@ -32,6 +32,10 @@ import {
 import { appendSessionTokenRebindHint } from '../../services/alertRules.js';
 import { parseSiteProxyUrlInput, withAccountProxyOverride, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
+import {
+  buildBatchApiKeyConnectionName,
+  parseBatchApiKeys,
+} from '../../../shared/apiKeyBatch.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -62,6 +66,42 @@ type AccountInitializationParams = {
   apiToken: string;
   platformUserId?: number;
   skipModelFetch?: boolean;
+};
+
+type CreateAccountBody = {
+  siteId: number;
+  username?: string;
+  accessToken?: string;
+  accessTokens?: string[];
+  apiToken?: string;
+  platformUserId?: number;
+  checkinEnabled?: boolean;
+  credentialMode?: AccountCredentialMode;
+  refreshToken?: string;
+  tokenExpiresAt?: number | string;
+  skipModelFetch?: boolean;
+};
+
+type CreateManualAccountParams = {
+  body: CreateAccountBody;
+  site: typeof schema.sites.$inferSelect;
+  adapter: NonNullable<ReturnType<typeof getAdapter>>;
+  credentialMode: AccountCredentialMode;
+  rawAccessToken: string;
+  usernameOverride?: string;
+};
+
+type CreateManualAccountResult = {
+  account: typeof schema.accounts.$inferSelect;
+  tokenType: 'session' | 'apikey' | 'unknown';
+  credentialMode: AccountCredentialMode;
+  capabilities: AccountCapabilities;
+  modelCount: number;
+  apiTokenFound: boolean;
+  usernameDetected: boolean;
+  queued: boolean;
+  jobId?: string;
+  message?: string;
 };
 
 type VerifyFailureReason = 'needs-user-id' | 'invalid-user-id' | 'shield-blocked' | null;
@@ -199,6 +239,20 @@ function buildQueuedAccountInitializationMessage(
   return '已添加为 API Key 账号，后台正在同步模型和路由信息。';
 }
 
+function resolveRequestedCreateTokens(
+  body: CreateAccountBody,
+  credentialMode: AccountCredentialMode,
+): string[] {
+  if (credentialMode !== 'apikey') {
+    const single = String(body.accessToken || '').trim();
+    return single ? [single] : [];
+  }
+
+  const explicitBatchTokens = parseBatchApiKeys(body.accessTokens);
+  if (explicitBatchTokens.length > 0) return explicitBatchTokens;
+  return parseBatchApiKeys(body.accessToken);
+}
+
 function normalizeSortOrder(input: unknown): number | null {
   if (input === undefined || input === null || input === '') return null;
   const parsed = Number.parseInt(String(input), 10);
@@ -225,6 +279,157 @@ async function getNextAccountSortOrder(): Promise<number> {
   const rows = await db.select({ sortOrder: schema.accounts.sortOrder }).from(schema.accounts).all();
   const max = rows.reduce((currentMax, row) => Math.max(currentMax, row.sortOrder || 0), -1);
   return max + 1;
+}
+
+async function createManualAccount({
+  body,
+  site,
+  adapter,
+  credentialMode,
+  rawAccessToken,
+  usernameOverride,
+}: CreateManualAccountParams): Promise<CreateManualAccountResult> {
+  let username = typeof usernameOverride === 'string'
+    ? usernameOverride.trim()
+    : (body.username || '').trim();
+  let accessToken = rawAccessToken;
+  // 批量 API Key 创建会复用同一个 body；调用方应保持 body.apiToken 为空，
+  // 让每条记录按各自 rawAccessToken 自动落到 apiToken。
+  let apiToken = (body.apiToken || '').trim();
+  let tokenType: 'session' | 'apikey' | 'unknown' = 'unknown';
+  let verifiedModels: string[] = [];
+
+  if (credentialMode === 'apikey') {
+    if (body.skipModelFetch === true) {
+      tokenType = 'apikey';
+      accessToken = '';
+      if (!apiToken) apiToken = rawAccessToken;
+    } else {
+      const models = await withTimeout(
+        () => adapter.getModels(site.url, rawAccessToken, body.platformUserId),
+        ACCOUNT_VERIFY_TIMEOUT_MS,
+        `Token verification timed out (${Math.max(1, Math.round(ACCOUNT_VERIFY_TIMEOUT_MS / 1000))}s)`,
+      );
+      verifiedModels = Array.isArray(models)
+        ? models.filter((item) => typeof item === 'string' && item.trim().length > 0)
+        : [];
+
+      if (verifiedModels.length === 0) {
+        const error = new Error('API Key 验证失败：未获取到可用模型');
+        (error as Error & { requiresVerification?: boolean }).requiresVerification = true;
+        throw error;
+      }
+
+      tokenType = 'apikey';
+      accessToken = '';
+      if (!apiToken) apiToken = rawAccessToken;
+    }
+  } else {
+    const verifyResult = await withTimeout(
+      () => adapter.verifyToken(site.url, rawAccessToken, body.platformUserId),
+      ACCOUNT_VERIFY_TIMEOUT_MS,
+      `Token verification timed out (${Math.max(1, Math.round(ACCOUNT_VERIFY_TIMEOUT_MS / 1000))}s)`,
+    );
+    tokenType = verifyResult.tokenType;
+    if (tokenType === 'unknown') {
+      const error = new Error('Token 验证失败，请先点击“验证 Token”，验证成功后再绑定账号');
+      (error as Error & { requiresVerification?: boolean }).requiresVerification = true;
+      throw error;
+    }
+
+    if (credentialMode === 'session' && tokenType !== 'session') {
+      throw new Error('当前凭证是 API Key，请切换到 API Key 模式，或改用 Session Token');
+    }
+
+    if (tokenType === 'session') {
+      if (!username && verifyResult.userInfo?.username) username = String(verifyResult.userInfo.username).trim();
+      if (!apiToken && verifyResult.apiToken) apiToken = String(verifyResult.apiToken).trim();
+    } else if (tokenType === 'apikey') {
+      accessToken = '';
+      if (!apiToken) apiToken = rawAccessToken;
+      verifiedModels = Array.isArray(verifyResult.models)
+        ? verifyResult.models.filter((item: unknown) => typeof item === 'string' && item.trim().length > 0)
+        : [];
+    }
+  }
+
+  const resolvedPlatformUserId =
+    body.platformUserId || guessPlatformUserIdFromUsername(username) || undefined;
+  const resolvedCredentialMode: AccountCredentialMode = tokenType === 'apikey' ? 'apikey' : 'session';
+  const extraConfigPatch: Record<string, unknown> = { credentialMode: resolvedCredentialMode };
+  if (resolvedPlatformUserId) {
+    extraConfigPatch.platformUserId = resolvedPlatformUserId;
+  }
+  if ((site.platform || '').toLowerCase() === 'sub2api') {
+    const managedRefreshToken = normalizeManagedRefreshToken(body.refreshToken);
+    const managedTokenExpiresAt = normalizeManagedTokenExpiresAt(body.tokenExpiresAt);
+    if (managedRefreshToken) {
+      extraConfigPatch.sub2apiAuth = managedTokenExpiresAt
+        ? { refreshToken: managedRefreshToken, tokenExpiresAt: managedTokenExpiresAt }
+        : { refreshToken: managedRefreshToken };
+    }
+  }
+  const extraConfig = mergeAccountExtraConfig(undefined, extraConfigPatch);
+
+  const result = await insertAndGetById<typeof schema.accounts.$inferSelect>({
+    table: schema.accounts,
+    idColumn: schema.accounts.id,
+    values: {
+      siteId: body.siteId,
+      username: username || undefined,
+      accessToken,
+      apiToken: apiToken || undefined,
+      checkinEnabled: tokenType === 'session' ? (body.checkinEnabled ?? true) : false,
+      extraConfig,
+      isPinned: false,
+      sortOrder: await getNextAccountSortOrder(),
+    },
+    insertErrorMessage: '创建账号失败',
+    loadErrorMessage: '创建账号失败',
+  });
+
+  const shouldQueueInitialization = tokenType === 'session' || body.skipModelFetch !== true;
+  let queuedTaskId: string | undefined;
+  let queuedMessage: string | undefined;
+  if (shouldQueueInitialization) {
+    const taskTitle = `初始化连接 #${result.id}`;
+    const { task } = startBackgroundTask(
+      {
+        type: 'account-init',
+        title: taskTitle,
+        dedupeKey: `account-init-${result.id}`,
+        notifyOnFailure: true,
+        successMessage: () => `${taskTitle}已完成`,
+        failureMessage: (currentTask) => `${taskTitle}失败：${currentTask.error || 'unknown error'}`,
+      },
+      async () => initializeAccountInBackground({
+        accountId: result.id,
+        site,
+        adapter,
+        tokenType,
+        accessToken,
+        apiToken,
+        platformUserId: resolvedPlatformUserId,
+        skipModelFetch: body.skipModelFetch,
+      }),
+    );
+    queuedTaskId = task.id;
+    queuedMessage = buildQueuedAccountInitializationMessage(tokenType, body.skipModelFetch);
+  }
+
+  const finalCredentialMode = resolveStoredCredentialMode(result);
+  return {
+    account: result,
+    tokenType,
+    credentialMode: finalCredentialMode,
+    capabilities: buildCapabilitiesForAccount(result),
+    modelCount: verifiedModels.length,
+    apiTokenFound: !!apiToken,
+    usernameDetected: !!(!body.username && username),
+    queued: !!queuedTaskId,
+    jobId: queuedTaskId,
+    message: queuedMessage,
+  };
 }
 
 type LoginFailureInfo = {
@@ -1060,7 +1265,7 @@ export async function accountsRoutes(app: FastifyInstance) {
   );
 
   // Add an account (manual credential input)
-  app.post<{ Body: { siteId: number; username?: string; accessToken: string; apiToken?: string; platformUserId?: number; checkinEnabled?: boolean; credentialMode?: AccountCredentialMode; refreshToken?: string; tokenExpiresAt?: number | string; skipModelFetch?: boolean } }>('/api/accounts', async (request, reply) => {
+  app.post<{ Body: CreateAccountBody }>('/api/accounts', async (request, reply) => {
     const body = request.body;
     const site = await db.select().from(schema.sites).where(eq(schema.sites.id, body.siteId)).get();
     if (!site) {
@@ -1072,169 +1277,103 @@ export async function accountsRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: `platform not supported: ${site.platform}` });
     }
 
-    const credentialMode = resolveRequestedCredentialMode(body.credentialMode);
-    const rawAccessToken = (body.accessToken || '').trim();
-    if (!rawAccessToken) {
+    const explicitBatchTokens = parseBatchApiKeys(body.accessTokens);
+    const credentialMode = explicitBatchTokens.length > 0
+      ? 'apikey'
+      : resolveRequestedCredentialMode(body.credentialMode);
+    const requestedTokens = explicitBatchTokens.length > 0
+      ? explicitBatchTokens
+      : resolveRequestedCreateTokens(body, credentialMode);
+    if (requestedTokens.length === 0) {
       return reply.code(400).send({ success: false, message: '请填写 Token' });
     }
 
-    let username = (body.username || '').trim();
-    let accessToken = rawAccessToken;
-    let apiToken = (body.apiToken || '').trim();
-    let tokenType: 'session' | 'apikey' | 'unknown' = 'unknown';
-    let verifiedModels: string[] = [];
+    if (credentialMode === 'apikey' && requestedTokens.length > 1) {
+      const items: Array<Record<string, unknown>> = [];
+      let createdCount = 0;
 
-    if (credentialMode === 'apikey') {
-      if (body.skipModelFetch === true) {
-        tokenType = 'apikey';
-        accessToken = '';
-        if (!apiToken) apiToken = rawAccessToken;
-      } else {
+      for (const [index, token] of requestedTokens.entries()) {
         try {
-          const models = await adapter.getModels(site.url, rawAccessToken, body.platformUserId);
-          verifiedModels = Array.isArray(models)
-            ? models.filter((item) => typeof item === 'string' && item.trim().length > 0)
-            : [];
+          const created = await createManualAccount({
+            body,
+            site,
+            adapter,
+            credentialMode,
+            rawAccessToken: token,
+            usernameOverride: buildBatchApiKeyConnectionName(body.username, index, requestedTokens.length) || undefined,
+          });
+          createdCount += 1;
+          items.push({
+            index,
+            status: 'created',
+            id: created.account.id,
+            username: created.account.username || null,
+            queued: created.queued,
+            message: created.message || null,
+            modelCount: created.modelCount,
+          });
         } catch (err: any) {
-          return reply.code(400).send({
-            success: false,
-            message: err?.message || 'API Key 验证失败',
+          items.push({
+            index,
+            status: 'failed',
+            message: err?.message || '创建失败',
+            requiresVerification: err?.requiresVerification === true,
           });
         }
-
-        if (verifiedModels.length === 0) {
-          return reply.code(400).send({
-            success: false,
-            requiresVerification: true,
-            message: 'API Key 验证失败：未获取到可用模型',
-          });
-        }
-
-        tokenType = 'apikey';
-        accessToken = '';
-        if (!apiToken) apiToken = rawAccessToken;
       }
-    } else {
-      let verifyResult: any;
-      try {
-        verifyResult = await adapter.verifyToken(site.url, rawAccessToken, body.platformUserId);
-      } catch (err: any) {
+
+      if (createdCount === 0) {
         return reply.code(400).send({
           success: false,
-          message: appendSessionTokenRebindHint(err?.message || 'Token 验证失败'),
+          batch: true,
+          totalCount: requestedTokens.length,
+          createdCount: 0,
+          failedCount: requestedTokens.length,
+          message: `批量添加失败（0/${requestedTokens.length}）`,
+          items,
         });
       }
 
-      tokenType = verifyResult.tokenType;
-      if (tokenType === 'unknown') {
-        return reply.code(400).send({
-          success: false,
-          requiresVerification: true,
-          message: 'Token 验证失败，请先点击“验证 Token”，验证成功后再绑定账号',
-        });
-      }
-
-      if (credentialMode === 'session' && tokenType !== 'session') {
-        return reply.code(400).send({
-          success: false,
-          message: '当前凭证是 API Key，请切换到 API Key 模式，或改用 Session Token',
-        });
-      }
-
-      if (tokenType === 'session') {
-        if (!username && verifyResult.userInfo?.username) username = String(verifyResult.userInfo.username).trim();
-        if (!apiToken && verifyResult.apiToken) apiToken = String(verifyResult.apiToken).trim();
-      } else if (tokenType === 'apikey') {
-        accessToken = '';
-        if (!apiToken) apiToken = rawAccessToken;
-        verifiedModels = Array.isArray(verifyResult.models)
-          ? verifyResult.models.filter((item: unknown) => typeof item === 'string' && item.trim().length > 0)
-          : [];
-      }
+      return {
+        success: true,
+        batch: true,
+        totalCount: requestedTokens.length,
+        createdCount,
+        failedCount: requestedTokens.length - createdCount,
+        message: `批量添加完成：成功 ${createdCount}，失败 ${requestedTokens.length - createdCount}`,
+        items,
+      };
     }
 
-    // Store platformUserId and credential mode in extraConfig.
-    const resolvedPlatformUserId =
-      body.platformUserId || guessPlatformUserIdFromUsername(username) || undefined;
-    const resolvedCredentialMode: AccountCredentialMode = tokenType === 'apikey' ? 'apikey' : 'session';
-    const extraConfigPatch: Record<string, unknown> = { credentialMode: resolvedCredentialMode };
-    if (resolvedPlatformUserId) {
-      extraConfigPatch.platformUserId = resolvedPlatformUserId;
+    try {
+      const created = await createManualAccount({
+        body,
+        site,
+        adapter,
+        credentialMode,
+        rawAccessToken: requestedTokens[0]!,
+      });
+      return {
+        ...created.account,
+        tokenType: created.tokenType,
+        credentialMode: created.credentialMode,
+        capabilities: created.capabilities,
+        modelCount: created.modelCount,
+        apiTokenFound: created.apiTokenFound,
+        usernameDetected: created.usernameDetected,
+        queued: created.queued,
+        jobId: created.jobId,
+        message: created.message,
+      };
+    } catch (err: any) {
+      return reply.code(400).send({
+        success: false,
+        requiresVerification: err?.requiresVerification === true,
+        message: credentialMode !== 'apikey'
+          ? appendSessionTokenRebindHint(err?.message || 'Token 验证失败')
+          : (err?.message || 'API Key 验证失败'),
+      });
     }
-    if ((site.platform || '').toLowerCase() === 'sub2api') {
-      const managedRefreshToken = normalizeManagedRefreshToken(body.refreshToken);
-      const managedTokenExpiresAt = normalizeManagedTokenExpiresAt(body.tokenExpiresAt);
-      if (managedRefreshToken) {
-        extraConfigPatch.sub2apiAuth = managedTokenExpiresAt
-          ? { refreshToken: managedRefreshToken, tokenExpiresAt: managedTokenExpiresAt }
-          : { refreshToken: managedRefreshToken };
-      }
-    }
-    const extraConfig = mergeAccountExtraConfig(undefined, extraConfigPatch);
-
-    const result = await insertAndGetById<typeof schema.accounts.$inferSelect>({
-      table: schema.accounts,
-      idColumn: schema.accounts.id,
-      values: {
-        siteId: body.siteId,
-        username: username || undefined,
-        accessToken,
-        apiToken: apiToken || undefined,
-        checkinEnabled: tokenType === 'session' ? (body.checkinEnabled ?? true) : false,
-        extraConfig,
-        isPinned: false,
-        sortOrder: await getNextAccountSortOrder(),
-      },
-      insertErrorMessage: '创建账号失败',
-      loadErrorMessage: '创建账号失败',
-    });
-
-    const shouldQueueInitialization = tokenType === 'session' || body.skipModelFetch !== true;
-    let queuedTaskId: string | undefined;
-    let queuedMessage: string | undefined;
-    if (shouldQueueInitialization) {
-      const taskTitle = `初始化连接 #${result.id}`;
-      const { task } = startBackgroundTask(
-        {
-          type: 'account-init',
-          title: taskTitle,
-          dedupeKey: `account-init-${result.id}`,
-          notifyOnFailure: true,
-          successMessage: () => `${taskTitle}已完成`,
-          failureMessage: (currentTask) => `${taskTitle}失败：${currentTask.error || 'unknown error'}`,
-        },
-        async () => initializeAccountInBackground({
-          accountId: result.id,
-          site,
-          adapter,
-          tokenType,
-          accessToken,
-          apiToken,
-          platformUserId: resolvedPlatformUserId,
-          skipModelFetch: body.skipModelFetch,
-        }),
-      );
-      queuedTaskId = task.id;
-      queuedMessage = buildQueuedAccountInitializationMessage(tokenType, body.skipModelFetch);
-    }
-
-    const account = await db.select().from(schema.accounts).where(eq(schema.accounts.id, result.id)).get();
-    const finalCredentialMode = account ? resolveStoredCredentialMode(account) : resolvedCredentialMode;
-    const capabilities = account
-      ? buildCapabilitiesForAccount(account)
-      : buildCapabilitiesFromCredentialMode(finalCredentialMode, tokenType === 'session', null);
-    return {
-      ...account,
-      tokenType,
-      credentialMode: finalCredentialMode,
-      capabilities,
-      modelCount: verifiedModels.length,
-      apiTokenFound: !!apiToken,
-      usernameDetected: !!(!body.username && username),
-      queued: !!queuedTaskId,
-      jobId: queuedTaskId,
-      message: queuedMessage,
-    };
   });
 
   // Update an account

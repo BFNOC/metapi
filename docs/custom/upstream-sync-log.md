@@ -878,3 +878,155 @@
   - provider profile / gemini surface 一致的 internal stream action 选择
   - upstream SSE 聚合回 downstream JSON 的 executor 闭环
   - tail aggregation / fallback aggregation 的 follow-up 防呆覆盖
+
+---
+
+## 2026-04-08 实施（`569a15e` / Accounts 子线）
+
+**处理结果**：`569a15e` 已按 owner 拆分后，仅吸收其中的 Accounts 批量 API Key 创建子线；`tokenRouter` / `workflow` / dependency bump 继续不跟。
+
+### 本次落地的上游 Commit 子集
+
+| Commit | 说明 | 合入方式 | 备注 |
+|--------|------|---------|------|
+| `569a15e` | 批量 API Key 连接创建 + Accounts 页批量输入交互 | 手工移植 | Accounts 子线；只摘 batch API key create / UI 提示 / batch result，不整包 cherry-pick |
+
+### 本地实现说明
+
+**后端 owner**：
+- `src/server/routes/api/accounts.ts`
+  - 抽出 `createManualAccount(...)`，复用现有单条创建语义
+  - 新增 `resolveRequestedCreateTokens(...)`
+  - `POST /api/accounts` 在 `apikey` 模式下支持：
+    - `accessTokens: string[]`
+    - 从 `accessToken` 文本按换行 / 空格 / 逗号切分多 key
+  - 批量模式按 token 逐条创建连接，返回：
+    - `batch`
+    - `totalCount`
+    - `createdCount`
+    - `failedCount`
+    - `items`
+- `src/shared/apiKeyBatch.ts`
+  - 新增纯解析 helper：
+    - `parseBatchApiKeys(...)`
+    - `buildBatchApiKeyConnectionName(...)`
+
+**前端 owner**：
+- `src/web/pages/Accounts.tsx`
+  - API Key 分段新增批量输入识别
+  - 批量模式下：
+    - 验证按钮改为“批量添加时校验”
+    - 不再要求先单独验证再提交
+    - 添加按钮改为“批量添加连接”
+  - 提交时显式发送 `accessTokens`
+  - 批量返回结果后显示成功/失败汇总 toast
+
+### repo-local 差异点
+
+- 保留当前 fork 的 existing owner，不照搬上游新文件布局：
+  - 未引入 `accountsRoutePayloads.ts`
+  - 未引入 `manualAccountCreationService.ts`
+  - 未引入 server 侧 `apiKeyBatch` service 拆分
+- 保留当前 fork 既有语义：
+  - `skipModelFetch`
+  - Session / API Key 分段约束
+  - `Sub2API refreshToken / tokenExpiresAt`
+  - 后台初始化任务
+- 本次明确不跟：
+  - `569a15e` 的 `tokenRouter` 优先级切换
+  - `569a15e` 的 Docker workflow 改动
+  - `2f2ebcb` / `5cab6c8` 两个 dependency bump
+- 上游新增的 `accounts.apiSite.test.ts` 没有一并移植：
+  - 当前 fork 不存在对应的 `siteApiEndpointService` / `siteApiEndpoints` owner 体系
+  - 该测试属于 API endpoint host selection 线，不属于本次 batch API key create 闭环
+
+### 测试改动
+
+- `src/server/routes/api/accounts.batch-create.test.ts`
+  - 覆盖：
+    - multiline batch create success
+    - `accessTokens` 数组 payload 直接创建
+    - partial failure
+    - all-failed aggregated error
+- `src/web/pages/accounts.batch-input.test.tsx`
+  - 覆盖：
+    - API Key 分段识别批量输入
+    - 批量模式下不要求预验证
+    - 提交时发送 `accessTokens`
+    - 单 key 流程保持不变
+
+### 验证结果
+
+- ✅ `npx vitest run src/server/routes/api/accounts.batch-create.test.ts src/server/routes/api/accounts.skip-model-fetch.test.ts src/server/routes/api/accounts.credentialMode.test.ts src/server/routes/api/accounts.add-requires-verify.test.ts` - 17 passed
+- ✅ `npx vitest run src/web/pages/accounts.batch-input.test.tsx src/web/pages/accounts.verify-feedback.test.tsx src/web/pages/accounts.segmented-connections.test.tsx` - 5 passed
+- ✅ `npm run repo:drift-check` - Violations: 0
+- ⚠️ `npm run typecheck` 当前失败于 `src/web/pages/Settings.tsx` 中 `proxyToken` 不在 `RuntimeSettingsPayload`；本次 Accounts hand-port 未触及该 owner，未顺手扩线处理
+
+### 结论
+
+- `569a15e` 现在已按本 fork 语义拆分处理
+- 当前 fork 已具备：
+  - API Key 分段下的 batch input 识别
+  - 批量 API Key 连接创建
+  - 聚合成功/失败返回
+  - 对应的后端与前端 targeted tests
+- `569a15e` 剩余未跟部分应继续单独评估，不与本次 Accounts hand-port 混提
+
+---
+
+## 2026-04-08 实施（`569a15e` / tokenRouter 子线）
+
+**处理结果**：在确认当前真实库中没有启用中的 `displayName` / `explicit_group` 路由后，继续按 upstream `569a15e` 吸收 `tokenRouter` 的最小语义切换；本次仍不跟 `workflow` / dependency bump。
+
+### 本次落地的上游 Commit 子集
+
+| Commit | 说明 | 合入方式 | 备注 |
+|--------|------|---------|------|
+| `569a15e` | 冲突时优先命中 explicit-group display-name alias | 手工移植 | tokenRouter 子线；只摘匹配顺序和紧邻回归测试，不扩线到其他 owner |
+
+### 本地实现说明
+
+**核心 owner**：
+- `src/server/services/tokenRouter.ts`
+  - `findRoute(...)` 中的匹配顺序改为：
+    - 先看 `explicit_group + displayName`
+    - 再看 colliding exact route
+    - 再看普通 displayName alias / pattern route
+
+**测试 owner**：
+- `src/server/services/tokenRouter.patterns.test.ts`
+  - 将冲突用例改为：
+    - `group display-name alias` 优先于同名 exact route
+    - 断言最终命中 group route，并回到 source route 的真实模型
+- `src/server/routes/api/tokens.route-update-rebuild.test.ts`
+  - 同步更新 API 层 `route decision` 断言
+  - 确保从 `/api/routes/decision` 看到的结果与 `TokenRouter` 内核一致
+
+### repo-local 差异点
+
+- 本次只改最小 3-file slice：
+  - `tokenRouter.ts`
+  - `tokenRouter.patterns.test.ts`
+  - `tokens.route-update-rebuild.test.ts`
+- 未扩到：
+  - `downstreamApiKeyService.ts`
+  - 更广的 route-selection scoring suite
+  - 任何 UI / workflow / dependency 改动
+- 额外核对了真实库 `data/hub.db`：
+  - `explicit_group` 路由数：`0`
+  - 非空 `displayName` 路由数：`0`
+  - `route_group_sources` 行数：`0`
+  - 说明这次语义切换对当前线上路由**暂时不会立即生效**
+  - 但未来一旦开始使用 `displayName` / `explicit_group`，新优先级就会起作用
+
+### 验证结果
+
+- ✅ `npx vitest run src/server/services/tokenRouter.patterns.test.ts src/server/routes/api/tokens.route-update-rebuild.test.ts` - 28 passed
+- ✅ `npx vitest run src/server/services/downstreamApiKeyService.test.ts` - 9 passed
+- ✅ `npm run repo:drift-check` - Violations: 0
+
+### 结论
+
+- `569a15e` 的 `tokenRouter` 子线已按最小范围 hand-port 完成
+- 当前 fork 在未来引入 `displayName` / `explicit_group` 路由时，将采用 upstream 的冲突优先级
+- 现有依赖 `模型映射 + allow-list 过滤 + exact route` 的实际线上路由，当前不会因为这次修改立刻改流

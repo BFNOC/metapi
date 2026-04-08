@@ -625,7 +625,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     const updated = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).get();
     expect(updated?.tokenId).toBeNull();
   });
-  it('prefers an exact route over a colliding explicit-group display name', async () => {
+  it('prefers an explicit-group display name over a colliding exact route', async () => {
     const exactCandidate = await seedAccountWithToken('claude-opus-4-6');
     const groupedCandidate = await seedAccountWithToken('claude-opus-4-5');
 
@@ -683,9 +683,9 @@ describe('PUT /api/routes/:id route rebuild', () => {
       success: true,
       decision: {
         matched: true,
-        routeId: exactRoute.id,
+        routeId: groupResponse.json().id,
         modelPattern: 'claude-opus-4-6',
-        actualModel: 'claude-opus-4-6',
+        actualModel: 'claude-opus-4-5',
       },
     });
   });

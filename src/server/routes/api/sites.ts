@@ -127,8 +127,15 @@ function isSitesPlatformUrlConflict(error: unknown): boolean {
   });
 }
 
+type SiteBindingRecord = {
+  id: number;
+  name: string;
+  url: string;
+  platform: string;
+};
+
 function findExistingSiteBinding(
-  siteRows: Array<{ id: number; url: string; platform: string }>,
+  siteRows: SiteBindingRecord[],
   platform: string,
   normalizedUrl: string,
   excludedSiteId?: number,
@@ -140,9 +147,45 @@ function findExistingSiteBinding(
   ));
 }
 
-function sendSiteBindingConflict(reply: FastifyReply, platform: string, normalizedUrl: string) {
+async function loadConflictingSiteBinding(
+  platform: string,
+  normalizedUrl: string,
+  excludedSiteId?: number,
+): Promise<SiteBindingRecord | null> {
+  const row = await db.select({
+    id: schema.sites.id,
+    name: schema.sites.name,
+    url: schema.sites.url,
+    platform: schema.sites.platform,
+  })
+    .from(schema.sites)
+    .where(and(
+      eq(schema.sites.platform, platform),
+      eq(schema.sites.url, normalizedUrl),
+    ))
+    .get();
+  if (!row || row.id === excludedSiteId) return null;
+  return row;
+}
+
+function sendSiteBindingConflict(
+  reply: FastifyReply,
+  platform: string,
+  normalizedUrl: string,
+  conflictingSite?: SiteBindingRecord | null,
+) {
+  const baseMessage = `A ${platform} site with URL ${normalizedUrl} already exists.`;
+  const detailMessage = conflictingSite
+    ? `${baseMessage} (站点: "${conflictingSite.name}", ID: ${conflictingSite.id})`
+    : baseMessage;
   return reply.code(409).send({
-    error: `A ${platform} site with URL ${normalizedUrl} already exists.`,
+    error: detailMessage,
+    conflictingSite: conflictingSite ? {
+      id: conflictingSite.id,
+      name: conflictingSite.name,
+      url: conflictingSite.url,
+      platform: conflictingSite.platform,
+    } : null,
   });
 }
 
@@ -349,7 +392,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
     const conflictingSite = findExistingSiteBinding(existingSites, detectedPlatform, normalizedUrl);
     if (conflictingSite) {
-      return sendSiteBindingConflict(reply, detectedPlatform, normalizedUrl);
+      return sendSiteBindingConflict(reply, detectedPlatform, normalizedUrl, conflictingSite);
     }
 
     let inserted;
@@ -375,7 +418,8 @@ export async function sitesRoutes(app: FastifyInstance) {
       });
     } catch (error) {
       if (isSitesPlatformUrlConflict(error)) {
-        return sendSiteBindingConflict(reply, detectedPlatform, normalizedUrl);
+        const conflictingSite = await loadConflictingSiteBinding(detectedPlatform, normalizedUrl);
+        return sendSiteBindingConflict(reply, detectedPlatform, normalizedUrl, conflictingSite);
       }
       throw error;
     }
@@ -454,12 +498,13 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (siteIdentityChanged) {
       const siteRows = await db.select({
         id: schema.sites.id,
+        name: schema.sites.name,
         url: schema.sites.url,
         platform: schema.sites.platform,
       }).from(schema.sites).all();
       const conflictingSite = findExistingSiteBinding(siteRows, nextPlatform, nextUrl, id);
       if (conflictingSite) {
-        return sendSiteBindingConflict(reply, nextPlatform, nextUrl);
+        return sendSiteBindingConflict(reply, nextPlatform, nextUrl, conflictingSite);
       }
     }
 
@@ -481,7 +526,8 @@ export async function sitesRoutes(app: FastifyInstance) {
       await db.update(schema.sites).set(updates).where(eq(schema.sites.id, id)).run();
     } catch (error) {
       if (isSitesPlatformUrlConflict(error)) {
-        return sendSiteBindingConflict(reply, nextPlatform, nextUrl);
+        const conflictingSite = await loadConflictingSiteBinding(nextPlatform, nextUrl, id);
+        return sendSiteBindingConflict(reply, nextPlatform, nextUrl, conflictingSite);
       }
       throw error;
     }

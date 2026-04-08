@@ -5503,8 +5503,6 @@ textarea {
     min-width: 140px;
   }
 
-  .sites-table th:nth-child(2),
-  .sites-table td:nth-child(2),
   .sites-table th:nth-child(6),
   .sites-table td:nth-child(6) {
     display: none;

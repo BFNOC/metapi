@@ -5,6 +5,15 @@ import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
 
 type DbModule = typeof import('../../db/index.js');
+type SiteConflictResponse = {
+  error?: string;
+  conflictingSite?: {
+    id: number;
+    name: string;
+    url: string;
+    platform: string;
+  } | null;
+};
 
 describe('sites proxy settings', () => {
   let app: FastifyInstance;
@@ -81,6 +90,7 @@ describe('sites proxy settings', () => {
       },
     });
     expect(first.statusCode).toBe(200);
+    const firstPayload = first.json() as { id: number };
 
     const duplicate = await app.inject({
       method: 'POST',
@@ -93,7 +103,16 @@ describe('sites proxy settings', () => {
     });
 
     expect(duplicate.statusCode).toBe(409);
-    expect((duplicate.json() as { error?: string }).error).toContain('already exists');
+    const payload = duplicate.json() as SiteConflictResponse;
+    expect(payload.error).toContain('already exists');
+    expect(payload.error).toContain('existing-site');
+    expect(payload.error).toContain(`ID: ${firstPayload.id}`);
+    expect(payload.conflictingSite).toEqual({
+      id: firstPayload.id,
+      name: 'existing-site',
+      url: 'https://duplicate-site.example.com',
+      platform: 'new-api',
+    });
   });
 
   it('rejects invalid useSystemProxy flag', async () => {
@@ -254,7 +273,7 @@ describe('sites proxy settings', () => {
       },
     });
     expect(second.statusCode).toBe(200);
-
+    const firstPayload = first.json() as { id: number };
     const { id } = second.json() as { id: number };
     const response = await app.inject({
       method: 'PUT',
@@ -266,7 +285,16 @@ describe('sites proxy settings', () => {
     });
 
     expect(response.statusCode).toBe(409);
-    expect((response.json() as { error?: string }).error).toContain('already exists');
+    const payload = response.json() as SiteConflictResponse;
+    expect(payload.error).toContain('already exists');
+    expect(payload.error).toContain('first-site');
+    expect(payload.error).toContain(`ID: ${firstPayload.id}`);
+    expect(payload.conflictingSite).toEqual({
+      id: firstPayload.id,
+      name: 'first-site',
+      url: 'https://first-site.example.com',
+      platform: 'new-api',
+    });
   });
 
   it('rejects invalid custom headers json', async () => {

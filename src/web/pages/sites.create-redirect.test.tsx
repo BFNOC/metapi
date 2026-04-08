@@ -33,6 +33,15 @@ async function flushMicrotasks() {
   });
 }
 
+function setDesktopViewport() {
+  if (typeof window === 'undefined') return;
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    writable: true,
+    value: 1280,
+  });
+}
+
 function LocationProbe() {
   const location = useLocation();
   return <div>{`${location.pathname}${location.search}`}</div>;
@@ -96,9 +105,10 @@ async function createSiteAndClickModalChoice(createdSite: { id: number; name: st
     });
     await flushMicrotasks();
 
-    // Find the modal dialog and click the appropriate button
-    const modalDialog = root.root.find((node) => node.type === 'dialog');
-    const modalButtons = modalDialog.findAll((node) => node.type === 'button');
+    const modalButtons = root.root.findAll((node) => (
+      node.type === 'button'
+      && typeof node.props.onClick === 'function'
+    ));
 
     // Find the button based on choice
     let targetButton;
@@ -126,6 +136,7 @@ async function createSiteAndClickModalChoice(createdSite: { id: number; name: st
 describe('Sites create redirect', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setDesktopViewport();
   });
 
   afterEach(() => {
@@ -227,5 +238,147 @@ describe('Sites create redirect', () => {
     expect(rendered).toContain('稍后配置');
 
     root.unmount();
+  });
+
+  it('shows the primary site url below the site name in the desktop table', async () => {
+    apiMock.getSites.mockResolvedValue([
+      {
+        id: 1,
+        name: 'OpenAI官方',
+        url: 'https://api.openai.com',
+        platform: 'openai',
+        status: 'active',
+        useSystemProxy: false,
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter initialEntries={['/sites']}>
+              <Routes>
+                <Route path="/sites" element={<Sites />} />
+              </Routes>
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root.root.find((node) => node.props['data-testid'] === 'site-row-1');
+      expect(collectText(row)).toContain('OpenAI官方');
+      expect(collectText(row)).toContain('https://api.openai.com');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows the conflict toast, closes the editor, and highlights the conflicting site row', async () => {
+    vi.useFakeTimers();
+    apiMock.getSites.mockResolvedValue([
+      {
+        id: 7,
+        name: 'OpenAI官方',
+        url: 'https://api.openai.com',
+        platform: 'openai',
+        status: 'active',
+        useSystemProxy: false,
+      },
+    ]);
+    const conflictError = Object.assign(
+      new Error('A openai site with URL https://api.openai.com already exists. (站点: "OpenAI官方", ID: 7)'),
+      {
+        statusCode: 409,
+        responseBody: {
+          conflictingSite: {
+            id: 7,
+            name: 'OpenAI官方',
+            url: 'https://api.openai.com',
+            platform: 'openai',
+          },
+        },
+      },
+    );
+    apiMock.addSite.mockRejectedValue(conflictError);
+
+    const scrollIntoView = vi.fn();
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter initialEntries={['/sites']}>
+              <Routes>
+                <Route path="/sites" element={<Sites />} />
+              </Routes>
+            </MemoryRouter>
+          </ToastProvider>,
+          {
+            createNodeMock: (element) => {
+              if (element.type === 'tr') {
+                return { scrollIntoView };
+              }
+              return {};
+            },
+          },
+        );
+      });
+      await flushMicrotasks();
+
+      const addButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('btn btn-primary')
+        && JSON.stringify(node.props.children).includes('添加站点')
+      ));
+
+      await act(async () => {
+        addButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const nameInput = root.root.find((node) => node.type === 'input' && node.props.placeholder === '站点名称');
+      const urlInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props.placeholder === '站点 URL (例如 https://api.example.com)'
+      ));
+      const selects = root.root.findAllByType(ModernSelect);
+      const platformSelect = selects.at(-1);
+      const saveButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('保存站点')
+      ));
+
+      await act(async () => {
+        nameInput.props.onChange({ target: { value: '重复OpenAI' } });
+        urlInput.props.onChange({ target: { value: 'https://api.openai.com' } });
+        platformSelect?.props.onChange('openai');
+      });
+
+      await act(async () => {
+        await saveButton.props.onClick();
+      });
+      await flushMicrotasks();
+      await act(async () => {
+        vi.advanceTimersByTime(260);
+      });
+      await flushMicrotasks();
+
+      expect(JSON.stringify(root.toJSON())).toContain('ID: 7');
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+      const highlightedRows = root.root.findAll((node) => {
+        if (node.type !== 'tr') return false;
+        const className = typeof node.props?.className === 'string' ? node.props.className : '';
+        return className.includes('row-focus-highlight') && collectText(node).includes('OpenAI官方');
+      });
+      expect(highlightedRows).toHaveLength(1);
+    } finally {
+      root?.unmount();
+      vi.useRealTimers();
+    }
   });
 });

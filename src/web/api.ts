@@ -4,6 +4,18 @@ type RequestOptions = RequestInit & {
   timeoutMs?: number;
 };
 
+export class ApiRequestError<T = unknown> extends Error {
+  statusCode: number;
+  responseBody: T | string | null;
+
+  constructor(message: string, statusCode: number, responseBody: T | string | null = null) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.statusCode = statusCode;
+    this.responseBody = responseBody;
+  }
+}
+
 function requireAuthToken(): string {
   const token = getAuthToken(localStorage);
   if (!token) {
@@ -17,13 +29,18 @@ function requireAuthToken(): string {
   return token;
 }
 
-async function extractResponseErrorMessage(res: Response): Promise<string> {
+async function extractResponseError(res: Response): Promise<{
+  message: string;
+  body: unknown;
+}> {
   let message = `HTTP ${res.status}`;
+  let body: unknown = null;
   try {
     const text = await res.text();
     if (text) {
       try {
         const json = JSON.parse(text);
+        body = json;
         if (json?.message && typeof json.message === 'string') {
           message = json.message;
         } else if (json?.error && typeof json.error === 'string') {
@@ -34,11 +51,12 @@ async function extractResponseErrorMessage(res: Response): Promise<string> {
           message = `${message}: ${text.slice(0, 120)}`;
         }
       } catch {
+        body = text;
         message = `${message}: ${text.slice(0, 120)}`;
       }
     }
   } catch { }
-  return message;
+  return { message, body };
 }
 
 function parseContentDispositionFilename(headerValue: string | null): string | null {
@@ -131,7 +149,8 @@ async function fetchAuthenticatedResponse(url: string, options: RequestOptions =
 async function request(url: string, options: RequestOptions = {}) {
   const res = await fetchAuthenticatedResponse(url, options);
   if (!res.ok) {
-    throw new Error(await extractResponseErrorMessage(res));
+    const { message, body } = await extractResponseError(res);
+    throw new ApiRequestError(message, res.status, body);
   }
   return res.json();
 }
@@ -151,7 +170,8 @@ async function streamProbeResults(
     signal,
   });
   if (!res.ok) {
-    throw new Error(await extractResponseErrorMessage(res));
+    const { message, body } = await extractResponseError(res);
+    throw new ApiRequestError(message, res.status, body);
   }
   const reader = res.body?.getReader();
   if (!reader) return;
@@ -985,7 +1005,8 @@ export const api = {
       ...options,
     });
     if (!response.ok) {
-      throw new Error(await extractResponseErrorMessage(response));
+      const { message, body } = await extractResponseError(response);
+      throw new ApiRequestError(message, response.status, body);
     }
 
     const mimeType = (response.headers.get('content-type') || 'application/octet-stream')

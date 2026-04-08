@@ -59,8 +59,26 @@ type SiteRow = {
   createdAt?: string;
 };
 
+type ApiErrorLike = {
+  message?: string;
+  statusCode?: unknown;
+  responseBody?: unknown;
+};
+
 function hasConfiguredCustomHeaders(customHeaders?: string | null): boolean {
   return typeof customHeaders === 'string' && customHeaders.trim().length > 0;
+}
+
+function readConflictingSiteId(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null;
+  const apiError = error as ApiErrorLike;
+  if (Number(apiError.statusCode) !== 409) return null;
+  const responseBody = apiError.responseBody;
+  if (!responseBody || typeof responseBody !== 'object') return null;
+  const conflictingSite = (responseBody as { conflictingSite?: { id?: unknown } }).conflictingSite;
+  const siteId = Number(conflictingSite?.id);
+  if (!Number.isFinite(siteId) || siteId <= 0) return null;
+  return siteId;
 }
 
 function formatUsd(value?: number | null): string {
@@ -227,7 +245,7 @@ export default function Sites() {
   const lastEditorRef = useRef<SiteEditorState | null>(null);
   const loadingModelsSiteIdRef = useRef<number | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
-  const highlightTimerRef = useRef<number | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toast = useToast();
   const [disabledModels, setDisabledModels] = useState<string[]>([]);
   const [disabledModelInput, setDisabledModelInput] = useState('');
@@ -313,28 +331,33 @@ export default function Sites() {
   useEffect(() => {
     return () => {
       if (highlightTimerRef.current) {
-        window.clearTimeout(highlightTimerRef.current);
+        globalThis.clearTimeout(highlightTimerRef.current);
       }
     };
   }, []);
+
+  const focusSiteRow = (siteId: number): boolean => {
+    const row = rowRefs.current.get(siteId);
+    if (!row) return false;
+
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightSiteId(siteId);
+    if (highlightTimerRef.current) globalThis.clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = globalThis.setTimeout(() => {
+      setHighlightSiteId((current) => (current === siteId ? null : current));
+    }, 2200);
+    return true;
+  };
 
   useEffect(() => {
     const focusSiteId = readFocusSiteId(location.search);
     if (!focusSiteId || !loaded) return;
 
-    const row = rowRefs.current.get(focusSiteId);
     const cleanedSearch = clearFocusParams(location.search);
-    if (!row) {
+    if (!focusSiteRow(focusSiteId)) {
       navigate({ pathname: location.pathname, search: cleanedSearch }, { replace: true });
       return;
     }
-
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setHighlightSiteId(focusSiteId);
-    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
-    highlightTimerRef.current = window.setTimeout(() => {
-      setHighlightSiteId((current) => (current === focusSiteId ? null : current));
-    }, 2200);
 
     navigate({ pathname: location.pathname, search: cleanedSearch }, { replace: true });
   }, [loaded, location.pathname, location.search, navigate, sortedSites]);
@@ -488,6 +511,14 @@ export default function Sites() {
       await load();
     } catch (e: any) {
       toast.error(e.message || '保存失败');
+      const conflictingSiteId = readConflictingSiteId(e);
+      if (conflictingSiteId) {
+        closeEditor();
+        await load();
+        globalThis.setTimeout(() => {
+          focusSiteRow(conflictingSiteId);
+        }, 0);
+      }
     } finally {
       setSaving(false);
     }
@@ -1505,6 +1536,18 @@ export default function Sites() {
                         >
                           {site.name}
                         </a>
+                        {site.url ? (
+                          <span
+                            style={{
+                              fontSize: 12,
+                              fontFamily: 'var(--font-mono)',
+                              color: 'var(--color-text-muted)',
+                              wordBreak: 'break-all',
+                            }}
+                          >
+                            {site.url}
+                          </span>
+                        ) : null}
                         {hasConfiguredCustomHeaders(site.customHeaders) ? (
                           <span className="badge badge-info" style={{ fontSize: 11 }}>
                             自定义头

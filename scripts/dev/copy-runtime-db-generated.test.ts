@@ -29,9 +29,12 @@ describe('copyRuntimeDbGeneratedAssets', () => {
     mkdirSync(staleSharedDistDir, { recursive: true });
     writeFileSync(join(sourceDir, 'mysql.bootstrap.sql'), 'create table demo ();');
     writeFileSync(join(nestedDir, 'baseline.json'), '{"ok":true}');
+    writeFileSync(join(sharedDir, 'apiKeyBatch.ts'), 'export const tsOnly = true;\n');
     writeFileSync(join(sharedDir, 'tokenRouteContract.d.ts'), 'export declare const demo: number;\n');
     writeFileSync(join(sharedDir, 'tokenRouteContract.js'), 'export const demo = 1;\n');
     writeFileSync(join(sharedDir, 'tokenRouteContract.test.ts'), 'throw new Error("should not ship");\n');
+    writeFileSync(join(staleSharedDistDir, 'apiKeyBatch.js'), 'export const tsOnly = true;\n');
+    writeFileSync(join(staleSharedDistDir, 'apiKeyBatch.d.ts'), 'export declare const tsOnly: true;\n');
     writeFileSync(join(staleSharedDistDir, 'tokenRouteContract.test.ts'), 'stale test artifact\n');
 
     copyRuntimeDbGeneratedAssets(repoRoot);
@@ -48,6 +51,12 @@ describe('copyRuntimeDbGeneratedAssets', () => {
     expect(
       readFileSync(join(repoRoot, 'dist', 'shared', 'tokenRouteContract.d.ts'), 'utf8'),
     ).toBe('export declare const demo: number;\n');
+    expect(
+      readFileSync(join(repoRoot, 'dist', 'shared', 'apiKeyBatch.js'), 'utf8'),
+    ).toBe('export const tsOnly = true;\n');
+    expect(
+      readFileSync(join(repoRoot, 'dist', 'shared', 'apiKeyBatch.d.ts'), 'utf8'),
+    ).toBe('export declare const tsOnly: true;\n');
     expect(
       existsSync(join(repoRoot, 'dist', 'shared', 'tokenRouteContract.test.ts')),
     ).toBe(false);

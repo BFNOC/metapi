@@ -284,4 +284,77 @@ describe('RouteCard', () => {
     expect(text).toContain('⏭ 1 跳过');
     expect(text).toContain('❓ 1 未知');
   });
+
+  it('opens probe settings before starting batch route probe and passes configured values', () => {
+    const onProbeRouteChannels = vi.fn();
+    const root = create(
+      <RouteCard
+        route={buildRoute()}
+        brand={null}
+        expanded
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        updatingChannel={{}}
+        savingPriority={false}
+        onSaveSettings={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onResetPriority={vi.fn()}
+        resettingPriority={false}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+        onProbeRouteChannels={onProbeRouteChannels}
+      />,
+    );
+
+    const probeButton = root.root.find((node) => (
+      node.type === 'button'
+      && typeof node.props.onClick === 'function'
+      && collectText(node).trim() === '批量探活'
+    ));
+
+    act(() => {
+      probeButton.props.onClick();
+    });
+
+    const inputs = root.root.findAll((node) => node.type === 'input' && node.props.type === 'number');
+    expect(inputs).toHaveLength(2);
+
+    act(() => {
+      inputs[0].props.onChange({ target: { value: '30000' } });
+      inputs[1].props.onChange({ target: { value: '3' } });
+    });
+
+    const confirmButton = root.root.find((node) => (
+      node.type === 'button'
+      && typeof node.props.onClick === 'function'
+      && collectText(node).trim() === '开始探活'
+    ));
+
+    act(() => {
+      confirmButton.props.onClick();
+    });
+
+    expect(onProbeRouteChannels).toHaveBeenCalledWith(42, {
+      timeoutMs: 30000,
+      concurrency: 3,
+    });
+  });
 });

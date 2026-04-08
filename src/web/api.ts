@@ -752,8 +752,12 @@ export const api = {
   getRouteChannels: (routeId: number) => request(`/api/routes/${routeId}/channels`),
   probeChannel: (channelId: number) =>
     request(`/api/channels/${channelId}/probe`, { method: 'POST', timeoutMs: 30_000 }) as Promise<{ success: boolean; result: ChannelProbeResultPayload }>,
-  probeRouteChannelsStream: (routeId: number, onResult: (r: unknown) => void, signal?: AbortSignal) =>
-    streamProbeResults(`/api/routes/${routeId}/channels/probe`, {}, onResult, signal),
+  probeRouteChannelsStream: (
+    routeId: number,
+    data: { timeoutMs?: number; concurrency?: number } | undefined,
+    onResult: (r: unknown) => void,
+    signal?: AbortSignal,
+  ) => streamProbeResults(`/api/routes/${routeId}/channels/probe`, data || {}, onResult, signal),
   applyProbeRanking: (routeId: number, ranking: ApplyProbeRankingItem[]) =>
     request(`/api/routes/${routeId}/channels/apply-probe-ranking`, {
       method: 'POST',

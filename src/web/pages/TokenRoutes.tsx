@@ -1137,7 +1137,10 @@ export default function TokenRoutes() {
     }
   };
 
-  const handleProbeRouteChannels = async (routeId: number) => {
+  const handleProbeRouteChannels = async (
+    routeId: number,
+    options?: { timeoutMs?: number; concurrency?: number },
+  ) => {
     const route = routeSummaries.find((item) => item.id === routeId);
     if (!isRouteProbeable(route)) return;
 
@@ -1158,7 +1161,10 @@ export default function TokenRoutes() {
     setRouteProbeSessions((prev) => ({ ...prev, [routeId]: nextSession }));
 
     try {
-      await api.probeRouteChannelsStream(routeId, (raw) => {
+      await api.probeRouteChannelsStream(routeId, {
+        timeoutMs: options?.timeoutMs,
+        concurrency: options?.concurrency,
+      }, (raw) => {
         if (!raw || typeof raw !== 'object') return;
         const event = raw as Record<string, unknown>;
         if (event.type === 'start') {
@@ -1670,7 +1676,7 @@ export default function TokenRoutes() {
   const handleProbeRouteChannelsRef = useRef(handleProbeRouteChannels);
   handleProbeRouteChannelsRef.current = handleProbeRouteChannels;
   const stableProbeRouteChannels = useCallback(
-    (routeId: number) => handleProbeRouteChannelsRef.current(routeId),
+    (routeId: number, options?: { timeoutMs?: number; concurrency?: number }) => handleProbeRouteChannelsRef.current(routeId, options),
     [],
   );
   const handleApplyProbeRankingRef = useRef(handleApplyProbeRanking);

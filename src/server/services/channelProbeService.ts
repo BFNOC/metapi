@@ -34,7 +34,7 @@ export type ChannelProbeEntry = {
   skipReason: string | null;
 };
 
-const DEFAULT_CHANNEL_PROBE_TIMEOUT_MS = 15_000;
+const DEFAULT_CHANNEL_PROBE_TIMEOUT_MS = 30_000;
 
 export function resolveChannelProbeTokenValue(row: {
   channel: typeof schema.routeChannels.$inferSelect;

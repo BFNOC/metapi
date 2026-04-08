@@ -152,7 +152,7 @@ export async function siteHealthRoutes(app: FastifyInstance) {
         modelNames: [candidate.modelName],
         prompt: resolveProbePrompt(request.body?.prompt),
         concurrency: 1,
-        timeoutMs: Math.max(5_000, Math.min(60_000, Number(request.body?.timeoutMs || 15_000))),
+        timeoutMs: Math.max(5_000, Math.min(60_000, Number(request.body?.timeoutMs || 30_000))),
         delayMs: 0,
       });
 

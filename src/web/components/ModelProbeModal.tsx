@@ -43,7 +43,7 @@ type FilterPresetMode = 'allow-list' | 'deny-list' | 'none' | 'unknown';
 export default function ModelProbeModal({ open, onClose, siteId, siteName, initialModels, tokenId, accountId }: Props) {
   const [prompt, setPrompt] = useState(pickRandomProbePrompt);
   const [concurrency, setConcurrency] = useState(1);
-  const [timeoutMs, setTimeoutMs] = useState(15000);
+  const [timeoutMs, setTimeoutMs] = useState(30000);
   const [delayMs, setDelayMs] = useState(2000);
   const [rows, setRows] = useState<ModelRow[]>([]);
   const [probing, setProbing] = useState(false);
@@ -564,7 +564,7 @@ export default function ModelProbeModal({ open, onClose, siteId, siteName, initi
               </div>
               <div>
                 <label style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 3, display: 'block' }}>超时 (ms)</label>
-                <input style={inputStyle} type="number" min={1000} max={60000} step={1000} value={timeoutMs} onChange={(e) => setTimeoutMs(Number(e.target.value) || 15000)} />
+                <input style={inputStyle} type="number" min={1000} max={60000} step={1000} value={timeoutMs} onChange={(e) => setTimeoutMs(Number(e.target.value) || 30000)} />
               </div>
               <div>
                 <label style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 3, display: 'block' }}>批次间隔 (ms)</label>

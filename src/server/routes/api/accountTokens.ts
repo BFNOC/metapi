@@ -1353,7 +1353,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         modelNames,
         prompt: resolveProbePrompt(request.body?.prompt),
         concurrency: request.body?.concurrency || 3,
-        timeoutMs: request.body?.timeoutMs || 15000,
+        timeoutMs: request.body?.timeoutMs || 30000,
         delayMs: request.body?.delayMs || 0,
         signal: probeController.signal,
         dispatcher: probeDispatcher,
@@ -1389,7 +1389,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       modelNames,
       prompt: resolveProbePrompt(request.body?.prompt),
       concurrency: request.body?.concurrency || 3,
-      timeoutMs: request.body?.timeoutMs || 15000,
+      timeoutMs: request.body?.timeoutMs || 30000,
       delayMs: request.body?.delayMs || 0,
       dispatcher: probeDispatcher,
     });

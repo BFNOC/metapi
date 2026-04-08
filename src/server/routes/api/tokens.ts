@@ -1620,7 +1620,9 @@ export async function tokensRoutes(app: FastifyInstance) {
     return { success: true, result };
   });
 
-  app.post<{ Params: { routeId: string } }>('/api/routes/:routeId/channels/probe', async (request, reply) => {
+  app.post<{ Params: { routeId: string }; Body?: { timeoutMs?: number; concurrency?: number } }>(
+    '/api/routes/:routeId/channels/probe',
+    async (request, reply) => {
     const routeId = parseInt(request.params.routeId, 10);
     if (!Number.isFinite(routeId) || routeId <= 0) {
       return reply.code(400).send({ success: false, message: '无效的路由 ID' });
@@ -1641,6 +1643,8 @@ export async function tokensRoutes(app: FastifyInstance) {
 
     const probeController = new AbortController();
     request.raw.on('close', () => probeController.abort());
+    const timeoutMs = Math.max(5_000, Math.min(60_000, Number(request.body?.timeoutMs || 30_000)));
+    const concurrency = Math.max(1, Math.min(10, Math.trunc(Number(request.body?.concurrency || 5))));
 
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -1651,8 +1655,9 @@ export async function tokensRoutes(app: FastifyInstance) {
     reply.raw.write(`data: ${JSON.stringify({ type: 'start', totalCount: entries.length })}\n\n`);
 
     await probeRouteChannelEntries(entries, {
-      concurrency: 5,
+      concurrency,
       signal: probeController.signal,
+      timeoutMs,
       onResult: async ({ channelId, result }) => {
         if (result.status === 'supported') {
           await tokenRouter.recordProbeSuccess(channelId, result.modelName || null);
@@ -1674,7 +1679,8 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
     reply.raw.end();
     return reply;
-  });
+    },
+  );
 
   app.post<{ Params: { routeId: string }; Body: { ranking?: ProbeRankingPayloadItem[] } }>(
     '/api/routes/:routeId/channels/apply-probe-ranking',

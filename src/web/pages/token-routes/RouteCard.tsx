@@ -89,7 +89,7 @@ type RouteCardProps = {
   onToggleSourceGroup: (groupKey: string) => void;
   onResetSiteHealth?: (siteId: number) => void;
   onResetChannelCooldown?: (channelId: number) => void;
-  onProbeRouteChannels?: (routeId: number) => void;
+  onProbeRouteChannels?: (routeId: number, options?: { timeoutMs?: number; concurrency?: number }) => void;
   routeProbeSession?: RouteProbeSession;
   routeProbeSnapshot?: RouteProbeSnapshot;
   onApplyProbeRanking?: (routeId: number) => void;
@@ -187,6 +187,9 @@ function RouteCardInner({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const [showRankingConfirm, setShowRankingConfirm] = useState(false);
+  const [showProbeSettings, setShowProbeSettings] = useState(false);
+  const [routeProbeTimeoutMs, setRouteProbeTimeoutMs] = useState(30_000);
+  const [routeProbeConcurrency, setRouteProbeConcurrency] = useState(5);
 
   const decisionMap = new Map<number, RouteDecisionCandidate>(
     (routeDecision?.candidates || []).map((c) => [c.channelId, c]),
@@ -567,8 +570,9 @@ function RouteCardInner({
             )}
             {canProbeRoute && onProbeRouteChannels && (
               <button
-                onClick={() => onProbeRouteChannels(route.id)}
+                onClick={() => setShowProbeSettings(true)}
                 className="btn btn-ghost"
+                disabled={routeProbeInFlight}
                 style={{ fontSize: 12, padding: '6px 10px', color: 'var(--color-info)', border: '1px solid var(--color-border)', whiteSpace: compact ? 'normal' : 'nowrap', flex: compact ? '1 1 0' : undefined }}
               >
                 {routeProbeInFlight ? (
@@ -822,6 +826,61 @@ function RouteCardInner({
           {readOnlyRoute ? tr('暂无通道，先补齐连接配置后再重建路由。') : tr('暂无通道')}
         </div>
       )}
+
+      <CenteredModal
+        open={showProbeSettings}
+        onClose={() => setShowProbeSettings(false)}
+        title="批量探活设置"
+        maxWidth={520}
+        closeOnBackdrop
+        footer={(
+          <>
+            <button className="btn btn-ghost" onClick={() => setShowProbeSettings(false)}>取消</button>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setShowProbeSettings(false);
+                onProbeRouteChannels?.(route.id, {
+                  timeoutMs: Math.max(5_000, Math.min(60_000, Number(routeProbeTimeoutMs) || 30_000)),
+                  concurrency: Math.max(1, Math.min(10, Math.trunc(Number(routeProbeConcurrency) || 5))),
+                });
+              }}
+            >
+              开始探活
+            </button>
+          </>
+        )}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, fontSize: 13 }}>
+          <div style={{ color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+            路由批量探活会对当前路由下的所有启用通道逐个探测。
+          </div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span>超时（毫秒）</span>
+            <input
+              type="number"
+              min={5000}
+              max={60000}
+              step={1000}
+              value={routeProbeTimeoutMs}
+              onChange={(event) => setRouteProbeTimeoutMs(Number(event.target.value) || 30_000)}
+              style={{ width: '100%' }}
+            />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span>并发数</span>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              step={1}
+              value={routeProbeConcurrency}
+              onChange={(event) => setRouteProbeConcurrency(Number(event.target.value) || 5)}
+              style={{ width: '100%' }}
+            />
+          </label>
+        </div>
+      </CenteredModal>
 
       <CenteredModal
         open={showRankingConfirm}

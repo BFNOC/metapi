@@ -241,7 +241,7 @@ export async function probeModels(input: ProbeInput, callbacks?: ProbeCallbacks)
     modelNames,
     prompt = pickRandomProbePrompt(),
     concurrency = 3,
-    timeoutMs = 15000,
+    timeoutMs = 30000,
     delayMs = 0,
     signal,
   } = input;

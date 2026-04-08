@@ -218,10 +218,15 @@ describe('channel probe routes', () => {
       headers: {
         accept: 'text/event-stream',
       },
+      payload: {
+        timeoutMs: 30_000,
+        concurrency: 2,
+      },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(probeModelsMock.mock.calls[0]?.[0]?.timeoutMs).toBe(30_000);
     const lines = response.payload
       .split('\n')
       .map((line) => line.trim())

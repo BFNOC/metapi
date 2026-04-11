@@ -612,6 +612,7 @@ export type SiteHealthManualVerifyResponse = {
 };
 
 export type RuntimeSettingsPayload = {
+  proxyToken?: string;
   codexUpstreamWebsocketEnabled?: boolean;
   responsesCompactFallbackToResponsesEnabled?: boolean;
   proxySessionChannelConcurrencyLimit?: number;

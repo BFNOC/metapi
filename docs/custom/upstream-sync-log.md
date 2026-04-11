@@ -1030,3 +1030,206 @@
 - `569a15e` 的 `tokenRouter` 子线已按最小范围 hand-port 完成
 - 当前 fork 在未来引入 `displayName` / `explicit_group` 路由时，将采用 upstream 的冲突优先级
 - 现有依赖 `模型映射 + allow-list 过滤 + exact route` 的实际线上路由，当前不会因为这次修改立刻改流
+
+---
+
+## 2026-04-11 审阅（post-v1.3.0，`569a15e` → `a2c2ae6`）
+
+**上游已审阅到**：`a2c2ae6`（`upstream/main` HEAD，2026-04-10）
+
+**相对上次审阅基线 `569a15e`，上游主线新增 `9` 个 commit（不含 merge）**
+
+### 审阅方法
+
+本轮采用 6 个并行 Codex 子智能体分别对每个 PR 做独立深度分析：
+- 读取本地对应文件、对比 `git hash-object`、确认分叉程度
+- 抓取上游 PR patch 核对真实改动范围
+- 按 `docs/custom/upstream-sync-rules.md` 规则做分诊判断
+
+### 建议优先合入
+
+| Commit | PR | 说明 | 建议方式 | 优先级 | 理由 |
+|--------|-----|------|---------|--------|------|
+| `c6a28c7` | #464 | improve LobeHub brand detection coverage | cherry-pick 整包 | **高** | 详见下方 |
+| `9c766de` + `a2c2ae6` | #473 + #474 | payload rules settings UI + upstream types | 手工移植 | **中** | 详见下方 |
+
+### 建议跳过
+
+| Commit | PR | 说明 | 跳过原因 |
+|--------|-----|------|----------|
+| `2f774e2` | #471 | Keep MySQL usage aggregation from crashing startup | 前置文件 `usageAggregationService.ts` 不存在（来自 #457），无法单独合入；未来移植 #457 或迁移 MySQL 时自动包含 |
+| `baead85` | #457 | Make admin reads snapshot-first for faster ops pages | 82 文件 +21732/-4974 行，引入全新 snapshot-first 架构；Dashboard/Accounts/ProxyLogs 三页面已高度分叉（合计 4284 行定制），手工移植估计 3-5 人天，单租户场景收益不足 |
+| `03bebae` | #450 | restore oauth route channels on delete rollback | 属于 OAuth route unit 线（#440）的 regression fix，该线此前已明确跳过；本地无 OAuth route unit owner |
+| `8cf78a5` | #467 | smooth route detail panel motion | 本地 TokenRoutes 桌面展开已走不同架构（inline RouteCard vs 上游 detail-panel shell），上游改动的类名/测试文件本地全不存在 |
+| `5e27684` | #451 | dependabot minor-and-patch bump (6 deps) | 无安全紧急修复；`@visactor/react-vchart` 和 `electron` 与上游基线已分叉；低风险项可按需手动升级 |
+| `7d883a6` | — | update readme | 纯文档 |
+
+---
+
+<details>
+<summary>#464 深度分析（2026-04-11，Codex 多智能体交叉验证）</summary>
+
+**PR 概况**：7 文件，+1163/-585 行
+
+**本地分叉状态**：
+- `brandMatcher.ts`、`brandRegistry.ts`、`BrandIcon.test.ts`、`Models.marketplace-text.test.tsx` 经 `git hash-object` 验证与上游 PR 基线 **byte-identical**
+- 本地无 `src/server/shared/modelBrand.ts`（PR 新增文件）
+
+**改动性质**：
+- **结构重构**（commit 1）：将前后端重复的品牌匹配逻辑抽取到 `src/server/shared/modelBrand.ts` 单一来源
+- **语义增强**（commit 2）：新增 `getMatchingBrandNames()`，支持 provider+vendor 多命中（如 `deepinfra/meta-llama/...` 同时匹配 `Meta` 和 `DeepInfra`）
+- **兼容性修复**（commit 3）：blocked brand 配置对大小写和空格漂移更宽容，防止老配置静默失效
+- **数据扩展**：新增 ~30 个品牌（OpenRouter, Groq, DeepInfra, Together AI, Fireworks, Replicate, Cerebras, AI21 Labs, 百川智能, Amazon Nova, 百炼, Azure AI, AWS Bedrock, Vertex AI, Arcee, Xiaomi MiMo, LongCat 等）
+
+**本地使用面**：
+- 模型广场品牌筛选（`Models.tsx`）
+- 站点模型分组（`Sites.tsx`）
+- TokenRoutes / ManualRoute / RouteSelector 品牌筛选
+- **全局品牌屏蔽**（`Settings.tsx` UI → `modelService.ts` 路由重建时排除）
+- 品牌图标渲染（`BrandIcon.tsx` → LobeHub CDN）
+
+**冲突风险**：极低（本地文件与基线完全一致）
+
+**建议**：cherry-pick 整包，不要只拿第一段数据。原因：
+1. 只拿 commit 1 会把 server blocking 绑到单一 display brand，upstream 在 commit 2 立刻修回
+2. 三个 commit 是一个完整语义闭环
+3. 本地已真实使用品牌系统的全部能力
+
+**唯一保留意见**：PR 将 shared source 放在 `src/server/shared/modelBrand.ts`，目录位置可后续 repo-local 整理
+
+</details>
+
+<details>
+<summary>#473 + #474 深度分析（2026-04-11，Codex 分析）</summary>
+
+**PR #473 概况**：8 文件，+1673/-0 行
+**PR #474 概况**：3 文件，+46/-11 行（#473 的 follow-up）
+
+**本地现状**：
+- **后端引擎已有**：`src/server/services/payloadRules.ts`（312 行），包含完整的类型定义、规则匹配、path set/delete、`applyPayloadRules()`
+- **配置加载已有**：`config.ts` 从 `PAYLOAD_RULES_JSON` / `PAYLOAD_RULES` 环境变量加载；`index.ts` 启动时从 `settings` 表的 `payload_rules` key 加载
+- **代理调用已有**：`upstreamEndpoint.ts` 在 Gemini/Claude/OpenAI/Chat 请求路径全部调用 `applyConfiguredPayloadRules()`
+- **API 管理端点**：❌ 不存在（`RuntimeSettingsBody` 未包含 `payloadRules`）
+- **前端 UI**：❌ 完全不存在
+
+**缺口定性**：后端引擎完整，但缺少运行时 API 端点和前端 UI。当前唯一配置方式是环境变量或直接操作数据库。属于 sync rules 所说的"当前 fork 已有能力上的直接缺口"。
+
+**上游 #473 改动拆分**：
+- `payloadRules.ts` (+171 行)：新增 `parsePayloadRulesConfigInput()` 验证函数（纯追加，冲突面极小）
+- `settings.ts` (+26 行)：GET 返回 payloadRules、PUT 接受并持久化
+- `Settings.tsx` (+528 行)：可视化规则编辑器 + 高级 JSON 编辑器
+- `payloadRulesVisual.ts` (+273 行)：规则可视化模型与序列化
+- `api.ts` (+1 行)：类型扩展
+- 3 个测试文件 (+674 行)
+
+**上游 #474 改动**：
+- 将 protocol options 提取为独立文件，扩展支持 `sub2api`、`new-api`、`cliproxyapi` 等上游类型
+- 改动量极小，应随 #473 一起做
+
+**冲突风险**：
+- `payloadRules.ts`：低（纯追加）
+- `settings.ts`：中（本地 1671 行 vs 上游 2064 行，但逻辑模式与现有 runtime settings 字段一致）
+- `Settings.tsx`：中偏高（本地 1918 行 vs 上游 2655 行），但 payload rules 是独立卡片，可整块移植
+
+**建议**：手工移植，分两个 phase：
+- **P0**：后端 API（`payloadRules.ts` 追加验证函数 + `settings.ts` 接入 GET/PUT）
+- **P1**：前端 UI（`Settings.tsx` 新增 Payload Rules 卡片 + `payloadRulesVisual.ts`）
+
+移植 #473 UI 时直接采用 #474 的最终版本（选项列表用完整版），避免先合再改。
+
+**运营价值**：高。Codex 场景频繁需要调整 `reasoning.effort` 默认值、过滤不支持字段，当前只能改环境变量重启。
+
+</details>
+
+<details>
+<summary>#471 跳过说明（2026-04-11）</summary>
+
+**PR 概况**：2 文件，+485/-9 行
+
+**问题**：MySQL 部署时 usage aggregation projector 使用 SQLite 专属 `onConflictDoNothing`/`onConflictDoUpdate`，MySQL 不支持导致启动崩溃。
+
+**修复方式**：在 5 个 upsert 函数中增加 `runtimeDbDialect === 'mysql'` 分支，MySQL 用 `onDuplicateKeyUpdate`，SQLite 保持原有路径。
+
+**跳过原因**：
+- 目标文件 `usageAggregationService.ts` 在本地 **不存在**（来自 #457 的 snapshot-first 架构，本轮已决定跳过）
+- 本地已导出 `runtimeDbDialect`（`src/server/db/index.ts:44`），未来移植时基础设施已就绪
+- 当前使用 SQLite，即使文件存在也不会触发 MySQL 分支
+
+**重新评估条件**：
+1. PR #457（admin snapshot infrastructure）被移植到 fork，且
+2. Fork 计划支持 MySQL 作为运行时数据库
+
+届时从 post-#471 的 upstream commit 移植 #457，MySQL fix 将自动包含。
+
+</details>
+
+<details>
+<summary>#457 跳过说明（2026-04-11）</summary>
+
+**PR 概况**：82 文件，+21732/-4974 行
+
+**功能**：
+- 为 dashboard、accounts、site stats 添加 service-owned snapshot/cache helpers
+- proxy logs 拆分为 query-v2 和 meta-v2 surfaces
+- dashboard、accounts、proxy logs 页面切换到 progressive loading
+
+**跳过原因**：
+1. **新体系引入**：引入全新的 snapshot-first 数据加载体系，属于 sync rules 明确列出的"新体系引入 + 大规模 UI 重构"
+2. **高度分叉**：三个目标页面合计 4284 行已独立演进的代码
+   - `Dashboard.tsx`（788 行）：自定义 SiteSpeedState、SiteAvailabilityBucket 等
+   - `Accounts.tsx`（2274 行）：批量 API Key 创建、Session/APIKey/Tokens 分段等大量定制
+   - `ProxyLogs.tsx`（1222 行）：server-driven 测试、useDeferredValue 优化等
+3. **收益有限**：单租户/小团队部署，数据量有限，现有直接查询延迟可接受
+4. **手工移植成本**：估计 3-5 人天
+5. **替代方案**：如果未来出现性能瓶颈，可基于现有 `progressiveRender.ts` 和 `modelsMarketplaceCache` 模式按需优化
+
+</details>
+
+<details>
+<summary>#450 / #467 跳过说明（2026-04-11）</summary>
+
+**PR #450**（+121/-0，2 文件）：
+- 修复 OAuth route unit 删除时 route_channels 丢失的回滚问题
+- 跳过原因：属于 #440 OAuth route pool 线的 regression fix；本地全仓检索 `oauthRouteUnit`/`OAuthRouteUnit`/`oauth_route_unit`/`route-units` 为 0 命中；`src/server/services/oauth/` 下无 `routeUnitService.ts`；schema 中 `route_channels` 无 `oauth_route_unit_id` 列
+
+**PR #467**（+193/-28，3 文件）：
+- 优化桌面端路由详情面板展开/收起动画
+- 跳过原因：本地 TokenRoutes 桌面展开用 fork 自己的架构（`expandedRouteIds` + inline `RouteCard expanded` + `.route-card-expanded` grid 样式）；上游的 `DesktopDetailPanelPresence`、`route-detail-panel-presence`、`route-card-detail-panel` 在本地全部不存在；测试文件 `tokenRoutes.desktop-detail-panel.test.tsx` 本地不存在
+
+</details>
+
+<details>
+<summary>#451 跳过说明（2026-04-11，Codex 逐包分析）</summary>
+
+**PR 概况**：3 文件，+264/-275 行，6 个依赖升级
+
+**逐包分析**：
+
+| 依赖 | PR 升级 | 本地版本 | 安全修复 | Breaking 风险 | 建议 |
+|------|---------|---------|---------|--------------|------|
+| `@visactor/react-vchart` | `^2.0.20 → ^2.0.21` | `^2.0.19` | 无 | 低到中（本地已落后一档） | 单独评估 |
+| `dotenv` | `^17.3.1 → ^17.4.1` | `^17.3.1` | 无 | 低 | 可手动升级 |
+| `minimatch` | `^10.2.4 → ^10.2.5` | `^10.2.4` | 无（Windows drive-letter 修复） | 很低 | 可手动升级 |
+| `electron` | `^41.1.0 → ^41.1.1` | `^41.0.3` | 无 | 中（跨 41.1.0 的 Chromium/V8/Node 更新） | 单独评估 |
+| `jsdom` | `^29.0.1 → ^29.0.2` | `^29.0.1` | 无（getComputedStyle 改进） | 低 | 可手动升级 |
+| `mermaid` | `^11.13.0 → ^11.14.0` | `^11.13.0` | 无 | 低到中（minor，新功能 + SVG ID 规则变化） | 低优先级可选 |
+
+**跳过原因**：
+1. 无安全紧急修复驱动
+2. `@visactor/react-vchart` 和 `electron` 与上游基线已分叉，不能整包 cherry-pick
+3. 低风险项和高表面积项被绑在一个 dependabot PR 里，不符合 selective follow 最小落地策略
+
+**可选手动升级**（低风险，按需执行）：
+```bash
+npm install dotenv@^17.4.1 minimatch@^10.2.5 jsdom@^29.0.2
+```
+
+</details>
+
+---
+
+### 本轮执行计划
+
+1. **#464**（高优先级）：`git cherry-pick c6a28c7`，验证测试通过
+2. **#473 + #474**（中优先级）：写 plan → P0 后端 API → P1 前端 UI
+3. **#451 低风险项**（低优先级）：按需手动升级 `dotenv`/`minimatch`/`jsdom`

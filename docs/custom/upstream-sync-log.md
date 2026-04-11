@@ -1255,5 +1255,100 @@ npm install dotenv@^17.4.1 minimatch@^10.2.5 jsdom@^29.0.2
 ### 本轮剩余执行计划
 
 1. ~~**#464**（高优先级）：`git cherry-pick c6a28c7`~~ ✅ 已完成
-2. **#473 + #474**（中优先级）：写 plan → P0 后端 API → P1 前端 UI
+2. ~~**#473 + #474**（中优先级）：写 plan → P0 后端 API → P1 前端 UI~~ ✅ 已完成
 3. **#451 低风险项**（低优先级）：按需手动升级 `dotenv`/`minimatch`/`jsdom`
+
+---
+
+## 2026-04-11 实施（#473 + #474）
+
+**处理结果**：`#473`（payload rules settings UI）+ `#474`（expose more payload-rule upstream types）已按 repo-local 方案完成手工移植
+
+### 本次落地的上游 Commit
+
+| Commit | PR | 说明 | 合入方式 | 备注 |
+|--------|-----|------|---------|------|
+| `9c766de` | #473 | add payload rules settings UI | 手工移植 | 按本 fork owner 拆 P0 后端 + P1 前端两阶段落地，由 Codex gpt-5.4 xhigh 执行 |
+| `a2c2ae6` | #474 | expose more payload-rule upstream types | 手工移植 | 直接采用 #474 最终版（含 `one-api`），不先合 #473 版再改 |
+
+### 本地实现说明
+
+**P0 后端 API**：
+- `src/server/services/payloadRules.ts`
+  - 纯追加 `parsePayloadRulesConfigInput()`（+194 行）
+  - 校验输入类型、解析各规则分类、返回 `{ success, normalized, message }`
+  - 对 `models` / `params` 格式做显式检查，无效输入返回中文错误信息
+- `src/server/routes/api/settings.ts`
+  - GET handler 返回 `payloadRules: config.payloadRules`（+1 行）
+  - PUT handler 新增 `payloadRules` 校验+持久化（+22 行）
+  - 采用 deferred-write 模式：先将校验后的规则存入 `pendingPayloadRules`，等后续字段校验全部通过后，才执行 `config.payloadRules = pendingPayloadRules` + `upsertSetting('payload_rules', ...)`
+  - 如果后续字段校验失败（如 `modelAvailabilityProbeEnabled` 传入无效值），payload rules 不会被误写入
+- `src/web/api.ts`
+  - `RuntimeSettingsPayload` 新增 `payloadRules?: unknown` 类型声明
+
+**P1 前端 UI**：
+- `src/web/pages/settings/payloadRulesVisual.ts`（273 行）
+  - 可视化规则模型：`VisualPayloadRule` 类型、`VisualPayloadRuleValueMode`
+  - 序列化/反序列化：`serializeVisualPayloadRules()` / `deserializePayloadRulesConfig()`
+  - 预设：`createCodexDefaultHighReasoningVisualPreset()`（Codex 高推理预设）
+  - 辅助：`createVisualPayloadRule()`、`updateVisualPayloadRule()`
+- `src/web/pages/settings/payloadRuleProtocolOptions.ts`（17 行）
+  - 直接采用 #474 最终版协议选项列表
+  - 包含全部 15 个平台：全部平台 / Codex / Sub2API / New API / One API / CLIProxyAPI / OpenAI / Claude / Gemini / Gemini CLI / Antigravity / AnyRouter / Done Hub / One Hub / Veloera
+- `src/web/pages/Settings.tsx`（+557 行）
+  - Payload 规则卡片，包含：
+    - 可视化规则编辑器（动作/模型/协议/参数值）
+    - Codex 高推理预设一键添加按钮
+    - 高级 JSON 编辑器（default / defaultRaw / override / overrideRaw / filter 五个 textarea）
+    - 可视化/高级 JSON 之间的双向同步
+    - 高级 JSON 脏状态时切换回可视化编辑的确认对话框
+    - 新增规则 / 删除规则 / 即时同步到高级 JSON
+
+**测试补齐**：
+- `src/server/services/payloadRules.test.ts`（90 行）
+  - 覆盖 `parsePayloadRulesConfigInput()` 正常/异常/边界
+- `src/server/routes/api/settings.events.test.ts`（+139 行）
+  - 覆盖 payload rules GET 返回
+  - 覆盖 PUT 保存与持久化
+  - 覆盖 deferred-write：后续字段校验失败时不误写 payload rules
+- `src/web/pages/settings.payload-rules.test.tsx`（442 行）
+  - 覆盖已保存规则加载到编辑器
+  - 覆盖可视化规则编辑与保存
+  - 覆盖高级 JSON 编辑与保存
+  - 覆盖 Codex 预设一键添加
+  - 覆盖高级 JSON 脏状态确认
+  - 覆盖可视化/高级 JSON 双向同步
+- `src/web/pages/settings.payload-rule-platform-options.test.ts`（26 行）
+  - 覆盖协议选项列表包含所有 15 个平台
+
+### repo-local 差异点
+
+- 保留当前 fork 的 settings.ts owner 和 validate-then-persist 流程：
+  - 不照搬上游 `settings.ts` 的行号和结构
+  - deferred-write 插入位置跟随本地既有的持久化区域
+- UI 标签用词直接采用上游中文："协议"改为"上游类型"（#474）
+- 未引入上游的 `parsePayloadRulesConfig` 命名（上游拆了新函数名），继续复用本地已有的 `normalizePayloadRulesConfig` + 新增 `parsePayloadRulesConfigInput`
+- 不跟上游同步做的 `settings.ts` 行内重构或其他无关字段调整
+
+### 验证结果
+
+- ✅ `npx vitest run src/server/services/payloadRules.test.ts` — 3 passed
+- ✅ `npx vitest run src/server/routes/api/settings.events.test.ts` — 32 passed
+- ✅ `npx vitest run src/web/pages/settings.payload-rules.test.tsx` — 6 passed
+- ✅ `npx vitest run src/web/pages/settings.payload-rule-platform-options.test.ts` — 1 passed
+- ✅ 合计 targeted tests — **42 passed**
+- ✅ `npm run repo:drift-check` — Violations: 0（仅既有 tracked debt）
+- ✅ `npm run typecheck` — web + web:test + server + desktop 全部通过
+
+### 结论
+
+- `#473` + `#474` 已完成 repo-local 手工移植
+- 当前 fork 的 Payload Rules 已具备：
+  - 后端验证函数 `parsePayloadRulesConfigInput()`
+  - Settings API `GET/PUT` 运行时读写（含 deferred-write 防误写）
+  - 前端可视化规则编辑器 + 高级 JSON 编辑器
+  - Codex 高推理预设一键添加
+  - 可视化/高级 JSON 双向同步与脏状态确认
+  - 完整的 15 个上游平台协议选项
+  - **42 条 targeted tests** 全面覆盖
+- 运营可直接在 Settings 页面管理 Payload Rules，不需要改环境变量或重启服务

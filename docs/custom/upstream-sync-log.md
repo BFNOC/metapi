@@ -1050,7 +1050,7 @@
 
 | Commit | PR | 说明 | 建议方式 | 优先级 | 理由 |
 |--------|-----|------|---------|--------|------|
-| `c6a28c7` | #464 | improve LobeHub brand detection coverage | cherry-pick 整包 | **高** | 详见下方 |
+| `c6a28c7` | #464 | improve LobeHub brand detection coverage | cherry-pick 整包 | ✅ **已完成** | 详见下方实施章节 |
 | `9c766de` + `a2c2ae6` | #473 + #474 | payload rules settings UI + upstream types | 手工移植 | **中** | 详见下方 |
 
 ### 建议跳过
@@ -1228,8 +1228,32 @@ npm install dotenv@^17.4.1 minimatch@^10.2.5 jsdom@^29.0.2
 
 ---
 
-### 本轮执行计划
+## 2026-04-11 实施（#464）
 
-1. **#464**（高优先级）：`git cherry-pick c6a28c7`，验证测试通过
+**处理结果**：`#464` 已 cherry-pick 到本地；本地提交 `4b28357`
+
+### 本次落地的上游 Commit
+
+| Commit | PR | 说明 | 合入方式 | 备注 |
+|--------|-----|------|---------|------|
+| `c6a28c7` | #464 | improve LobeHub brand detection coverage | `git cherry-pick` | 零冲突，7 文件 +1163/-585 |
+
+### 验证结果
+
+- ✅ `npx vitest run` 品牌相关 4 suites — 24 passed
+- ✅ `npm run repo:drift-check` — Violations: 0
+- ✅ `npm run typecheck` — 全部通过（web + web:test + server + desktop）
+
+### 附带修复
+
+| 本地提交 | 说明 |
+|----------|------|
+| `b735042` | fix: add missing `proxyToken` to `RuntimeSettingsPayload` type — 后端 `settings.ts` 已完整支持该字段，前端类型定义遗漏导致 TS2353，补上后 typecheck 全部通过 |
+
+---
+
+### 本轮剩余执行计划
+
+1. ~~**#464**（高优先级）：`git cherry-pick c6a28c7`~~ ✅ 已完成
 2. **#473 + #474**（中优先级）：写 plan → P0 后端 API → P1 前端 UI
 3. **#451 低风险项**（低优先级）：按需手动升级 `dotenv`/`minimatch`/`jsdom`

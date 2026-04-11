@@ -618,6 +618,7 @@ export type RuntimeSettingsPayload = {
   proxySessionChannelConcurrencyLimit?: number;
   proxySessionChannelQueueWaitMs?: number;
   systemProxyUrl?: string;
+  payloadRules?: unknown;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
   adminIpAllowlist?: string[] | string;

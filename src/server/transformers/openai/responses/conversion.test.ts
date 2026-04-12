@@ -1267,7 +1267,7 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     );
 
     expect(openAiBody.messages).toHaveLength(1);
-    expect(openAiBody.messages[0]).toMatchObject({
+    expect((openAiBody.messages as any[])[0]).toMatchObject({
       role: 'assistant',
       content: '',
       tool_calls: [

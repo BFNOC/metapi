@@ -4,6 +4,7 @@ import mysql from 'mysql2/promise';
 import pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import { generateBootstrapSql } from './schemaArtifactGenerator.js';
+import type { SchemaContract } from './schemaContract.js';
 import { __schemaIntrospectionTestUtils, introspectLiveSchema } from './schemaIntrospection.js';
 import { bootstrapRuntimeDatabaseSchema } from './runtimeSchemaBootstrap.js';
 
@@ -76,7 +77,7 @@ describe('runtime schema bootstrap live upgrade path', () => {
   mysqlRuntime('upgrades mysql runtime schemas from an older live contract', async () => {
     const connectionString = process.env.DB_PARITY_MYSQL_URL!;
     const baselineStatements = __schemaIntrospectionTestUtils.splitSqlStatements(
-      generateBootstrapSql('mysql', baselineContract),
+      generateBootstrapSql('mysql', baselineContract as SchemaContract),
     );
 
     await resetMySqlSchema(connectionString);
@@ -94,7 +95,7 @@ describe('runtime schema bootstrap live upgrade path', () => {
   postgresRuntime('upgrades postgres runtime schemas from an older live contract', async () => {
     const connectionString = process.env.DB_PARITY_POSTGRES_URL!;
     const baselineStatements = __schemaIntrospectionTestUtils.splitSqlStatements(
-      generateBootstrapSql('postgres', baselineContract),
+      generateBootstrapSql('postgres', baselineContract as SchemaContract),
     );
 
     await resetPostgresSchema(connectionString);

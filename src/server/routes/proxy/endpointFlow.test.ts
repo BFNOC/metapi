@@ -87,7 +87,7 @@ describe('executeEndpointFlow', () => {
 
     expect(result.ok).toBe(true);
     expect(dispatchRequest).toHaveBeenCalledTimes(1);
-    expect(dispatchRequest.mock.calls[0]?.[1]).toBe('https://example.com/v1/responses');
+    expect((dispatchRequest.mock.calls[0] as any[])?.[1]).toBe('https://example.com/v1/responses');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -153,11 +153,11 @@ describe('executeEndpointFlow', () => {
     const result = await executeEndpointFlow({
       siteUrl: 'https://example.com',
       endpointCandidates: ['responses', 'chat'],
-      buildRequest: (endpoint) => endpoint === 'responses'
+      buildRequest: (endpoint: any) => endpoint === 'responses'
         ? requestFor('/v1/responses')
         : { ...requestFor('/v1/chat/completions'), endpoint },
       shouldDowngrade: () => true,
-      onDowngrade: (ctx) => {
+      onDowngrade: (ctx: any) => {
         downgradedPaths.push(ctx.request.path);
       },
     });
@@ -205,7 +205,7 @@ describe('executeEndpointFlow', () => {
     const result = await executeEndpointFlow({
       siteUrl: 'https://example.com',
       endpointCandidates: ['responses', 'chat'],
-      buildRequest: (endpoint) => endpoint === 'responses'
+      buildRequest: (endpoint: any) => endpoint === 'responses'
         ? requestFor('/v1/responses')
         : { ...requestFor('/v1/chat/completions'), endpoint },
       shouldDowngrade: () => true,
@@ -316,7 +316,7 @@ describe('executeEndpointFlow', () => {
     const result = await executeEndpointFlow({
       siteUrl: 'https://example.com',
       endpointCandidates: ['responses', 'chat'],
-      buildRequest: (endpoint) => endpoint === 'responses'
+      buildRequest: (endpoint: any) => endpoint === 'responses'
         ? requestFor('/v1/responses')
         : { ...requestFor('/v1/chat/completions'), endpoint },
       shouldDowngrade: () => true,
@@ -412,7 +412,7 @@ describe('executeEndpointFlow', () => {
     const result = await executeEndpointFlow({
       siteUrl: 'https://example.com',
       endpointCandidates: ['responses', 'chat'],
-      buildRequest: (endpoint) => endpoint === 'responses'
+      buildRequest: (endpoint: any) => endpoint === 'responses'
         ? requestFor('/v1/responses')
         : { ...requestFor('/v1/chat/completions'), endpoint },
       shouldDowngrade: () => true,

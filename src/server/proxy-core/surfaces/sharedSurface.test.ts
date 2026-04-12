@@ -285,7 +285,7 @@ describe('selectSurfaceChannelForAttempt', () => {
         traceHint: 'trace-1',
       },
       downstreamApiKeyId: 44,
-    });
+    } as any);
 
     expect(composeProxyLogMessageMock).toHaveBeenCalledWith({
       clientKind: 'codex',
@@ -344,7 +344,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       site,
       accountExtraConfig: '{"proxyUrl":"http://proxy.example.com"}',
     });
-    const result = await dispatchRequest(request, 'https://target.example.com/v1/responses');
+    const result = await dispatchRequest(request as any, 'https://target.example.com/v1/responses');
 
     expect(result).toBe('ok');
     expect(resolveChannelProxyUrlMock).toHaveBeenCalledWith(
@@ -752,7 +752,7 @@ describe('selectSurfaceChannelForAttempt', () => {
         body: { model: 'gpt-5.2' },
       }),
       dispatchRequest,
-    });
+    } as any);
 
     expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(33);
     expect(selected.tokenValue).toBe('new-access-token');
@@ -819,7 +819,7 @@ describe('selectSurfaceChannelForAttempt', () => {
         body: { model: 'gpt-5.2' },
       }),
       dispatchRequest: vi.fn().mockResolvedValue(refreshedResponse),
-    });
+    } as any);
 
     expect(result).toBeNull();
     expect(ctx.request.headers).toEqual({ authorization: 'Bearer new-access-token' });
@@ -867,7 +867,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       upstreamPath: '/v1/responses',
       logSuccess,
       recordDownstreamCost,
-    });
+    } as any);
 
     expect(resolveProxyUsageWithSelfLogFallbackMock).toHaveBeenCalledWith({
       site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
@@ -984,7 +984,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       retryCount: 0,
       upstreamPath: '/v1/chat/completions',
       logSuccess,
-    });
+    } as any);
 
     expect(resolveProxyUsageWithSelfLogFallbackMock).toHaveBeenCalledWith(expect.objectContaining({
       upstreamUsagePresent: false,
@@ -1028,7 +1028,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       bestEffortMetrics: {
         errorLabel: '[proxy/chat] failed to record success metrics',
       },
-    });
+    } as any);
 
     expect(consoleErrorMock).toHaveBeenCalledWith(
       '[proxy/chat] failed to record success metrics',

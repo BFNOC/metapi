@@ -273,8 +273,8 @@ describe('backupService', () => {
     expect(restoredDisabledModels).toEqual([
       expect.objectContaining({ siteId: site.id, modelName: 'gpt-hidden' }),
     ]);
-    expect(restoredModelAvailability.some((row) => row.modelName === 'gpt-manual' && row.isManual)).toBe(true);
-    expect(restoredModelAvailability.some((row) => row.modelName === 'gpt-discovered' && !row.isManual)).toBe(true);
+    expect(restoredModelAvailability.some((row: any) => row.modelName === 'gpt-manual' && row.isManual)).toBe(true);
+    expect(restoredModelAvailability.some((row: any) => row.modelName === 'gpt-discovered' && !row.isManual)).toBe(true);
     expect(restoredDownstreamKeys).toEqual([
       expect.objectContaining({
         name: 'Shared Downstream',
@@ -333,7 +333,7 @@ describe('backupService', () => {
     ]);
 
     const settingsRows = await db.select().from(schema.settings).all();
-    const savedKeys = settingsRows.map((row) => row.key);
+    const savedKeys = settingsRows.map((row: any) => row.key);
 
     expect(savedKeys).toContain('routing_fallback_unit_cost');
     expect(savedKeys).not.toContain('db_type');
@@ -858,11 +858,11 @@ describe('backupService', () => {
     ]);
 
     const restoredManualModels = restoredAvailability
-      .filter((row) => row.isManual)
-      .map((row) => row.modelName)
+      .filter((row: any) => row.isManual)
+      .map((row: any) => row.modelName)
       .sort();
     expect(restoredManualModels).toEqual(['gpt-backup-manual']);
-    const restoredCachedModel = restoredAvailability.find((row) => row.modelName === 'gpt-cached' && !row.isManual);
+    const restoredCachedModel = restoredAvailability.find((row: any) => row.modelName === 'gpt-cached' && !row.isManual);
     expect(restoredCachedModel).toEqual(expect.objectContaining({
       available: true,
       latencyMs: 777,
@@ -912,8 +912,8 @@ describe('backupService', () => {
     ]);
 
     expect(restoredProxyLogs).toHaveLength(2);
-    const matchedDownstreamLog = restoredProxyLogs.find((row) => row.totalTokens === 321);
-    const orphanedDownstreamLog = restoredProxyLogs.find((row) => row.totalTokens === 654);
+    const matchedDownstreamLog = restoredProxyLogs.find((row: any) => row.totalTokens === 321);
+    const orphanedDownstreamLog = restoredProxyLogs.find((row: any) => row.totalTokens === 654);
     expect(matchedDownstreamLog?.downstreamApiKeyId).toBe(restoredDownstreamKeys[0]?.id);
     expect(orphanedDownstreamLog?.downstreamApiKeyId).toBeNull();
     expect(restoredCheckinLogs).toEqual([
@@ -1058,7 +1058,7 @@ describe('backupService', () => {
     expect(sites.length).toBe(1);
     expect(accounts.length).toBe(1);
     expect(accounts[0].username).toBe('legacy-user');
-    expect(settings.some((row) => row.key === 'legacy_preferences_ref_v2')).toBe(true);
+    expect(settings.some((row: any) => row.key === 'legacy_preferences_ref_v2')).toBe(true);
   });
 
   it('imports ALL-API-Hub V2 backups into native offline connections and summaries', async () => {
@@ -1274,19 +1274,19 @@ describe('backupService', () => {
       expect(sites).toHaveLength(7);
       expect(accounts).toHaveLength(8);
       expect(accountTokens).toHaveLength(5);
-      expect(settings.some((row) => row.key === 'legacy_preferences_ref_v2')).toBe(true);
-      expect(settings.some((row) => row.key === 'legacy_channel_configs_ref_v2')).toBe(true);
-      expect(settings.some((row) => row.key === 'legacy_tag_store_ref_v2')).toBe(true);
-      expect(settings.some((row) => row.key === 'legacy_api_credential_profiles_ref_v2')).toBe(false);
+      expect(settings.some((row: any) => row.key === 'legacy_preferences_ref_v2')).toBe(true);
+      expect(settings.some((row: any) => row.key === 'legacy_channel_configs_ref_v2')).toBe(true);
+      expect(settings.some((row: any) => row.key === 'legacy_tag_store_ref_v2')).toBe(true);
+      expect(settings.some((row: any) => row.key === 'legacy_api_credential_profiles_ref_v2')).toBe(false);
 
-      const managedAccount = accounts.find((row) => row.username === 'managed-user');
-      const cookieAccount = accounts.find((row) => row.username === 'cookie-user');
-      const openAiAccount = accounts.find((row) => row.username === 'openai-account');
-      const sub2apiAccount = accounts.find((row) => row.username === 'sub2-user');
-      const openAiProfileAccount = accounts.find((row) => row.username === 'OpenAI Profile');
-      const claudeProfileAccount = accounts.find((row) => row.username === 'Claude Profile');
-      const geminiProfileAccount = accounts.find((row) => row.username === 'Gemini Profile');
-      const compatProfileAccount = accounts.find((row) => row.username === 'Compat Profile');
+      const managedAccount = accounts.find((row: any) => row.username === 'managed-user');
+      const cookieAccount = accounts.find((row: any) => row.username === 'cookie-user');
+      const openAiAccount = accounts.find((row: any) => row.username === 'openai-account');
+      const sub2apiAccount = accounts.find((row: any) => row.username === 'sub2-user');
+      const openAiProfileAccount = accounts.find((row: any) => row.username === 'OpenAI Profile');
+      const claudeProfileAccount = accounts.find((row: any) => row.username === 'Claude Profile');
+      const geminiProfileAccount = accounts.find((row: any) => row.username === 'Gemini Profile');
+      const compatProfileAccount = accounts.find((row: any) => row.username === 'Compat Profile');
 
       expect(managedAccount?.accessToken).toBe('managed-session-token');
       expect(managedAccount?.apiToken).toBeNull();
@@ -1328,18 +1328,18 @@ describe('backupService', () => {
       expect(geminiProfileAccount?.apiToken).toBe('gemini-profile-key');
       expect(compatProfileAccount?.apiToken).toBe('sk-compat-profile');
 
-      const openAiSite = sites.find((row) => row.platform === 'openai' && row.url === 'https://api.openai.com');
+      const openAiSite = sites.find((row: any) => row.platform === 'openai' && row.url === 'https://api.openai.com');
       expect(openAiSite).toBeTruthy();
-      expect(accounts.filter((row) => row.siteId === openAiSite?.id)).toHaveLength(2);
+      expect(accounts.filter((row: any) => row.siteId === openAiSite?.id)).toHaveLength(2);
 
-      expect(accountTokens.map((row) => row.token).sort()).toEqual([
+      expect(accountTokens.map((row: any) => row.token).sort()).toEqual([
         'gemini-profile-key',
         'sk-compat-profile',
         'sk-openai-account',
         'sk-profile-claude',
         'sk-profile-openai',
       ]);
-      expect(accountTokens.every((row) => row.name === 'default' && row.isDefault && row.source === 'legacy')).toBe(true);
+      expect(accountTokens.every((row: any) => row.name === 'default' && row.isDefault && row.source === 'legacy')).toBe(true);
     } finally {
       fetchSpy.mockRestore();
     }

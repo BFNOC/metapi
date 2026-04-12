@@ -41,7 +41,7 @@ export async function migrateAccountModelMappingsToTokens(): Promise<TokenModelM
     summary.targetAccounts += 1;
 
     try {
-      const result = await runMigrationTransaction(async (tx) => {
+      const result = await runMigrationTransaction(async (tx: any) => {
         const tokens = await tx.select().from(schema.accountTokens)
           .where(eq(schema.accountTokens.accountId, account.id))
           .all();
@@ -73,7 +73,7 @@ export async function migrateAccountModelMappingsToTokens(): Promise<TokenModelM
         const reloadedTokens = await tx.select().from(schema.accountTokens)
           .where(eq(schema.accountTokens.accountId, account.id))
           .all();
-        const validationPassed = reloadedTokens.every((token) => {
+        const validationPassed = reloadedTokens.every((token: any) => {
           const existingMapping = typeof token.modelMapping === 'string'
             ? String(token.modelMapping).trim()
             : '';

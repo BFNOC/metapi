@@ -56,11 +56,11 @@ vi.mock('../../services/alertRules.js', () => ({
 }));
 
 vi.mock('../../services/modelPricingService.js', () => ({
-  estimateProxyCost: (arg: any) => estimateProxyCostMock(arg),
+  estimateProxyCost: (arg: any) => (estimateProxyCostMock as any)(arg),
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
-  shouldRetryProxyRequest: (...args: unknown[]) => shouldRetryProxyRequestMock(...args),
+  shouldRetryProxyRequest: (...args: unknown[]) => (shouldRetryProxyRequestMock as any)(...args),
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -192,7 +192,7 @@ describe('/v1/search route', () => {
 
   it('retries the next channel when the first attempt times out before any first byte', async () => {
     configMock.proxyFirstByteTimeoutSec = 0.05;
-    shouldRetryProxyRequestMock.mockImplementation((status: unknown) => Number(status) === 408);
+    (shouldRetryProxyRequestMock as any).mockImplementation((status: unknown) => Number(status) === 408);
     selectNextChannelMock.mockReturnValueOnce({
       channel: { id: 12, routeId: 23 },
       site: { id: 45, name: 'fallback-site', url: 'https://fallback.example.com', platform: 'openai' },

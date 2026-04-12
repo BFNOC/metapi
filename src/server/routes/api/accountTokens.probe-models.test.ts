@@ -232,7 +232,7 @@ describe('account token probe models route', () => {
       .from(schema.tokenModelAvailability)
       .where(eq(schema.tokenModelAvailability.tokenId, token.id))
       .all();
-    const tokenByModel = new Map(tokenRows.map((row) => [row.modelName, row]));
+    const tokenByModel = new Map<any, any>(tokenRows.map((row: any) => [row.modelName, row]));
 
     expect(tokenByModel.get('supported-model')?.available).toBe(true);
     expect(tokenByModel.get('unsupported-model')?.available).toBe(false);
@@ -244,7 +244,7 @@ describe('account token probe models route', () => {
       .from(schema.modelAvailability)
       .where(eq(schema.modelAvailability.accountId, account.id))
       .all();
-    const accountByModel = new Map(accountRows.map((row) => [row.modelName, row]));
+    const accountByModel = new Map<any, any>(accountRows.map((row: any) => [row.modelName, row]));
 
     expect(accountByModel.get('supported-model')?.available).toBe(true);
     expect(accountByModel.get('unsupported-model')?.available).toBe(false);

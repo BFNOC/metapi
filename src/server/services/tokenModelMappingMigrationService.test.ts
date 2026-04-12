@@ -239,7 +239,7 @@ describe('tokenModelMappingMigrationService', () => {
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     let transactionCall = 0;
-    tokenModelMappingMigrationTestUtils.setRunMigrationTransactionForTests(async (callback) => {
+    tokenModelMappingMigrationTestUtils.setRunMigrationTransactionForTests(async (callback: any) => {
       transactionCall += 1;
       if (transactionCall === 1) {
         throw new Error('forced validation failure');

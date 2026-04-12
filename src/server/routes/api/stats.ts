@@ -589,9 +589,9 @@ export async function statsRoutes(app: FastifyInstance) {
       .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(eq(schema.sites.status, 'active'))
       .all();
-    const accounts = accountRows.map((row) => row.accounts);
-    const totalBalance = accounts.reduce((sum, a) => sum + (a.balance || 0), 0);
-    const activeCount = accounts.filter((a) => a.status === 'active').length;
+    const accounts = accountRows.map((row: any) => row.accounts);
+    const totalBalance = accounts.reduce((sum: any, a: any) => sum + (a.balance || 0), 0);
+    const activeCount = accounts.filter((a: any) => a.status === 'active').length;
 
     const { localDay: today, startUtc: todayStartUtc, endUtc: todayEndUtc } = getLocalDayRangeUtc();
     const todayCheckinRows = await db.select().from(schema.checkinLogs)
@@ -603,8 +603,8 @@ export async function statsRoutes(app: FastifyInstance) {
         eq(schema.sites.status, 'active'),
       ))
       .all();
-    const todayCheckins = todayCheckinRows.map((row) => row.checkin_logs);
-    const checkinFailed = todayCheckins.filter((c) => c.status === 'failed').length;
+    const todayCheckins = todayCheckinRows.map((row: any) => row.checkin_logs);
+    const checkinFailed = todayCheckins.filter((c: any) => c.status === 'failed').length;
     const checkinSuccess = todayCheckins.length - checkinFailed;
     const rewardByAccount: Record<number, number> = {};
     const successCountByAccount: Record<number, number> = {};
@@ -633,7 +633,7 @@ export async function statsRoutes(app: FastifyInstance) {
       .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(and(gte(schema.proxyLogs.createdAt, last7dDate), eq(schema.sites.status, 'active')))
       .all())
-      .map((row) => row.proxy_logs);
+      .map((row: any) => row.proxy_logs);
     const totalUsedRow = await db.select({
       totalUsed: sql<number>`coalesce(sum(${proxyCostSqlExpression()}), 0)`,
     })
@@ -683,7 +683,7 @@ export async function statsRoutes(app: FastifyInstance) {
     const tokensPerMinute = Number(proxyPerformanceRow?.totalTokens || 0);
     const totalUsed = Number(totalUsedRow?.totalUsed || 0);
     const todaySpend = Number(todaySpendRow?.todaySpend || 0);
-    const todayReward = accounts.reduce((sum, account) => sum + estimateRewardWithTodayIncomeFallback({
+    const todayReward = accounts.reduce((sum: any, account: any) => sum + estimateRewardWithTodayIncomeFallback({
       day: today,
       successCount: successCountByAccount[account.id] || 0,
       parsedRewardCount: parsedRewardCountByAccount[account.id] || 0,
@@ -1040,7 +1040,7 @@ export async function statsRoutes(app: FastifyInstance) {
         .where(and(eq(schema.accounts.status, 'active'), eq(schema.sites.status, 'active')))
         .all();
 
-      const metadataResults = await Promise.all(activeAccountRows.map(async (row) => {
+      const metadataResults = await Promise.all(activeAccountRows.map(async (row: any) => {
         const catalog = await fetchModelPricingCatalog({
           site: {
             id: row.sites.id,
@@ -1432,8 +1432,8 @@ export async function statsRoutes(app: FastifyInstance) {
 
     const accountIdsForGroupHints = new Set(
       availableModelRows
-        .filter((row) => requiresManagedAccountTokens(row))
-        .map((row) => row.accountId),
+        .filter((row: any) => requiresManagedAccountTokens(row))
+        .map((row: any) => row.accountId),
     );
     const requiredGroupsByAccountModel = new Map<string, Map<string, string>>();
     const hasPotentialGroupHints = hasAnyTokenGroupSignals || unknownGroupCoverageByAccountModel.size > 0;
@@ -1451,8 +1451,8 @@ export async function statsRoutes(app: FastifyInstance) {
 
       const metadataResults = await Promise.all(
         accountRows
-          .filter((row) => accountIdsForGroupHints.has(row.accounts.id))
-          .map(async (row) => {
+          .filter((row: any) => accountIdsForGroupHints.has(row.accounts.id))
+          .map(async (row: any) => {
             try {
               const catalog = await fetchModelPricingCatalog({
                 site: {
@@ -1598,7 +1598,7 @@ export async function statsRoutes(app: FastifyInstance) {
       spendBySiteId.set(row.siteId, Number(row.totalSpend || 0));
     }
 
-    const distribution = accountRows.map((row) => ({
+    const distribution = accountRows.map((row: any) => ({
       siteId: row.siteId,
       siteName: row.siteName,
       platform: row.platform,
@@ -1672,7 +1672,7 @@ export async function statsRoutes(app: FastifyInstance) {
     if (siteId != null && !Number.isNaN(siteId)) {
       const siteAccounts = await db.select().from(schema.accounts)
         .where(eq(schema.accounts.siteId, siteId)).all();
-      accountIds = new Set(siteAccounts.map((a) => a.id));
+      accountIds = new Set(siteAccounts.map((a: any) => a.id));
     }
 
     const rows = await db.select({

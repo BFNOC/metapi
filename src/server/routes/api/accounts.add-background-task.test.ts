@@ -157,7 +157,7 @@ describe('accounts background initialization', () => {
         status: expect.stringMatching(/pending|running/),
       });
 
-      releaseTokens?.([{ name: 'default', value: 'sk-demo' }]);
+      (releaseTokens as unknown as Function)?.([{ name: 'default', value: 'sk-demo' }] as Array<{ name: string; value: string }>);
 
       for (let attempt = 0; attempt < 20; attempt += 1) {
         const task = getBackgroundTask?.(body.jobId!);
@@ -171,7 +171,7 @@ describe('accounts background initialization', () => {
       expect(rebuildTokenRoutesFromAvailabilityMock).toHaveBeenCalledTimes(1);
       expect(getBackgroundTask?.(body.jobId!)).toMatchObject({ status: 'succeeded' });
     } finally {
-      releaseTokens?.([]);
+      (releaseTokens as unknown as Function)?.([] as Array<{ name: string; value: string }>);
       await responsePromise.catch(() => undefined);
     }
   });

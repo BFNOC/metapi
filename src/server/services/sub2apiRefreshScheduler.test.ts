@@ -6,7 +6,7 @@ import { join } from 'node:path';
 const refreshSub2ApiManagedSessionSingleflightMock = vi.fn();
 
 vi.mock('./sub2apiRefreshSingleflight.js', () => ({
-  refreshSub2ApiManagedSessionSingleflight: (...args: unknown[]) => refreshSub2ApiManagedSessionSingleflightMock(...args),
+  refreshSub2ApiManagedSessionSingleflight: (...args: any[]) => refreshSub2ApiManagedSessionSingleflightMock(...args),
 }));
 
 vi.mock('./sub2apiManagedAuth.js', async (importOriginal) => {
@@ -336,7 +336,7 @@ describe('sub2apiRefreshScheduler', () => {
 
     const stopPromise = stopSub2ApiManagedRefreshScheduler();
     expect(refreshSub2ApiManagedSessionSingleflightMock).toHaveBeenCalledTimes(1);
-    resolveRefresh?.();
+    resolveRefresh!();
     await stopPromise;
   });
 });

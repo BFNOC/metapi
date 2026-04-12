@@ -52,7 +52,7 @@ export async function applyChannelPriorityUpdates(input: {
     });
   }
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: any) => {
     for (const channelId of channelIds) {
       const patch = updateMap.get(channelId);
       if (!patch) continue;
@@ -60,7 +60,7 @@ export async function applyChannelPriorityUpdates(input: {
       if (patch.weight !== undefined) {
         nextSet.weight = patch.weight;
       }
-      await tx.update(schema.routeChannels).set(nextSet).where(eq(schema.routeChannels.id, channelId)).run();
+      await tx.update(schema.routeChannels).set(nextSet as any).where(eq(schema.routeChannels.id, channelId)).run();
     }
   });
 

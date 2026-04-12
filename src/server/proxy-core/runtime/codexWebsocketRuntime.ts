@@ -337,7 +337,7 @@ async function sendSessionRequestAttempt(
     socket.once('error', onError);
     socket.once('close', onClose);
 
-    socket.send(JSON.stringify(buildCodexWebsocketRequestBody(input.body)), (error) => {
+    socket.send(JSON.stringify(buildCodexWebsocketRequestBody(input.body)), (error: Error | undefined) => {
       if (!error) return;
       clearSessionSocket(session, socket);
       rejectWith(error.message || 'failed to send upstream websocket request');

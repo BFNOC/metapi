@@ -135,10 +135,10 @@ describe('PUT /api/routes/:id route rebuild', () => {
       .where(eq(schema.routeChannels.routeId, route.id))
       .all();
 
-    expect(routeChannels.some((channel) => channel.id === manualChannel.id)).toBe(true);
-    expect(routeChannels.some((channel) => channel.id === autoChannel.id)).toBe(false);
+    expect(routeChannels.some((channel: any) => channel.id === manualChannel.id)).toBe(true);
+    expect(routeChannels.some((channel: any) => channel.id === autoChannel.id)).toBe(false);
 
-    const rebuiltAuto = routeChannels.find((channel) =>
+    const rebuiltAuto = routeChannels.find((channel: any) =>
       channel.accountId === newCandidate.account.id
       && channel.tokenId === newCandidate.token.id
       && channel.sourceModel === 'gemini-2.0-flash',

@@ -12,9 +12,9 @@ describe('codexWebsocketRuntime', () => {
 
   beforeAll(async () => {
     upstreamServer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
-    upstreamServer.on('connection', (socket) => {
+    upstreamServer.on('connection', (socket: any) => {
       upstreamConnectionCount += 1;
-      socket.on('message', (payload) => {
+      socket.on('message', (payload: any) => {
         const parsed = JSON.parse(String(payload)) as Record<string, unknown>;
         upstreamRequests.push(parsed);
         upstreamMessageHandler(socket, parsed, upstreamRequests.length);
@@ -596,7 +596,7 @@ describe('codexWebsocketRuntime', () => {
       message: 'account mismatch',
       status: 502,
     });
-    expect((error as CodexWebsocketRuntimeError).events).toEqual([
+    expect((error as InstanceType<typeof CodexWebsocketRuntimeError>).events).toEqual([
       expect.objectContaining({
         type: 'error',
         error: expect.objectContaining({

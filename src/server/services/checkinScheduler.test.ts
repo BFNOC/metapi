@@ -9,8 +9,8 @@ const allMock = vi.fn();
 
 vi.mock('node-cron', () => ({
   default: {
-    schedule: (...args: unknown[]) => scheduleMock(...args),
-    validate: (...args: unknown[]) => validateMock(...args),
+    schedule: scheduleMock,
+    validate: validateMock,
   },
 }));
 
@@ -36,7 +36,7 @@ vi.mock('../db/index.js', () => {
 });
 
 vi.mock('./checkinService.js', () => ({
-  checkinAll: (...args: unknown[]) => allMock(...args),
+  checkinAll: (...args: any[]) => allMock(...args),
 }));
 
 describe('checkinScheduler', () => {

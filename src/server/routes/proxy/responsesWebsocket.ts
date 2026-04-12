@@ -589,7 +589,7 @@ async function handleResponsesWebsocketConnection(
     }));
   });
 
-  socket.on('message', (raw) => {
+  socket.on('message', (raw: any) => {
     messageQueue = messageQueue
       .catch(() => undefined)
       .then(async () => {
@@ -752,7 +752,7 @@ export function ensureResponsesWebsocketTransport(app: FastifyInstance) {
   installedApps.add(app);
 
   const websocketServer = new WebSocketServer({ noServer: true });
-  websocketServer.on('headers', (headers, request) => {
+  websocketServer.on('headers', (headers: any, request: any) => {
     const turnState = headerValueToTrimmedString(request.headers[WS_TURN_STATE_HEADER]);
     if (!turnState) return;
     headers.push(`${WS_TURN_STATE_HEADER}: ${turnState}`);
@@ -772,7 +772,7 @@ export function ensureResponsesWebsocketTransport(app: FastifyInstance) {
         writeUpgradeHttpError(socket, authResult.statusCode, authResult.error);
         return;
       }
-      websocketServer.handleUpgrade(request, socket, head, (client) => {
+      websocketServer.handleUpgrade(request, socket, head, (client: any) => {
         void handleResponsesWebsocketConnection(app, client, request, authResult);
       });
     })().catch(() => {

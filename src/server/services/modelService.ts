@@ -312,7 +312,7 @@ export async function refreshModelsForAccount(
       .all()
     : [];
   const previousTokenModelAvailability = restoreAvailabilityOnFailure
-    ? (await Promise.all(previousAccountTokens.map(async (token) => db.select()
+    ? (await Promise.all(previousAccountTokens.map(async (token: any) => db.select()
       .from(schema.tokenModelAvailability)
       .where(eq(schema.tokenModelAvailability.tokenId, token.id))
       .all()))).flat()
@@ -343,7 +343,7 @@ export async function refreshModelsForAccount(
     await clearExistingAvailability();
     if (previousModelAvailability.length > 0) {
       await db.insert(schema.modelAvailability).values(
-        previousModelAvailability.map(({ id: _id, ...row }) => row),
+        previousModelAvailability.map(({ id: _id, ...row }: any) => row),
       ).run();
     }
     if (previousTokenModelAvailability.length > 0) {
@@ -378,7 +378,7 @@ export async function refreshModelsForAccount(
         eq(schema.modelAvailability.isManual, true),
       ))
       .all()
-    ).map((r) => r.modelName.toLowerCase()),
+    ).map((r: any) => r.modelName.toLowerCase()),
   );
 
   if (oauth?.provider === 'codex') {
@@ -915,7 +915,7 @@ async function refreshModelsForAllActiveAccounts(): Promise<ModelRefreshResult[]
   const results: ModelRefreshResult[] = [];
   for (let offset = 0; offset < accounts.length; offset += MODEL_REFRESH_BATCH_SIZE) {
     const batch = accounts.slice(offset, offset + MODEL_REFRESH_BATCH_SIZE);
-    const batchResults = await Promise.all(batch.map(async (account) => refreshModelsForAccount(account.id)));
+    const batchResults = await Promise.all(batch.map(async (account: any) => refreshModelsForAccount(account.id)));
     results.push(...batchResults);
   }
   return results;
@@ -936,7 +936,7 @@ export async function rebuildTokenRoutesFromAvailability() {
       ),
     )
     .all();
-  const usableTokenRows = tokenRows.filter((row) => (
+  const usableTokenRows = tokenRows.filter((row: any) => (
     isUsableAccountToken(row.account_tokens)
     && requiresManagedAccountTokens(row.accounts)
   ));
@@ -1184,7 +1184,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     if (candidateMap.size === 0) {
       continue;
     }
-    let route = routes.find((r) => (r.routeMode || 'pattern') !== 'explicit_group' && r.modelPattern === modelName);
+    let route = routes.find((r: any) => (r.routeMode || 'pattern') !== 'explicit_group' && r.modelPattern === modelName);
     if (!route) {
       const inserted = await db.insert(schema.tokenRoutes).values({
         modelPattern: modelName,
@@ -1199,11 +1199,11 @@ export async function rebuildTokenRoutesFromAvailability() {
       createdRoutes++;
     }
 
-    const routeChannels = channels.filter((channel) => channel.routeId === route.id);
+    const routeChannels = channels.filter((channel: any) => channel.routeId === route.id);
     const desiredKeys = new Set(Array.from(candidateMap.keys()));
 
     for (const [candidateKey, candidate] of candidateMap.entries()) {
-      const existingChannel = routeChannels.find((channel) => (
+      const existingChannel = routeChannels.find((channel: any) => (
         channel.accountId === candidate.accountId
         && (channel.tokenId ?? null) === candidate.tokenId
       ));
@@ -1273,7 +1273,7 @@ export async function rebuildTokenRoutesFromAvailability() {
       continue;
     }
 
-    const routeChannelCount = channels.filter((channel) => channel.routeId === route.id).length;
+    const routeChannelCount = channels.filter((channel: any) => channel.routeId === route.id).length;
     if (routeChannelCount > 0) {
       removedChannels += routeChannelCount;
     }

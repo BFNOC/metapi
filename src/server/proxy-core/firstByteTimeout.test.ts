@@ -25,7 +25,7 @@ function buildDelayedResponse(bodyText: string, delayMs: number, status = 200): 
 describe('fetchWithObservedFirstByte', () => {
   it('replays the first chunk and records first-byte latency when upstream responds in time', async () => {
     const response = await fetchWithObservedFirstByte(
-      async () => buildDelayedResponse('hello world', 5),
+      async () => buildDelayedResponse('hello world', 5) as any,
       {
         firstByteTimeoutMs: 100,
         startedAtMs: Date.now(),
@@ -44,7 +44,7 @@ describe('fetchWithObservedFirstByte', () => {
 
   it('returns a synthetic timeout response when upstream sends no first byte before the deadline', async () => {
     const response = await fetchWithObservedFirstByte(
-      async () => buildDelayedResponse('too late', 80),
+      async () => buildDelayedResponse('too late', 80) as any,
       {
         firstByteTimeoutMs: 10,
         startedAtMs: Date.now(),
@@ -62,7 +62,7 @@ describe('fetchWithObservedFirstByte', () => {
 
   it('preserves non-ok response bodies after replaying the first observed chunk', async () => {
     const response = await fetchWithObservedFirstByte(
-      async () => buildDelayedResponse('upstream unavailable', 5, 503),
+      async () => buildDelayedResponse('upstream unavailable', 5, 503) as any,
       {
         firstByteTimeoutMs: 100,
         startedAtMs: Date.now(),
@@ -82,7 +82,7 @@ describe('fetchWithObservedFirstByte', () => {
     const response = await fetchWithObservedFirstByte(
       async (signal) => {
         receivedSignal = signal;
-        return buildDelayedResponse('no timeout', 5);
+        return buildDelayedResponse('no timeout', 5) as any;
       },
       {
         firstByteTimeoutMs: 0,

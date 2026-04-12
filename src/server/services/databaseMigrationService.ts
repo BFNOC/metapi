@@ -271,7 +271,7 @@ async function toBackupSnapshot(): Promise<BackupSnapshot> {
       events: await db.select().from(schema.events).all() as Array<Record<string, unknown>>,
     },
     preferences: {
-      settings: settingsRows.map((row) => ({ key: row.key, value: parseSettingValue(row.value) })),
+      settings: settingsRows.map((row: any) => ({ key: row.key, value: parseSettingValue(row.value) })),
     },
   };
 }

@@ -4,6 +4,7 @@ import { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { NewApiAdapter } from './newApi.js';
+import { AnyRouterAdapter } from './anyrouter.js';
 
 interface RequestSnapshot {
   method: string;

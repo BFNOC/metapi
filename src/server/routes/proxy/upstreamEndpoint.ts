@@ -1294,7 +1294,7 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
   }
 
   const anthropicVersion = (
-    effectiveClaudeHeaders['anthropic-version']
+    (effectiveClaudeHeaders as Record<string, string | undefined>)['anthropic-version']
     || '2023-06-01'
   );
   const isClaudeOauthUpstream = sitePlatform === 'claude' && input.oauthProvider === 'claude';

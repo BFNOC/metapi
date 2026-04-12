@@ -406,7 +406,7 @@ export async function refreshBalance(accountId: number) {
   }
 
   await db.update(schema.accounts)
-    .set(updates)
+    .set(updates as any)
     .where(eq(schema.accounts.id, accountId))
     .run();
 
@@ -433,7 +433,7 @@ export async function refreshAllBalances() {
   const results: Array<{ accountId: number; balance: number | null }> = [];
 
   await Promise.all(
-    rows.map(async (account) => {
+    rows.map(async (account: any) => {
       try {
         const info = await refreshBalance(account.id);
         results.push({ accountId: account.id, balance: info?.balance ?? null });

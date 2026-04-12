@@ -19,6 +19,7 @@ function buildJwt(payload: Record<string, unknown>) {
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode(payload)}.signature`;
 }
 
+type ResponseLike = { ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> };
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -430,7 +431,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(codexStoredOauth).not.toHaveProperty('accountId');
 
     const models = await db.select().from(schema.modelAvailability).all();
-    const modelNames = models.map((row) => row.modelName);
+    const modelNames = models.map((row: any) => row.modelName);
     expect(modelNames.sort()).toEqual(['gpt-5', 'gpt-5.2-codex', 'gpt-5.4']);
   });
 
@@ -1511,7 +1512,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       .all();
 
     expect(accounts).toHaveLength(2);
-    expect(accounts.map((account) => account.oauthAccountKey)).toEqual([
+    expect(accounts.map((account: any) => account.oauthAccountKey)).toEqual([
       'chatgpt-team-account-a',
       'chatgpt-team-account-b',
     ]);

@@ -373,7 +373,7 @@ describe('channel probe routes', () => {
     const untouchedChannels = await db.select().from(schema.routeChannels)
       .where(inArray(schema.routeChannels.id, [routeAChannel1.id, routeAChannel2.id]))
       .all();
-    expect(untouchedChannels.map((channel) => channel.manualOverride)).toEqual([false, false]);
+    expect(untouchedChannels.map((channel: any) => channel.manualOverride)).toEqual([false, false]);
   });
 
   it('writes priorities with manualOverride and clears dependent decision snapshots', async () => {
@@ -442,7 +442,7 @@ describe('channel probe routes', () => {
     const updatedChannels = await db.select().from(schema.routeChannels)
       .where(inArray(schema.routeChannels.id, [slowSupported.id, unsupported.id]))
       .all();
-    const updatedById = new Map(updatedChannels.map((channel) => [channel.id, channel]));
+    const updatedById = new Map<any, any>(updatedChannels.map((channel: any) => [channel.id, channel]));
     expect(updatedById.get(slowSupported.id)?.priority).toBe(5);
     expect(updatedById.get(slowSupported.id)?.weight).toBe(100);
     expect(updatedById.get(unsupported.id)?.priority).toBe(6);
@@ -453,7 +453,7 @@ describe('channel probe routes', () => {
     const refreshedRoutes = await db.select().from(schema.tokenRoutes)
       .where(inArray(schema.tokenRoutes.id, [route.id, dependentGroupRoute.id]))
       .all();
-    const routeById = new Map(refreshedRoutes.map((item) => [item.id, item]));
+    const routeById = new Map<any, any>(refreshedRoutes.map((item: any) => [item.id, item]));
     expect(routeById.get(route.id)?.decisionSnapshot).toBeNull();
     expect(routeById.get(route.id)?.decisionRefreshedAt).toBeNull();
     expect(routeById.get(dependentGroupRoute.id)?.decisionSnapshot).toBeNull();
@@ -505,7 +505,7 @@ describe('channel probe routes', () => {
     const updatedChannels = await db.select().from(schema.routeChannels)
       .where(inArray(schema.routeChannels.id, [fastChannel.id, normalChannel.id, slowChannel.id]))
       .all();
-    const updatedById = new Map(updatedChannels.map((channel) => [channel.id, channel]));
+    const updatedById = new Map<any, any>(updatedChannels.map((channel: any) => [channel.id, channel]));
     expect(updatedById.get(fastChannel.id)?.priority).toBe(3);
     expect(updatedById.get(normalChannel.id)?.priority).toBe(3);
     expect(updatedById.get(slowChannel.id)?.priority).toBe(3);
@@ -550,7 +550,7 @@ describe('channel probe routes', () => {
     const updatedChannels = await db.select().from(schema.routeChannels)
       .where(inArray(schema.routeChannels.id, [healthyChannel.id, unhealthyChannel.id]))
       .all();
-    const updatedById = new Map(updatedChannels.map((channel) => [channel.id, channel]));
+    const updatedById = new Map<any, any>(updatedChannels.map((channel: any) => [channel.id, channel]));
     expect(updatedById.get(healthyChannel.id)?.priority).toBe(9);
     expect(updatedById.get(healthyChannel.id)?.weight).toBe(200);
     expect(updatedById.get(unhealthyChannel.id)?.priority).toBe(10);
@@ -593,7 +593,7 @@ describe('channel probe routes', () => {
     const updatedChannels = await db.select().from(schema.routeChannels)
       .where(inArray(schema.routeChannels.id, [healthyChannel.id, inconclusiveChannel.id]))
       .all();
-    const updatedById = new Map(updatedChannels.map((channel) => [channel.id, channel]));
+    const updatedById = new Map<any, any>(updatedChannels.map((channel: any) => [channel.id, channel]));
     expect(updatedById.get(healthyChannel.id)?.priority).toBe(1);
     expect(updatedById.get(healthyChannel.id)?.weight).toBe(200);
     expect(updatedById.get(inconclusiveChannel.id)?.priority).toBe(4);

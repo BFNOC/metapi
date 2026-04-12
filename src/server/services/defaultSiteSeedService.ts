@@ -53,12 +53,12 @@ type SeedSummary = {
   hadExistingSites: boolean;
 };
 
-async function writeSeedMarker(tx: typeof db) {
+async function writeSeedMarker(tx: any) {
   await upsertSetting(DEFAULT_SITE_SEED_SETTING_KEY, true, tx);
 }
 
 export async function ensureDefaultSitesSeeded(): Promise<SeedSummary> {
-  return db.transaction(async (tx) => {
+  return db.transaction(async (tx: any) => {
     const marker = await tx.select({ key: schema.settings.key })
       .from(schema.settings)
       .where(eq(schema.settings.key, DEFAULT_SITE_SEED_SETTING_KEY))

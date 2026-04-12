@@ -73,7 +73,7 @@ describe('sites batch routes', () => {
     expect(body.failedItems?.[0]?.id).toBe(999);
 
     const rows = await db.select().from(schema.sites).all();
-    expect(rows.every((row) => row.useSystemProxy === true)).toBe(true);
+    expect(rows.every((row: any) => row.useSystemProxy === true)).toBe(true);
   });
 
   it('rejects invalid sites batch action', async () => {

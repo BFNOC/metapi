@@ -46,7 +46,7 @@ vi.mock('../../services/alertRules.js', () => ({
 }));
 
 vi.mock('../../services/modelPricingService.js', () => ({
-  estimateProxyCost: (arg: any) => estimateProxyCostMock(arg),
+  estimateProxyCost: (arg: any) => (estimateProxyCostMock as any)(arg),
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({

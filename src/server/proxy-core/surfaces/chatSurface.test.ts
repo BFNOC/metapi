@@ -67,9 +67,9 @@ vi.mock('../../services/alertService.js', () => ({
 }));
 
 vi.mock('../../services/proxyUsageParser.js', () => ({
-  hasProxyUsagePayload: (...args: unknown[]) => hasProxyUsagePayloadMock(...args),
-  mergeProxyUsage: (...args: unknown[]) => mergeProxyUsageMock(...args),
-  parseProxyUsage: (...args: unknown[]) => parseProxyUsageMock(...args),
+  hasProxyUsagePayload: (...args: any[]) => (hasProxyUsagePayloadMock as any)(...args),
+  mergeProxyUsage: (...args: any[]) => (mergeProxyUsageMock as any)(...args),
+  parseProxyUsage: (...args: any[]) => (parseProxyUsageMock as any)(...args),
 }));
 
 vi.mock('../../routes/proxy/upstreamEndpoint.js', () => ({
@@ -150,11 +150,11 @@ vi.mock('../../routes/proxy/responsesSseFinal.js', () => ({
 
 vi.mock('../../routes/proxy/geminiCliCompat.js', () => ({
   createGeminiCliStreamReader: (...args: unknown[]) => createGeminiCliStreamReaderMock(...args),
-  unwrapGeminiCliPayload: (...args: unknown[]) => unwrapGeminiCliPayloadMock(...args),
+  unwrapGeminiCliPayload: (...args: unknown[]) => (unwrapGeminiCliPayloadMock as any)(...args),
 }));
 
 vi.mock('../capabilities/conversationFileCapabilities.js', () => ({
-  summarizeConversationFileInputsInOpenAiBody: (...args: unknown[]) => summarizeConversationFileInputsInOpenAiBodyMock(...args),
+  summarizeConversationFileInputsInOpenAiBody: (...args: any[]) => summarizeConversationFileInputsInOpenAiBodyMock(...args),
 }));
 
 vi.mock('../executors/types.js', () => ({

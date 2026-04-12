@@ -56,7 +56,7 @@ describe('executeEndpointFlow first-byte timeout', () => {
     const result = await executeEndpointFlow({
       siteUrl: 'https://example.com',
       endpointCandidates: ['responses', 'chat'],
-      buildRequest: (endpoint: 'responses' | 'chat') => endpoint === 'responses'
+      buildRequest: (endpoint) => endpoint === 'responses'
         ? requestFor('/v1/responses')
         : { ...requestFor('/v1/chat/completions'), endpoint },
       dispatchRequest,

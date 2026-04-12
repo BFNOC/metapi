@@ -142,7 +142,7 @@ async function loadChannelProbeRows(where: { channelId?: number; routeId?: numbe
     ? await baseQuery.where(eq(schema.routeChannels.id, channelId)).all()
     : await baseQuery.where(eq(schema.routeChannels.routeId, routeId!)).all();
 
-  return rows.filter((row) => !where.onlyEnabledChannels || row.route_channels.enabled !== false);
+  return rows.filter((row: any) => !where.onlyEnabledChannels || row.route_channels.enabled !== false);
 }
 
 export async function loadChannelProbeEntry(channelId: number): Promise<ChannelProbeEntry | null> {

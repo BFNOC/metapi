@@ -242,7 +242,7 @@ const BACKUP_WEBDAV_CONFIG_SETTING_KEY = 'backup_webdav_config_v1';
 const BACKUP_WEBDAV_STATE_SETTING_KEY = 'backup_webdav_state_v1';
 const BACKUP_WEBDAV_DEFAULT_AUTO_SYNC_CRON = '0 */6 * * *';
 const BACKUP_WEBDAV_FETCH_TIMEOUT_MS = 15_000;
-let backupWebdavTask: cron.ScheduledTask | null = null;
+let backupWebdavTask: ReturnType<typeof cron.schedule> | null = null;
 
 const DIRECT_API_PLATFORMS = new Set([
   'openai',
@@ -561,30 +561,30 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
   return {
     accountRuntimeByKey,
     routeChannelRuntimeByKey,
-    siteAnnouncements: siteAnnouncements.map((row) => ({
+    siteAnnouncements: siteAnnouncements.map((row: any) => ({
       ...row,
       siteKey: siteKeyById.get(row.siteId) || null,
     })),
     nonManualAvailability: modelAvailability
-      .filter((row) => !row.isManual)
-      .map((row) => ({
+      .filter((row: any) => !row.isManual)
+      .map((row: any) => ({
         ...row,
         accountKey: accountKeyById.get(row.accountId) || null,
       })),
-    tokenAvailability: tokenModelAvailability.map((row) => ({
+    tokenAvailability: tokenModelAvailability.map((row: any) => ({
       ...row,
       tokenKey: tokenKeyById.get(row.tokenId) || null,
     })),
     downstreamApiKeyRuntimeByKey,
     downstreamApiKeyIdByKey,
-    proxyLogs: proxyLogs.map((row) => ({
+    proxyLogs: proxyLogs.map((row: any) => ({
       ...row,
       accountKey: row.accountId ? (accountKeyById.get(row.accountId) || null) : null,
       routeKey: row.routeId ? (routeKeyById.get(row.routeId) || null) : null,
       channelKey: row.channelId ? (channelKeyById.get(row.channelId) || null) : null,
       downstreamApiKeyKey: row.downstreamApiKeyId ? (downstreamApiKeyKeyById.get(row.downstreamApiKeyId) || null) : null,
     })),
-    checkinLogs: checkinLogs.map((row) => ({
+    checkinLogs: checkinLogs.map((row: any) => ({
       ...row,
       accountKey: accountKeyById.get(row.accountId) || null,
     })),
@@ -891,7 +891,7 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
   }
 
   const profilesContainer = isRecord(data.apiCredentialProfiles) ? data.apiCredentialProfiles : null;
-  const profiles = Array.isArray(profilesContainer?.profiles) ? profilesContainer.profiles : [];
+  const profiles = Array.isArray(profilesContainer?.profiles) ? (profilesContainer as Record<string, unknown>).profiles as unknown[] : [];
   for (const profile of profiles) {
     if (!isRecord(profile)) continue;
 
@@ -964,7 +964,7 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
 
 function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupSection | null {
   const accountsContainer = isRecord(data.accounts) ? data.accounts : null;
-  const rows = Array.isArray(accountsContainer?.accounts) ? accountsContainer.accounts : null;
+  const rows = Array.isArray(accountsContainer?.accounts) ? (accountsContainer as Record<string, unknown>).accounts as unknown[] : null;
   if (!rows) return null;
 
   const sites: SiteRow[] = [];
@@ -1327,7 +1327,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
 
   return {
     sites,
-    accounts: accounts.map(({ balanceUsed: _balanceUsed, lastCheckinAt: _lastCheckinAt, lastBalanceRefresh: _lastBalanceRefresh, ...row }) => row),
+    accounts: accounts.map(({ balanceUsed: _balanceUsed, lastCheckinAt: _lastCheckinAt, lastBalanceRefresh: _lastBalanceRefresh, ...row }: any) => row),
     accountTokens,
     tokenRoutes,
     routeChannels: routeChannels.map(({
@@ -1342,17 +1342,17 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
       cooldownLevel: _cooldownLevel,
       cooldownUntil: _cooldownUntil,
       ...row
-    }) => row),
+    }: any) => row),
     routeGroupSources,
-    siteDisabledModels: siteDisabledModels.map((row) => ({
+    siteDisabledModels: siteDisabledModels.map((row: any) => ({
       siteId: row.siteId,
       modelName: row.modelName,
     })),
-    siteAllowedModels: siteAllowedModels.map((row) => ({
+    siteAllowedModels: siteAllowedModels.map((row: any) => ({
       siteId: row.siteId,
       modelName: row.modelName,
     })),
-    manualModels: manualModels.map((row) => ({
+    manualModels: manualModels.map((row: any) => ({
       accountId: row.accountId,
       modelName: row.modelName,
     })),
@@ -1364,14 +1364,14 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
       createdAt: _createdAt,
       updatedAt: _updatedAt,
       ...row
-    }) => row),
+    }: any) => row),
   };
 }
 
 async function exportPreferencesSection(): Promise<PreferencesBackupSection> {
   const settings = (await db.select().from(schema.settings).all())
-    .filter((row) => !EXCLUDED_SETTING_KEYS.has(row.key))
-    .map((row) => ({
+    .filter((row: any) => !EXCLUDED_SETTING_KEYS.has(row.key))
+    .map((row: any) => ({
       key: row.key,
       value: parseSettingValue(row.value),
     }));
@@ -1526,7 +1526,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
   const shouldReplaceManualModels = Array.isArray(section.manualModels);
   const shouldReplaceDownstreamApiKeys = Array.isArray(section.downstreamApiKeys);
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: any) => {
     if (shouldReplaceDownstreamApiKeys) {
       await tx.delete(schema.downstreamApiKeys).run();
     }
@@ -1842,11 +1842,11 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
 async function importPreferencesSection(section: PreferencesBackupSection): Promise<Array<{ key: string; value: unknown }>> {
   const applied: Array<{ key: string; value: unknown }> = [];
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: any) => {
     for (const row of section.settings) {
       if (!isSettingValueAcceptable(row.key, row.value)) continue;
 
-      await upsertSetting(row.key, row.value, tx);
+      await upsertSetting(row.key, row.value, tx as any);
       applied.push({ key: row.key, value: row.value });
     }
   });

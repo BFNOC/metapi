@@ -220,7 +220,7 @@ describe('modelAvailabilityScheduler', () => {
       .from(schema.tokenModelAvailability)
       .where(eq(schema.tokenModelAvailability.tokenId, token.id))
       .all();
-    const tokenByModel = new Map(tokenRows.map((row) => [row.modelName, row]));
+    const tokenByModel = new Map<string, any>(tokenRows.map((row: any) => [row.modelName, row]));
     expect(tokenByModel.get('token-supported')?.available).toBe(true);
     expect(tokenByModel.get('token-inconclusive-existing')?.available).toBe(true);
     expect(tokenByModel.get('token-unsupported')?.available).toBe(false);
@@ -231,7 +231,7 @@ describe('modelAvailabilityScheduler', () => {
       .from(schema.modelAvailability)
       .where(eq(schema.modelAvailability.accountId, account.id))
       .all();
-    const accountByModel = new Map(accountRows.map((row) => [row.modelName, row]));
+    const accountByModel = new Map<string, any>(accountRows.map((row: any) => [row.modelName, row]));
     expect(accountByModel.get('account-only-supported')?.available).toBe(true);
     expect(accountByModel.get('account-only-skipped')?.available).toBe(true);
   });

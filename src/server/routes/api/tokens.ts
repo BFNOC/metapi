@@ -111,7 +111,7 @@ function decorateRoutesWithSources(
 
 async function listRoutesWithSources(): Promise<RouteRow[]> {
   const routes = await db.select().from(schema.tokenRoutes).all();
-  const sourceRouteIdsByRouteId = await loadRouteSourceIdsMap(routes.map((route) => route.id));
+  const sourceRouteIdsByRouteId = await loadRouteSourceIdsMap(routes.map((route: any) => route.id));
   return decorateRoutesWithSources(routes, sourceRouteIdsByRouteId);
 }
 
@@ -242,12 +242,12 @@ async function resolveCooldownClearRouteIds(route: RouteRow): Promise<number[]> 
     .all();
 
   return sourceRoutes
-    .filter((sourceRoute) => (
+    .filter((sourceRoute: any) => (
       sourceRoute.enabled
       && normalizeRouteMode(sourceRoute.routeMode) !== 'explicit_group'
       && isExactModelPattern(sourceRoute.modelPattern)
     ))
-    .map((sourceRoute) => sourceRoute.id);
+    .map((sourceRoute: any) => sourceRoute.id);
 }
 
 async function getDefaultTokenId(accountId: number): Promise<number | null> {
@@ -409,7 +409,7 @@ async function tokenSupportsModel(tokenId: number, modelName: string): Promise<b
       ),
     )
     .all();
-  return rows.some((row) => {
+  return rows.some((row: any) => {
     const availableModelName = row.modelName?.trim();
     if (!availableModelName) return false;
     return availableModelName === modelName || isModelAliasEquivalent(availableModelName, modelName);
@@ -425,7 +425,7 @@ async function accountSupportsModel(accountId: number, modelName: string): Promi
       ),
     )
     .all();
-  return rows.some((row) => {
+  return rows.some((row: any) => {
     const availableModelName = row.modelName?.trim();
     if (!availableModelName) return false;
     return availableModelName === modelName || isModelAliasEquivalent(availableModelName, modelName);
@@ -483,17 +483,17 @@ async function getMatchedExactRouteChannelCandidates(modelPattern: string): Prom
   const matchedRoutes = (await db.select().from(schema.tokenRoutes)
     .where(eq(schema.tokenRoutes.enabled, true))
     .all())
-    .filter((route) => isExactModelPattern(route.modelPattern) && matchesModelPattern(route.modelPattern, modelPattern));
+    .filter((route: any) => isExactModelPattern(route.modelPattern) && matchesModelPattern(route.modelPattern, modelPattern));
 
   if (matchedRoutes.length === 0) return [];
   const routeMap = new Map<number, typeof matchedRoutes[number]>();
   for (const route of matchedRoutes) routeMap.set(route.id, route);
 
   const channels = await db.select().from(schema.routeChannels)
-    .where(inArray(schema.routeChannels.routeId, matchedRoutes.map((route) => route.id)))
+    .where(inArray(schema.routeChannels.routeId, matchedRoutes.map((route: any) => route.id)))
     .all();
 
-  return channels.map((channel) => ({
+  return channels.map((channel: any) => ({
     tokenId: channel.tokenId ?? null,
     accountId: channel.accountId,
     sourceModel: (channel.sourceModel || routeMap.get(channel.routeId)?.modelPattern || '').trim(),
@@ -501,7 +501,7 @@ async function getMatchedExactRouteChannelCandidates(modelPattern: string): Prom
     weight: channel.weight ?? 10,
     enabled: !!channel.enabled,
     manualOverride: !!channel.manualOverride,
-  })).filter((candidate) => candidate.sourceModel.length > 0);
+  })).filter((candidate: any) => candidate.sourceModel.length > 0);
 }
 
 async function populateRouteChannelsByModelPattern(routeId: number, modelPattern: string): Promise<number> {
@@ -523,7 +523,7 @@ async function populateRouteChannelsByModelPattern(routeId: number, modelPattern
     .all();
   const existingPairs = new Set<string>(
     existingChannels
-      .map((channel) => {
+      .map((channel: any) => {
         const tokenId = typeof channel.tokenId === 'number' && Number.isFinite(channel.tokenId) ? channel.tokenId : 0;
         const sourceModel = (channel.sourceModel || '').trim().toLowerCase();
         return `${channel.accountId}::${tokenId}::${sourceModel}`;
@@ -919,8 +919,8 @@ async function fetchChannelsForRouteRows(routes: RouteRow[]): Promise<Map<number
       .all())
     : [];
   const enabledExplicitSourceRouteIds = explicitSourceRoutes
-    .filter((route) => route.enabled && !isExplicitGroupRoute(route) && isExactModelPattern(route.modelPattern))
-    .map((route) => route.id);
+    .filter((route: any) => route.enabled && !isExplicitGroupRoute(route) && isExactModelPattern(route.modelPattern))
+    .map((route: any) => route.id);
   const actualRouteIds = Array.from(new Set([
     ...routes.filter((route) => !isExplicitGroupRoute(route)).map((route) => route.id),
     ...enabledExplicitSourceRouteIds,
@@ -1093,7 +1093,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       .where(eq(schema.routeChannels.routeId, routeId))
       .all();
     const existingPairs = new Set<string>(
-      existingChannels.map((channel) => {
+      existingChannels.map((channel: any) => {
         const tokenId = typeof channel.tokenId === 'number' && Number.isFinite(channel.tokenId) ? channel.tokenId : 0;
         const sourceModel = (channel.sourceModel || '').trim().toLowerCase();
         return `${channel.accountId}::${tokenId}::${sourceModel}`;
@@ -1537,7 +1537,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     const duplicate = (await db.select().from(schema.routeChannels)
       .where(eq(schema.routeChannels.routeId, routeId))
       .all())
-      .some((channel) =>
+      .some((channel: any) =>
         channel.accountId === body.accountId
         && (channel.tokenId ?? null) === (binding.storedTokenId ?? null)
         && (channel.sourceModel || '').trim().toLowerCase() === sourceModel.toLowerCase(),
@@ -1577,13 +1577,13 @@ export async function tokensRoutes(app: FastifyInstance) {
       .where(inArray(schema.routeChannels.id, channelIds))
       .all();
     if (existingChannels.length !== channelIds.length) {
-      const existingIds = new Set(existingChannels.map((channel) => channel.id));
+      const existingIds = new Set(existingChannels.map((channel: any) => channel.id));
       const missingId = channelIds.find((id) => !existingIds.has(id));
       return reply.code(404).send({ success: false, message: `通道不存在: ${missingId}` });
     }
 
     const existingChannelById = new Map<number, typeof existingChannels[number]>(
-      existingChannels.map((channel) => [channel.id, channel]),
+      existingChannels.map((channel: any) => [channel.id, channel]),
     );
     const updatesByRouteId = new Map<number, Array<{ id: number; priority: number }>>();
     for (const update of parsed.updates) {
@@ -1595,7 +1595,7 @@ export async function tokensRoutes(app: FastifyInstance) {
 
     const updatedChannels: Array<typeof schema.routeChannels.$inferSelect> = [];
     for (const [routeId, updates] of updatesByRouteId.entries()) {
-      const routeChannels = existingChannels.filter((channel) => channel.routeId === routeId);
+      const routeChannels = existingChannels.filter((channel: any) => channel.routeId === routeId);
       const result = await applyChannelPriorityUpdates({ existingChannels: routeChannels, updates });
       updatedChannels.push(...result);
     }
@@ -1713,7 +1713,7 @@ export async function tokensRoutes(app: FastifyInstance) {
         return reply.code(400).send({ success: false, message: '该路由暂无可排序通道' });
       }
 
-      const enabledChannelIds = enabledChannels.map((channel) => Number(channel.id));
+      const enabledChannelIds = enabledChannels.map((channel: any) => Number(channel.id));
       const enabledChannelIdSet = new Set<number>(enabledChannelIds);
       const submittedChannelIds: number[] = parsed.ranking.map((item) => item.channelId);
       const submittedChannelIdSet = new Set<number>(submittedChannelIds);
@@ -1879,7 +1879,7 @@ export async function tokensRoutes(app: FastifyInstance) {
         .all()
       : [];
 
-    const channelIds = channelRows.map((row) => row.id);
+    const channelIds = channelRows.map((row: any) => row.id);
     if (channelIds.length > 0) {
       await db.update(schema.routeChannels).set({
         cooldownUntil: null,
@@ -1893,8 +1893,8 @@ export async function tokensRoutes(app: FastifyInstance) {
 
     const affectedRouteIds: number[] = Array.from(new Set(
       channelRows
-        .map((row) => row.routeId)
-        .filter((id): id is number => Number.isFinite(id) && id > 0),
+        .map((row: any) => row.routeId)
+        .filter((id: any): id is number => Number.isFinite(id) && id > 0),
     ));
     await clearRouteDecisionSnapshot(route.id);
     if (affectedRouteIds.length > 0) {

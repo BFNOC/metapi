@@ -520,7 +520,7 @@ async function executeSyncAllAccountTokens() {
   for (let offset = 0; offset < rows.length; offset += SYNC_ALL_BATCH_SIZE) {
     const batch = rows.slice(offset, offset + SYNC_ALL_BATCH_SIZE);
     const batchResults = await Promise.all(
-      batch.map(async (row) => {
+      batch.map(async (row: any) => {
         const result = await executeAccountTokenSync(row);
         appendTokenSyncEvent(result);
         return result;
@@ -661,7 +661,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
       if (valueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY && (body.isDefault || (existing.length === 0 && enabled))) {
         await setDefaultToken(created.id);
-      } else if (valueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY && existing.every((token) => !token.isDefault) && enabled) {
+      } else if (valueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY && existing.every((token: any) => !token.isDefault) && enabled) {
         await setDefaultToken(created.id);
       }
       const coverageRefresh = await refreshCoverageForAccounts([body.accountId]);
@@ -1088,8 +1088,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     const filterMode = token.modelFilterMode || 'none';
 
     const availableModels = rows
-      .filter((r) => r.available)
-      .map((r) => ({
+      .filter((r: any) => r.available)
+      .map((r: any) => ({
         name: r.modelName,
         latencyMs: r.latencyMs,
         checkedAt: r.checkedAt,
@@ -1098,7 +1098,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
     // Merge filteredModels entries that aren't in availability tables
     // so manually-selected models always appear in the list
-    const knownNames = new Set(availableModels.map((m) => m.name));
+    const knownNames = new Set(availableModels.map((m: any) => m.name));
     for (const fm of filteredModels) {
       if (!knownNames.has(fm)) {
         availableModels.push({
@@ -1110,7 +1110,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       }
     }
 
-    const models = availableModels.sort((a, b) => a.name.localeCompare(b.name));
+    const models = availableModels.sort((a: any, b: any) => a.name.localeCompare(b.name));
 
     return {
       tokenId,
@@ -1119,7 +1119,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       filteredModels,
       models,
       totalCount: models.length,
-      filteredCount: models.filter((m) => m.filtered).length,
+      filteredCount: models.filter((m: any) => m.filtered).length,
     };
   });
 
@@ -1309,7 +1309,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         )
         .all();
       if (tokenModels.length > 0) {
-        modelNames = tokenModels.map((m) => m.modelName);
+        modelNames = tokenModels.map((m: any) => m.modelName);
       } else {
         // Fallback to account-level availability
         const accountModels = await db.select({ modelName: schema.modelAvailability.modelName })
@@ -1321,7 +1321,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
             ),
           )
           .all();
-        modelNames = accountModels.map((m) => m.modelName);
+        modelNames = accountModels.map((m: any) => m.modelName);
       }
     }
 

@@ -63,12 +63,12 @@ async function loadCoolingChannelCandidates(nowMs = Date.now()): Promise<Recover
     .all();
 
   return rows
-    .filter((row) => row.route_channels.enabled !== false)
-    .filter((row) => row.accounts.status === 'active')
-    .filter((row) => row.sites.status === 'active')
-    .filter((row) => !row.sites.probeDisabled)
-    .filter((row) => typeof row.route_channels.cooldownUntil === 'string' && row.route_channels.cooldownUntil > new Date(nowMs).toISOString())
-    .map((row) => {
+    .filter((row: any) => row.route_channels.enabled !== false)
+    .filter((row: any) => row.accounts.status === 'active')
+    .filter((row: any) => row.sites.status === 'active')
+    .filter((row: any) => !row.sites.probeDisabled)
+    .filter((row: any) => typeof row.route_channels.cooldownUntil === 'string' && row.route_channels.cooldownUntil > new Date(nowMs).toISOString())
+    .map((row: any) => {
       const apiToken = resolveChannelProbeTokenValue({
         channel: row.route_channels,
         account: row.accounts,
@@ -89,10 +89,10 @@ async function loadCoolingChannelCandidates(nowMs = Date.now()): Promise<Recover
         cooldownUntil: row.route_channels.cooldownUntil || '',
       } satisfies RecoveryProbeCandidate;
     })
-    .filter((row) => row.siteUrl.trim().length > 0)
-    .filter((row) => row.modelName.trim().length > 0)
-    .filter((row) => row.apiToken.trim().length > 0)
-    .sort((left, right) => left.cooldownUntil.localeCompare(right.cooldownUntil));
+    .filter((row: any) => row.siteUrl.trim().length > 0)
+    .filter((row: any) => row.modelName.trim().length > 0)
+    .filter((row: any) => row.apiToken.trim().length > 0)
+    .sort((left: any, right: any) => left.cooldownUntil.localeCompare(right.cooldownUntil));
 }
 
 export async function runChannelRecoveryProbeSweep(nowMs = Date.now()): Promise<{

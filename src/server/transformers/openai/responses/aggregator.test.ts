@@ -190,11 +190,11 @@ describe('serializeConvertedResponsesEvents', () => {
     const payloads = parseSsePayloads(completedLines);
     const completed = payloads.find((item) => item.type === 'response.completed');
     expect(completed).toBeTruthy();
-    expect(completed?.response?.output?.[0]).toMatchObject({
+    expect((completed?.response as any)?.output?.[0]).toMatchObject({
       type: 'reasoning',
       encrypted_content: 'enc-only',
     });
-    expect((completed?.response?.output?.[0] as any)?.id).toMatch(/^rs_/);
+    expect(((completed?.response as any)?.output?.[0] as any)?.id).toMatch(/^rs_/);
   });
 
   it('starts a synthetic reasoning item when fallback streams only carry encrypted reasoning signatures', () => {
@@ -253,7 +253,7 @@ describe('serializeConvertedResponsesEvents', () => {
 
     const payloads = parseSsePayloads(completedLines);
     const completed = payloads.find((item) => item.type === 'response.completed');
-    expect(completed?.response?.output).toEqual([
+    expect((completed?.response as any)?.output).toEqual([
       {
         id: 'rs_0',
         type: 'reasoning',
@@ -364,7 +364,7 @@ describe('serializeConvertedResponsesEvents', () => {
     const completedLines = completeResponsesStream(state, streamContext, usage);
     const payloads = parseSsePayloads(completedLines);
     const completed = payloads.find((item) => item.type === 'response.completed');
-    expect(completed?.response?.output).toEqual([
+    expect((completed?.response as any)?.output).toEqual([
       {
         id: 'rs_0',
         type: 'reasoning',
@@ -389,7 +389,7 @@ describe('serializeConvertedResponsesEvents', () => {
         ],
       },
     ]);
-    expect(completed?.response?.output_text).toBe('final answer');
+    expect((completed?.response as any)?.output_text).toBe('final answer');
   });
 
   it('keeps synthetic message and function call items separate when one event contains both', () => {
@@ -439,7 +439,7 @@ describe('serializeConvertedResponsesEvents', () => {
     const completedLines = completeResponsesStream(state, streamContext, usage);
     const payloads = parseSsePayloads(completedLines);
     const completed = payloads.find((item) => item.type === 'response.completed');
-    expect(completed?.response?.output).toEqual([
+    expect((completed?.response as any)?.output).toEqual([
       {
         id: 'msg_0',
         type: 'message',
@@ -1943,16 +1943,16 @@ describe('serializeConvertedResponsesEvents', () => {
     const completionLines = completeResponsesStream(state, streamContext, usage);
     const completionPayloads = parseSsePayloads(completionLines);
     const completed = completionPayloads.find((item) => item.type === 'response.completed');
-    expect(completed?.response?.output).toHaveLength(2);
-    expect(completed?.response?.output?.find((item: any) => item.type === 'reasoning')).toMatchObject({
+    expect((completed?.response as any)?.output).toHaveLength(2);
+    expect((completed?.response as any)?.output?.find((item: any) => item.type === 'reasoning')).toMatchObject({
       type: 'reasoning',
       summary: [{ type: 'summary_text', text: 'think first' }],
     });
-    expect(completed?.response?.output?.find((item: any) => item.type === 'message')).toMatchObject({
+    expect((completed?.response as any)?.output?.find((item: any) => item.type === 'message')).toMatchObject({
       type: 'message',
       content: [{ type: 'output_text', text: 'visible answer' }],
     });
-    expect(completed?.response?.output_text).toBe('visible answer');
+    expect((completed?.response as any)?.output_text).toBe('visible answer');
   });
 
   it('keeps synthetic message and tool call items separate when content and tool deltas arrive together', () => {
@@ -1982,12 +1982,12 @@ describe('serializeConvertedResponsesEvents', () => {
     const completionLines = completeResponsesStream(state, streamContext, usage);
     const completionPayloads = parseSsePayloads(completionLines);
     const completed = completionPayloads.find((item) => item.type === 'response.completed');
-    expect(completed?.response?.output).toHaveLength(2);
-    expect(completed?.response?.output?.find((item: any) => item.type === 'message')).toMatchObject({
+    expect((completed?.response as any)?.output).toHaveLength(2);
+    expect((completed?.response as any)?.output?.find((item: any) => item.type === 'message')).toMatchObject({
       type: 'message',
       content: [{ type: 'output_text', text: 'hi' }],
     });
-    expect(completed?.response?.output?.find((item: any) => item.type === 'function_call')).toMatchObject({
+    expect((completed?.response as { output?: any[] } | undefined)?.output?.find((item: any) => item.type === 'function_call')).toMatchObject({
       type: 'function_call',
       call_id: 'call_1',
       name: 'Glob',

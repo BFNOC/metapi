@@ -186,7 +186,7 @@ function waitForSocketOpen(socket: WebSocket) {
 
 function waitForSocketUpgrade(socket: WebSocket) {
   return new Promise<{ headers: Record<string, string | string[] | undefined> }>((resolve, reject) => {
-    socket.once('upgrade', (response) => resolve({ headers: response.headers as Record<string, string | string[] | undefined> }));
+    socket.once('upgrade', (response: any) => resolve({ headers: response.headers as Record<string, string | string[] | undefined> }));
     socket.once('error', reject);
   });
 }
@@ -308,7 +308,7 @@ describe('responses websocket transport', () => {
 
     upstreamServer = new WebSocketServer({ port: 0 });
     upstreamSockets = new Set();
-    upstreamServer.on('connection', (socket, request) => {
+    upstreamServer.on('connection', (socket: any, request: any) => {
       upstreamSockets.add(socket);
       socket.once('close', () => {
         upstreamSockets.delete(socket);
@@ -318,7 +318,7 @@ describe('responses websocket transport', () => {
         Object.entries(request.headers)
           .map(([key, value]) => [key, Array.isArray(value) ? value[0] || '' : value || '']),
       );
-      socket.on('message', (payload) => {
+      socket.on('message', (payload: any) => {
         const parsed = JSON.parse(String(payload)) as Record<string, unknown>;
         upstreamRequests.push(parsed);
         upstreamMessageHandler(socket, parsed, upstreamRequests.length);

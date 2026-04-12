@@ -55,7 +55,7 @@ export async function searchRoutes(app: FastifyInstance) {
           .limit(perCategory).all()
       );
     // Deduplicate by id
-    const uniqueSites = [...new Map(sites.map(s => [s.id, s])).values()].slice(0, perCategory);
+    const uniqueSites = [...new Map(sites.map((s: any) => [s.id, s])).values()].slice(0, perCategory);
 
     // Search accounts (join with sites for site name)
     const accountResults = await db.select().from(schema.accounts)
@@ -95,7 +95,7 @@ export async function searchRoutes(app: FastifyInstance) {
       .orderBy(desc(schema.accountTokens.updatedAt))
       .limit(perCategory)
       .all();
-    const accountTokens = tokenResults.map(r => ({
+    const accountTokens = tokenResults.map((r: any) => ({
       ...r.account_tokens,
       account: {
         id: r.accounts.id,
@@ -111,7 +111,7 @@ export async function searchRoutes(app: FastifyInstance) {
       .where(like(schema.checkinLogs.message, q))
       .orderBy(desc(schema.checkinLogs.createdAt))
       .limit(perCategory).all())
-      .map(r => ({ ...r.checkin_logs, account: r.accounts }));
+      .map((r: any) => ({ ...r.checkin_logs, account: r.accounts }));
 
     // Search proxy logs (by model name)
     const proxyLogs = await db.select(proxyLogBaseFields).from(schema.proxyLogs)

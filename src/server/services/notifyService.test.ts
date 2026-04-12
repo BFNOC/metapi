@@ -25,7 +25,7 @@ const withExplicitProxyRequestInitMock = vi.fn(
 );
 
 vi.mock('./siteProxy.js', () => ({
-  withExplicitProxyRequestInit: (...args: unknown[]) => withExplicitProxyRequestInitMock(...args),
+  withExplicitProxyRequestInit: withExplicitProxyRequestInitMock,
 }));
 
 describe('notifyService', () => {

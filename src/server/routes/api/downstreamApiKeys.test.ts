@@ -258,7 +258,7 @@ describe('downstream api keys routes', () => {
     });
 
     const disabledRows = await db.select().from(schema.downstreamApiKeys).all();
-    expect(disabledRows.every((row) => row.enabled === false)).toBe(true);
+    expect(disabledRows.every((row: any) => row.enabled === false)).toBe(true);
 
     const resetRes = await app.inject({
       method: 'POST',
@@ -270,7 +270,7 @@ describe('downstream api keys routes', () => {
     });
     expect(resetRes.statusCode).toBe(200);
     const resetRows = await db.select().from(schema.downstreamApiKeys).all();
-    expect(resetRows.every((row) => Number(row.usedCost) === 0 && Number(row.usedRequests) === 0)).toBe(true);
+    expect(resetRows.every((row: any) => Number(row.usedCost) === 0 && Number(row.usedRequests) === 0)).toBe(true);
 
     const deleteRes = await app.inject({
       method: 'POST',
@@ -305,7 +305,7 @@ describe('downstream api keys routes', () => {
       method: 'POST',
       url: '/api/downstream-keys/batch',
       payload: {
-        ids: inserted.map((item) => item.id),
+        ids: inserted.map((item: any) => item.id),
         action: 'updateMetadata',
         groupOperation: 'set',
         groupName: '新分组',
@@ -317,7 +317,7 @@ describe('downstream api keys routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({
       success: true,
-      successIds: inserted.map((item) => item.id),
+      successIds: inserted.map((item: any) => item.id),
       failedItems: [],
     });
 
@@ -326,7 +326,7 @@ describe('downstream api keys routes', () => {
     for (const row of rows) {
       expect(row.groupName).toBe('新分组');
     }
-    const views = rows.map((row) => ({
+    const views = rows.map((row: any) => ({
       id: row.id,
       groupName: row.groupName,
       tags: JSON.parse(String(row.tags || '[]')),

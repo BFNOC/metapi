@@ -39,7 +39,7 @@ describe('sub2apiRefreshSingleflight', () => {
 
     expect(refreshSub2ApiManagedSessionMock).toHaveBeenCalledTimes(1);
 
-    resolveRefresh?.({
+    resolveRefresh!({
       accessToken: 'fresh-access-token',
       extraConfig: '{"sub2apiAuth":{"refreshToken":"next-refresh-token"}}',
     });
@@ -80,7 +80,7 @@ describe('sub2apiRefreshSingleflight', () => {
 
     expect(refreshSub2ApiManagedSessionMock).toHaveBeenCalledTimes(1);
 
-    rejectRefresh?.(new Error('refresh rejected'));
+    rejectRefresh!(new Error('refresh rejected'));
 
     await expect(first).rejects.toThrow('refresh rejected');
     await expect(second).rejects.toThrow('refresh rejected');

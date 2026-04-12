@@ -506,7 +506,7 @@ export async function listOauthConnections(options: {
     .offset(offset)
     .all();
 
-  const accountIds = rows.map((row) => row.accounts.id);
+  const accountIds = rows.map((row: any) => row.accounts.id);
   if (accountIds.length <= 0) {
     return { items: [], total, limit, offset };
   }
@@ -540,7 +540,7 @@ export async function listOauthConnections(options: {
     routeChannelCountByAccount.set(row.accountId, row.count ?? 0);
   }
 
-  const items = rows.flatMap((row) => {
+  const items = rows.flatMap((row: any) => {
     const oauth = getOauthInfoFromAccount(row.accounts);
     if (!oauth) return [];
     const models = modelMap.get(row.accounts.id) || [];

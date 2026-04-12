@@ -1193,8 +1193,8 @@ async function loadEnabledRoutes(nowMs = Date.now()): Promise<RouteRow[]> {
     .where(eq(schema.tokenRoutes.enabled, true))
     .all();
   const explicitGroupRouteIds = rawRoutes
-    .filter((route) => normalizeRouteMode(route.routeMode) === 'explicit_group')
-    .map((route) => route.id);
+    .filter((route: any) => normalizeRouteMode(route.routeMode) === 'explicit_group')
+    .map((route: any) => route.id);
   const sourceRows = explicitGroupRouteIds.length > 0
     ? await db.select().from(schema.routeGroupSources)
       .where(inArray(schema.routeGroupSources.groupRouteId, explicitGroupRouteIds))
@@ -1207,7 +1207,7 @@ async function loadEnabledRoutes(nowMs = Date.now()): Promise<RouteRow[]> {
     }
     sourceIdsByRouteId.get(row.groupRouteId)!.push(row.sourceRouteId);
   }
-  const routes = rawRoutes.map((route) => ({
+  const routes = rawRoutes.map((route: any) => ({
     ...route,
     routeMode: normalizeRouteMode(route.routeMode),
     sourceRouteIds: Array.from(new Set(sourceIdsByRouteId.get(route.id) ?? [])),
@@ -1256,7 +1256,7 @@ async function loadRouteMatch(route: RouteRow, nowMs = Date.now()): Promise<Rout
       .all()
     : [];
 
-  const mapped = channels.map((row) => ({
+  const mapped = channels.map((row: any) => ({
     channel: {
       ...row.route_channels,
       sourceModel: normalizeChannelSourceModel(row.route_channels.sourceModel)

@@ -7,7 +7,7 @@ import {
 
 class TestStandardApiProviderAdapter extends StandardApiProviderAdapterBase {
   readonly platformName = 'test-standard';
-  fetchJsonImpl = async () => ({ data: [] as Array<{ id: string }> });
+  fetchJsonImpl = async (..._args: any[]) => ({ data: [] as Array<{ id: string }> });
 
   async detect(_url: string): Promise<boolean> {
     return false;
@@ -17,7 +17,7 @@ class TestStandardApiProviderAdapter extends StandardApiProviderAdapterBase {
     return [];
   }
 
-  protected override async fetchJson<T>(url: string, options?: Parameters<StandardApiProviderAdapterBase['fetchJson']>[1]): Promise<T> {
+  protected override async fetchJson<T>(url: string, options?: any): Promise<T> {
     return this.fetchJsonImpl(url, options) as Promise<T>;
   }
 
@@ -75,7 +75,7 @@ describe('standardApiProvider helpers', () => {
 
   it('rejects invalid payload shapes instead of silently treating them as no models', async () => {
     const adapter = new TestStandardApiProviderAdapter();
-    adapter.fetchJsonImpl = async () => ({ data: 'not-an-array' });
+    adapter.fetchJsonImpl = async () => ({ data: 'not-an-array' } as any);
 
     await expect(adapter.fetchModelsForTest({
       baseUrl: 'https://api.example.com',

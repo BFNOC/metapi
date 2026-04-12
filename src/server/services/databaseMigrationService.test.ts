@@ -146,8 +146,8 @@ describe('databaseMigrationService', () => {
   it.each(['postgres', 'mysql', 'sqlite'] as const)('creates or patches sites schema with use_system_proxy and custom_headers for %s', async (dialect) => {
     const executedSql: string[] = [];
     const liveContract = cloneContract(currentContract);
-    delete liveContract.tables.sites.columns.use_system_proxy;
-    delete liveContract.tables.sites.columns.custom_headers;
+    delete (liveContract.tables.sites.columns as any).use_system_proxy;
+    delete (liveContract.tables.sites.columns as any).custom_headers;
 
     await __databaseMigrationServiceTestUtils.ensureSchema({
       dialect,
@@ -163,8 +163,8 @@ describe('databaseMigrationService', () => {
       queryScalar: async () => 1,
       close: async () => {},
     }, {
-      currentContract,
-      liveContract,
+      currentContract: currentContract as any,
+      liveContract: liveContract as any,
     });
 
     const useSystemProxySql = executedSql.find((sqlText) => sqlText.includes('use_system_proxy'));
@@ -177,7 +177,7 @@ describe('databaseMigrationService', () => {
   it.each(['postgres', 'mysql'] as const)('patches token_routes decision snapshot columns for %s', async (dialect) => {
     const executedSql: string[] = [];
     const liveContract = cloneContract(currentContract);
-    delete liveContract.tables.token_routes.columns.decision_snapshot;
+    delete (liveContract.tables.token_routes.columns as any).decision_snapshot;
 
     await __databaseMigrationServiceTestUtils.ensureSchema({
       dialect,
@@ -193,8 +193,8 @@ describe('databaseMigrationService', () => {
       queryScalar: async () => 1,
       close: async () => {},
     }, {
-      currentContract,
-      liveContract,
+      currentContract: currentContract as any,
+      liveContract: liveContract as any,
     });
 
     expect(
@@ -218,6 +218,7 @@ describe('databaseMigrationService', () => {
         }],
         siteAnnouncements: [],
         siteDisabledModels: [],
+        siteAllowedModels: [],
         accounts: [],
         accountTokens: [],
         checkinLogs: [],
@@ -225,6 +226,7 @@ describe('databaseMigrationService', () => {
         tokenModelAvailability: [],
         tokenRoutes: [],
         routeChannels: [],
+        routeGroupSources: [],
         proxyLogs: [],
         proxyVideoTasks: [],
         proxyFiles: [],
@@ -850,6 +852,7 @@ describe('databaseMigrationService', () => {
       accounts: {
         sites: [],
         siteDisabledModels: [],
+        siteAllowedModels: [],
         accounts: [],
         accountTokens: [],
         checkinLogs: [],
@@ -984,6 +987,7 @@ describe('databaseMigrationService', () => {
         sites: [],
         siteAnnouncements: [],
         siteDisabledModels: [],
+        siteAllowedModels: [],
         accounts: [],
         accountTokens: [],
         checkinLogs: [],

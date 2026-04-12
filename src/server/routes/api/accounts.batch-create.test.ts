@@ -110,8 +110,8 @@ describe('accounts batch API key creation', () => {
 
     const accounts = await db.select().from(schema.accounts).orderBy(schema.accounts.id).all();
     expect(accounts).toHaveLength(2);
-    expect(accounts.map((item) => item.apiToken)).toEqual(['sk-batch-a', 'sk-batch-b']);
-    expect(accounts.map((item) => item.username)).toEqual(['batch-key #1', 'batch-key #2']);
+    expect(accounts.map((item: any) => item.apiToken)).toEqual(['sk-batch-a', 'sk-batch-b']);
+    expect(accounts.map((item: any) => item.username)).toEqual(['batch-key #1', 'batch-key #2']);
   });
 
   it('treats accessTokens payloads as batch API key creation without credentialMode', async () => {
@@ -140,7 +140,7 @@ describe('accounts batch API key creation', () => {
     expect(verifyTokenMock).not.toHaveBeenCalled();
 
     const accounts = await db.select().from(schema.accounts).orderBy(schema.accounts.id).all();
-    expect(accounts.map((item) => item.apiToken)).toEqual(['sk-array-a', 'sk-array-b']);
+    expect(accounts.map((item: any) => item.apiToken)).toEqual(['sk-array-a', 'sk-array-b']);
   });
 
   it('returns an aggregated success payload when batch creation partially fails', async () => {

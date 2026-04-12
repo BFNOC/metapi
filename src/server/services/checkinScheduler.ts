@@ -11,11 +11,11 @@ import { cleanupConfiguredLogs, normalizeLogCleanupRetentionDays } from './logCl
 
 export type CheckinScheduleMode = 'cron' | 'interval';
 
-let checkinTask: cron.ScheduledTask | null = null;
+let checkinTask: ReturnType<typeof cron.schedule> | null = null;
 let checkinIntervalTimer: ReturnType<typeof setInterval> | null = null;
-let balanceTask: cron.ScheduledTask | null = null;
-let dailySummaryTask: cron.ScheduledTask | null = null;
-let logCleanupTask: cron.ScheduledTask | null = null;
+let balanceTask: ReturnType<typeof cron.schedule> | null = null;
+let dailySummaryTask: ReturnType<typeof cron.schedule> | null = null;
+let logCleanupTask: ReturnType<typeof cron.schedule> | null = null;
 const intervalAttemptByAccount = new Map<number, number>();
 
 const DAILY_SUMMARY_DEFAULT_CRON = '58 23 * * *';

@@ -323,7 +323,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       subscriptionBySiteId[row.siteId] = aggregateSiteSubscription(subscriptionBySiteId[row.siteId], row.extraConfig);
     }
 
-    return siteRows.map((site) => ({
+    return siteRows.map((site: any) => ({
       ...site,
       totalBalance: Math.round((totalBalanceBySiteId[site.id] || 0) * 1_000_000) / 1_000_000,
       subscriptionSummary: subscriptionBySiteId[site.id] || null,
@@ -379,7 +379,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
 
     const existingSites = await db.select().from(schema.sites).all();
-    const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
+    const maxSortOrder = existingSites.reduce((max: any, site: any) => Math.max(max, site.sortOrder || 0), -1);
     const normalizedUrl = normalizeSiteUrl(url);
 
     let detectedPlatform = platform;
@@ -635,7 +635,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       .from(schema.siteDisabledModels)
       .where(eq(schema.siteDisabledModels.siteId, id))
       .all();
-    return { siteId: id, models: rows.map((r) => r.modelName) };
+    return { siteId: id, models: rows.map((r: any) => r.modelName) };
   });
 
   // Update disabled models for a site (full replace)
@@ -710,8 +710,8 @@ export async function sitesRoutes(app: FastifyInstance) {
       .all();
 
     const models = Array.from(new Set([
-      ...accountModels.map((r) => r.modelName.trim()),
-      ...tokenModels.map((r) => r.modelName.trim()),
+      ...accountModels.map((r: any) => r.modelName.trim()),
+      ...tokenModels.map((r: any) => r.modelName.trim()),
     ])).filter((m) => m.length > 0).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
     return { siteId: id, models };
@@ -731,7 +731,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       .from(schema.siteAllowedModels)
       .where(eq(schema.siteAllowedModels.siteId, id))
       .all();
-    return { siteId: id, models: rows.map((r) => r.modelName) };
+    return { siteId: id, models: rows.map((r: any) => r.modelName) };
   });
 
   // Update allowed models for a site (full replace, atomic with mode switch)
@@ -760,7 +760,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'Invalid modelFilterMode. Expected deny-list or allow-list.' });
     }
 
-    await db.transaction(async (tx) => {
+    await db.transaction(async (tx: any) => {
       await tx.delete(schema.siteAllowedModels)
         .where(eq(schema.siteAllowedModels.siteId, id))
         .run();
@@ -809,7 +809,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       rawModels.filter((m): m is string => typeof m === 'string').map((m) => m.trim()).filter((m) => m.length > 0),
     ));
 
-    await db.transaction(async (tx) => {
+    await db.transaction(async (tx: any) => {
       // Update mode
       await tx.update(schema.sites)
         .set({ modelFilterMode: normalizedMode, updatedAt: new Date().toISOString() })
@@ -894,7 +894,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           .from(schema.siteAllowedModels)
           .where(eq(schema.siteAllowedModels.siteId, id))
           .all();
-        modelNames = allowedRows.map((r) => r.modelName);
+        modelNames = allowedRows.map((r: any) => r.modelName);
       } else {
         // Get all available models minus disabled ones
         const accountModels = await db.select({ modelName: schema.modelAvailability.modelName })
@@ -912,10 +912,10 @@ export async function sitesRoutes(app: FastifyInstance) {
           .from(schema.siteDisabledModels)
           .where(eq(schema.siteDisabledModels.siteId, id))
           .all();
-        const disabledSet = new Set(disabledRows.map((r) => r.modelName.toLowerCase()));
+        const disabledSet = new Set(disabledRows.map((r: any) => r.modelName.toLowerCase()));
         const allModels = new Set([
-          ...accountModels.map((r) => r.modelName.trim()),
-          ...tokenModels.map((r) => r.modelName.trim()),
+          ...accountModels.map((r: any) => r.modelName.trim()),
+          ...tokenModels.map((r: any) => r.modelName.trim()),
         ]);
         modelNames = Array.from(allModels).filter((m) => m.length > 0 && !disabledSet.has(m.toLowerCase()));
       }

@@ -44,6 +44,63 @@ type CreateResponsesEndpointStrategyInput = {
   ) => Promise<UpstreamResponse>;
 };
 
+const RESPONSES_FORBIDDEN_BLOCK_SIGNALS = [
+  'your request was blocked',
+  'blocked',
+  'not allowed',
+  'access denied',
+  'endpoint not found',
+  'not supported',
+] as const;
+
+const RESPONSES_FORBIDDEN_BLOCK_EXCLUSIONS = [
+  'invalid token',
+  'expired',
+  'unauthorized',
+  'authentication',
+  'api key',
+  'api_key',
+  'quota',
+  'rate limit',
+  'rate_limit',
+  'billing',
+  'workspace',
+  'model not allowed',
+  'ip not allowed',
+  'account mismatch',
+] as const;
+
+function collectResponsesDowngradeErrorText(rawErrText: string): string {
+  const normalizedRawText = rawErrText.trim().toLowerCase();
+  if (!normalizedRawText) return '';
+
+  try {
+    const parsed = JSON.parse(rawErrText) as Record<string, unknown>;
+    const error = (parsed.error && typeof parsed.error === 'object')
+      ? parsed.error as Record<string, unknown>
+      : parsed;
+    const message = typeof error.message === 'string' ? error.message.trim().toLowerCase() : '';
+    const code = typeof error.code === 'string' ? error.code.trim().toLowerCase() : '';
+    const type = typeof error.type === 'string' ? error.type.trim().toLowerCase() : '';
+    return [normalizedRawText, message, code, type].filter(Boolean).join(' ');
+  } catch {
+    return normalizedRawText;
+  }
+}
+
+function shouldDowngradeResponsesForbiddenBlock(ctx: EndpointAttemptContext): boolean {
+  if (ctx.response.status !== 403) return false;
+  if (ctx.request.endpoint !== 'responses') return false;
+
+  const errorText = collectResponsesDowngradeErrorText(ctx.rawErrText);
+  if (!errorText) return false;
+  if (RESPONSES_FORBIDDEN_BLOCK_EXCLUSIONS.some((term) => errorText.includes(term))) {
+    return false;
+  }
+
+  return RESPONSES_FORBIDDEN_BLOCK_SIGNALS.some((term) => errorText.includes(term));
+}
+
 export function createResponsesEndpointStrategy(input: CreateResponsesEndpointStrategyInput) {
   return {
     async tryRecover(ctx: EndpointAttemptContext): Promise<EndpointRecoverResult> {
@@ -113,6 +170,7 @@ export function createResponsesEndpointStrategy(input: CreateResponsesEndpointSt
       return (
         ctx.response.status >= 500
         || isEndpointDowngradeError(ctx.response.status, ctx.rawErrText)
+        || shouldDowngradeResponsesForbiddenBlock(ctx)
         || shouldDowngradeResponsesChatToMessages(
           ctx.request.path,
           ctx.response.status,

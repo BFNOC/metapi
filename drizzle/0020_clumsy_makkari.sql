@@ -1,0 +1,1 @@
+ALTER TABLE `sites` ADD `endpoint_overrides` text;

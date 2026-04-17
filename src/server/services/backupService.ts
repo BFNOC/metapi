@@ -1,10 +1,14 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import cron from 'node-cron';
-import { db, schema } from '../db/index.js';
+import { db, runtimeDbDialect, schema } from '../db/index.js';
 import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { upsertSetting } from '../db/upsertSetting.js';
 import { mergeAccountExtraConfig } from './accountExtraConfig.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
+import {
+  parseEndpointOverrideValue,
+  serializeEndpointOverridesValue,
+} from '../proxy-core/endpointOverrides.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
 
 const BACKUP_VERSION = '2.1';
@@ -38,8 +42,14 @@ export interface BackupWebdavState {
 }
 
 type SiteRow = typeof schema.sites.$inferSelect;
+type BackupSiteRow = Omit<SiteRow, 'endpointOverrides'> & {
+  endpointOverrides?: string[] | null;
+};
 type AccountRow = typeof schema.accounts.$inferSelect;
 type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
+type BackupAccountTokenRow = Omit<AccountTokenRow, 'endpointOverrides'> & {
+  endpointOverrides?: string[] | null;
+};
 type TokenRouteRow = typeof schema.tokenRoutes.$inferSelect;
 type RouteChannelRow = typeof schema.routeChannels.$inferSelect;
 type RouteGroupSourceRow = typeof schema.routeGroupSources.$inferSelect;
@@ -52,8 +62,9 @@ type CheckinLogRow = typeof schema.checkinLogs.$inferSelect;
 type DownstreamApiKeyRow = typeof schema.downstreamApiKeys.$inferSelect;
 type SiteAnnouncementRow = typeof schema.siteAnnouncements.$inferSelect;
 
-type BackupAccountRow = Omit<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>
-  & Partial<Pick<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>>;
+type BackupAccountRow = Omit<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh' | 'endpointOverrides'>
+  & Partial<Pick<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>>
+  & { endpointOverrides?: string[] | null };
 
 type BackupRouteChannelRow = Omit<RouteChannelRow,
   'successCount'
@@ -102,9 +113,9 @@ type BackupDownstreamApiKeyRow = Pick<DownstreamApiKeyRow,
 > & Partial<Pick<DownstreamApiKeyRow, 'usedCost' | 'usedRequests' | 'lastUsedAt'>>;
 
 interface AccountsBackupSection {
-  sites: SiteRow[];
+  sites: BackupSiteRow[];
   accounts: BackupAccountRow[];
-  accountTokens: AccountTokenRow[];
+  accountTokens: BackupAccountTokenRow[];
   tokenRoutes: TokenRouteRow[];
   routeChannels: BackupRouteChannelRow[];
   routeGroupSources: RouteGroupSourceRow[];
@@ -271,6 +282,102 @@ function asBoolean(value: unknown, fallback = false): boolean {
 function asNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function parseStoredEndpointOverrides(value: unknown): string[] | null {
+  const parsed = parseEndpointOverrideValue(value);
+  return parsed.present ? parsed.endpoints : null;
+}
+
+async function hasSiteEndpointOverridesColumn(): Promise<boolean> {
+  const readCount = (rows: unknown): number => {
+    if (!Array.isArray(rows) || rows.length === 0) return 0;
+    const first = rows[0] as unknown;
+    if (Array.isArray(first)) {
+      return Number(first[0] || 0);
+    }
+    if (first && typeof first === 'object') {
+      return Number((first as any).count || (first as any).COUNT || (first as any)['COUNT(*)'] || 0);
+    }
+    return Number(first || 0);
+  };
+
+  if (runtimeDbDialect === 'sqlite') {
+    const rows = await db.all(sql<{ count: number }>`
+      SELECT COUNT(*) AS count
+      FROM pragma_table_info('sites')
+      WHERE name = 'endpoint_overrides'
+    `);
+    return readCount(rows) > 0;
+  }
+
+  if (runtimeDbDialect === 'mysql') {
+    const rows = await db.all(sql<{ count: number }>`
+      SELECT COUNT(*) AS count
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name = 'sites'
+        AND column_name = 'endpoint_overrides'
+    `);
+    return readCount(rows) > 0;
+  }
+
+  const rows = await db.all(sql<{ count: number }>`
+    SELECT COUNT(*) AS count
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'sites'
+      AND column_name = 'endpoint_overrides'
+  `);
+  return readCount(rows) > 0;
+}
+
+async function loadAllSiteEndpointOverrides(): Promise<Map<number, string[] | null>> {
+  const bySiteId = new Map<number, string[] | null>();
+  if (!(await hasSiteEndpointOverridesColumn())) {
+    return bySiteId;
+  }
+
+  const rows = await db.all(sql<{ id: number; endpointOverrides: string | null }>`
+    SELECT id, endpoint_overrides AS endpointOverrides
+    FROM sites
+    ORDER BY id ASC
+  `);
+  for (const row of rows as unknown[]) {
+    if (Array.isArray(row)) {
+      const siteId = Number(row[0] || 0);
+      if (siteId > 0) {
+        bySiteId.set(siteId, parseStoredEndpointOverrides(row[1]));
+      }
+      continue;
+    }
+
+    if (row && typeof row === 'object') {
+      const siteId = Number((row as any).id || 0);
+      if (siteId > 0) {
+        bySiteId.set(
+          siteId,
+          parseStoredEndpointOverrides((row as any).endpointOverrides ?? (row as any).endpoint_overrides),
+        );
+      }
+    }
+  }
+  return bySiteId;
+}
+
+async function writeSiteEndpointOverrides(
+  executor: Pick<typeof db, 'run'>,
+  siteId: number,
+  endpointOverrides: unknown,
+): Promise<void> {
+  if (!(await hasSiteEndpointOverridesColumn())) {
+    return;
+  }
+  await executor.run(sql`
+    UPDATE sites
+    SET endpoint_overrides = ${serializeEndpointOverridesValue(endpointOverrides)}
+    WHERE id = ${siteId}
+  `);
 }
 
 function toIsoString(value: unknown): string {
@@ -652,7 +759,7 @@ function resolveImportedProfilePlatform(apiType: unknown, baseUrl: string): stri
 }
 
 function pushDefaultImportedToken(
-  rows: AccountTokenRow[],
+  rows: BackupAccountTokenRow[],
   nextId: () => number,
   accountId: number,
   token: string | null,
@@ -673,6 +780,7 @@ function pushDefaultImportedToken(
     modelFilterMode: null,
     filteredModels: null,
     modelMapping: null,
+    endpointOverrides: null,
     createdAt,
     updatedAt,
   });
@@ -763,6 +871,7 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       apiKey: null,
       modelFilterMode: 'deny-list',
       probeDisabled: false,
+      endpointOverrides: null,
       createdAt: input.createdAt,
       updatedAt: input.updatedAt,
     });
@@ -882,6 +991,7 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       lastCheckinAt: null,
       lastBalanceRefresh: null,
       extraConfig: mergeAccountExtraConfig(undefined, extraConfigPatch),
+      endpointOverrides: null,
       createdAt,
       updatedAt,
     });
@@ -940,6 +1050,7 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
         source: 'all-api-hub-profile',
         importedProfileId: asString(profile.id) || undefined,
       }),
+      endpointOverrides: null,
       createdAt,
       updatedAt,
     });
@@ -967,9 +1078,9 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
   const rows = Array.isArray(accountsContainer?.accounts) ? (accountsContainer as Record<string, unknown>).accounts as unknown[] : null;
   if (!rows) return null;
 
-  const sites: SiteRow[] = [];
-  const accounts: AccountRow[] = [];
-  const accountTokens: AccountTokenRow[] = [];
+  const sites: BackupSiteRow[] = [];
+  const accounts: BackupAccountRow[] = [];
+  const accountTokens: BackupAccountTokenRow[] = [];
   const tokenRoutes: TokenRouteRow[] = [];
   const routeChannels: RouteChannelRow[] = [];
 
@@ -1008,6 +1119,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         apiKey: null,
         modelFilterMode: 'deny-list',
         probeDisabled: false,
+        endpointOverrides: null,
         createdAt: toIsoString(item.created_at),
         updatedAt: toIsoString(item.updated_at),
       });
@@ -1068,6 +1180,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
       lastCheckinAt: null,
       lastBalanceRefresh: null,
       extraConfig: JSON.stringify(extraConfigPayload),
+      endpointOverrides: null,
       createdAt,
       updatedAt,
     });
@@ -1086,6 +1199,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         modelFilterMode: null,
         filteredModels: null,
         modelMapping: null,
+        endpointOverrides: null,
         createdAt,
         updatedAt,
       });
@@ -1305,6 +1419,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     siteAllowedModels,
     manualModels,
     downstreamApiKeys,
+    siteEndpointOverridesById,
   ] = await Promise.all([
     db.select().from(schema.sites).orderBy(asc(schema.sites.id)).all(),
     db.select().from(schema.accounts).orderBy(asc(schema.accounts.id)).all(),
@@ -1323,12 +1438,28 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
       .orderBy(asc(schema.modelAvailability.accountId), asc(schema.modelAvailability.modelName))
       .all(),
     db.select().from(schema.downstreamApiKeys).orderBy(asc(schema.downstreamApiKeys.id)).all(),
+    loadAllSiteEndpointOverrides(),
   ]);
 
   return {
-    sites,
-    accounts: accounts.map(({ balanceUsed: _balanceUsed, lastCheckinAt: _lastCheckinAt, lastBalanceRefresh: _lastBalanceRefresh, ...row }: any) => row),
-    accountTokens,
+    sites: sites.map((row: SiteRow) => ({
+      ...row,
+      endpointOverrides: siteEndpointOverridesById.get(row.id) ?? null,
+    })),
+    accounts: accounts.map(({
+      balanceUsed: _balanceUsed,
+      lastCheckinAt: _lastCheckinAt,
+      lastBalanceRefresh: _lastBalanceRefresh,
+      endpointOverrides,
+      ...row
+    }: any) => ({
+      ...row,
+      endpointOverrides: parseStoredEndpointOverrides(endpointOverrides),
+    })),
+    accountTokens: accountTokens.map(({ endpointOverrides, ...row }: any) => ({
+      ...row,
+      endpointOverrides: parseStoredEndpointOverrides(endpointOverrides),
+    })),
     tokenRoutes,
     routeChannels: routeChannels.map(({
       successCount: _successCount,
@@ -1410,9 +1541,9 @@ export async function exportBackup(type: BackupExportType): Promise<BackupV2> {
 function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   if (!isRecord(input)) return null;
 
-  const sites = Array.isArray(input.sites) ? input.sites as SiteRow[] : null;
+  const sites = Array.isArray(input.sites) ? input.sites as BackupSiteRow[] : null;
   const accounts = Array.isArray(input.accounts) ? input.accounts as BackupAccountRow[] : null;
-  const accountTokens = Array.isArray(input.accountTokens) ? input.accountTokens as AccountTokenRow[] : null;
+  const accountTokens = Array.isArray(input.accountTokens) ? input.accountTokens as BackupAccountTokenRow[] : null;
   const tokenRoutes = Array.isArray(input.tokenRoutes) ? input.tokenRoutes as TokenRouteRow[] : null;
   const routeChannels = Array.isArray(input.routeChannels) ? input.routeChannels as BackupRouteChannelRow[] : null;
   const routeGroupSources = Array.isArray(input.routeGroupSources)
@@ -1560,6 +1691,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();
+      await writeSiteEndpointOverrides(tx, row.id, row.endpointOverrides);
     }
 
     for (const row of section.accounts) {
@@ -1587,6 +1719,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         lastCheckinAt: runtimeAccount?.lastCheckinAt ?? row.lastCheckinAt,
         lastBalanceRefresh: runtimeAccount?.lastBalanceRefresh ?? row.lastBalanceRefresh,
         extraConfig: row.extraConfig,
+        endpointOverrides: serializeEndpointOverridesValue(row.endpointOverrides),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();
@@ -1606,6 +1739,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         modelFilterMode: row.modelFilterMode ?? null,
         filteredModels: row.filteredModels ?? null,
         modelMapping: row.modelMapping ?? null,
+        endpointOverrides: serializeEndpointOverridesValue(row.endpointOverrides),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();

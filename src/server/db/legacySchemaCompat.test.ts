@@ -3,6 +3,7 @@ import { classifyLegacyCompatMutation } from './legacySchemaCompat.js';
 
 describe('legacy schema compat boundary', () => {
   it('allows only explicitly registered legacy upgrade shims', () => {
+    expect(classifyLegacyCompatMutation('ALTER TABLE accounts ADD COLUMN endpoint_overrides text;')).toBe('legacy');
     expect(classifyLegacyCompatMutation('ALTER TABLE proxy_logs ADD COLUMN billing_details text;')).toBe('legacy');
     expect(classifyLegacyCompatMutation('ALTER TABLE proxy_logs ADD COLUMN client_app_id text;')).toBe('legacy');
     expect(classifyLegacyCompatMutation('ALTER TABLE proxy_logs ADD COLUMN is_stream integer;')).toBe('legacy');

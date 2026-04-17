@@ -47,6 +47,37 @@ function createDbMock(rowsByTable: Record<string, unknown[]>) {
   };
 }
 
+function createSchemaIntrospectionQueryScalarMock(input: {
+  missingColumns?: string[];
+  missingTables?: string[];
+} = {}) {
+  const missingColumns = new Set((input.missingColumns || []).map((item) => item.toLowerCase()));
+  const missingTables = new Set((input.missingTables || []).map((item) => item.toLowerCase()));
+  return async (sqlText: string, params: unknown[] = []) => {
+    const normalizedSql = sqlText.toLowerCase();
+    const normalizedParams = params.map((item) => String(item || '').toLowerCase());
+
+    if (normalizedSql.includes('sqlite_master') || normalizedSql.includes('information_schema.tables')) {
+      const siteTableReferenced = normalizedSql.includes('sites') || normalizedParams.includes('sites');
+      if (siteTableReferenced) {
+        return missingTables.has('sites') ? 0 : 1;
+      }
+    }
+
+    if (normalizedSql.includes('pragma_table_info') || normalizedSql.includes('information_schema.columns')) {
+      const referencedValues = [normalizedSql, ...normalizedParams];
+      for (const column of missingColumns) {
+        if (referencedValues.some((value) => value.includes(column))) {
+          return 0;
+        }
+      }
+      return 1;
+    }
+
+    return 1;
+  };
+}
+
 describe('databaseMigrationService', () => {
   it('accepts postgres migration input with normalized url', () => {
     const normalized = normalizeMigrationInput({
@@ -174,6 +205,33 @@ describe('databaseMigrationService', () => {
     expect(customHeadersSql).toContain('custom_headers');
   });
 
+  it.each(['postgres', 'mysql', 'sqlite'] as const)('patches probe_disabled and endpoint_overrides sites compatibility columns for %s', async (dialect) => {
+    const executedSql: string[] = [];
+
+    await __databaseMigrationServiceTestUtils.ensureSchema({
+      dialect,
+      connectionString: dialect === 'sqlite' ? ':memory:' : `${dialect}://example.invalid/metapi`,
+      ssl: false,
+      begin: async () => {},
+      commit: async () => {},
+      rollback: async () => {},
+      execute: async (sqlText) => {
+        executedSql.push(sqlText);
+        return [];
+      },
+      queryScalar: createSchemaIntrospectionQueryScalarMock({
+        missingColumns: ['probe_disabled', 'endpoint_overrides'],
+      }),
+      close: async () => {},
+    }, {
+      currentContract: currentContract as any,
+      liveContract: currentContract as any,
+    });
+
+    expect(executedSql.some((sqlText) => sqlText.includes('probe_disabled'))).toBe(true);
+    expect(executedSql.some((sqlText) => sqlText.includes('endpoint_overrides'))).toBe(true);
+  });
+
   it.each(['postgres', 'mysql'] as const)('patches token_routes decision snapshot columns for %s', async (dialect) => {
     const executedSql: string[] = [];
     const liveContract = cloneContract(currentContract);
@@ -202,7 +260,7 @@ describe('databaseMigrationService', () => {
     ).toBe(true);
   });
 
-  it('includes useSystemProxy and customHeaders when building site migration statements', () => {
+  it('includes useSystemProxy, customHeaders, probeDisabled, and endpointOverrides when building site migration statements', () => {
     const statements = __databaseMigrationServiceTestUtils.buildStatements({
       version: 'test',
       timestamp: Date.now(),
@@ -214,6 +272,8 @@ describe('databaseMigrationService', () => {
           platform: 'openai',
           useSystemProxy: true,
           customHeaders: '{"x-site-scope":"internal"}',
+          probeDisabled: true,
+          endpointOverrides: ['responses', 'chat'],
           status: 'active',
         }],
         siteAnnouncements: [],
@@ -241,11 +301,17 @@ describe('databaseMigrationService', () => {
     const siteStatement = statements.find((statement) => statement.table === 'sites');
     const useSystemProxyIndex = siteStatement?.columns.indexOf('use_system_proxy') ?? -1;
     const customHeadersIndex = siteStatement?.columns.indexOf('custom_headers') ?? -1;
+    const probeDisabledIndex = siteStatement?.columns.indexOf('probe_disabled') ?? -1;
+    const endpointOverridesIndex = siteStatement?.columns.indexOf('endpoint_overrides') ?? -1;
 
     expect(useSystemProxyIndex).toBeGreaterThanOrEqual(0);
     expect(siteStatement?.values[useSystemProxyIndex]).toBe(true);
     expect(customHeadersIndex).toBeGreaterThanOrEqual(0);
     expect(siteStatement?.values[customHeadersIndex]).toBe('{"x-site-scope":"internal"}');
+    expect(probeDisabledIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement?.values[probeDisabledIndex]).toBe(true);
+    expect(endpointOverridesIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement?.values[endpointOverridesIndex]).toBe('["responses","chat"]');
   });
 
   it('serializes parsed JSON-column values when building migration statements', () => {

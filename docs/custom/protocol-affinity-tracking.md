@@ -293,6 +293,7 @@ endpointResult.ok === true && retryCount === 0
 
 ```text
 平台/能力硬约束
+  -> site override 过滤
   -> 目录元数据 first-attempt hint
   -> 持久化 blocked 过滤
   -> 运行时 blocked 过滤
@@ -305,6 +306,7 @@ endpointResult.ok === true && retryCount === 0
 
 - “过滤”只能删已有候选，不能新增候选
 - “preferred”只能改顺序，不能覆盖硬约束
+- site override 是显式白名单过滤层，但同样只能过滤硬约束之后仍然存在的候选
 - 运行时层优先于持久化层，因为它更新鲜
 
 ### 4.3 降级成功的统计语义

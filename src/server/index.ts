@@ -53,6 +53,8 @@ import { dirname, normalize, resolve, sep } from 'path';
 import { normalizeLogCleanupRetentionDays } from './services/logCleanupService.js';
 import {
   db,
+  ensureAccountCompatibilityColumns,
+  ensureAccountTokenCompatibilityColumns,
   ensureProxyFileCompatibilityColumns,
   ensureProxyLogClientColumns,
   ensureProxyLogDownstreamApiKeyIdColumn,
@@ -368,6 +370,8 @@ try {
   }
 
   await ensureSiteCompatibilityColumns();
+  await ensureAccountCompatibilityColumns();
+  await ensureAccountTokenCompatibilityColumns();
   await ensureRouteGroupingCompatibilityColumns();
   await ensureProxyFileCompatibilityColumns();
   await ensureProxyLogClientColumns();

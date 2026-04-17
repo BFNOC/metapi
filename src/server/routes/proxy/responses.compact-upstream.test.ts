@@ -187,6 +187,41 @@ describe('responses proxy compact upstream routing', () => {
     expect(response.json().error.message).toContain('Invalid URL (POST /v1/responses/compact)');
   });
 
+  it('returns a compatibility error when site override excludes responses for compact requests', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: {
+        id: 44,
+        name: 'demo-site',
+        url: 'https://upstream.example.com',
+        platform: 'openai',
+        endpointOverrides: ['chat'],
+      },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses/compact',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+      },
+    });
+
+    expect(response.statusCode).toBe(501);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.json()).toEqual({
+      error: {
+        message: 'Responses compact compatibility is not implemented for this upstream',
+        type: 'invalid_request_error',
+      },
+    });
+  });
+
   it('falls back to ordinary responses when compact is explicitly unsupported and the toggle is enabled', async () => {
     config.responsesCompactFallbackToResponsesEnabled = true;
     fetchMock

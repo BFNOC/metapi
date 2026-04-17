@@ -25,6 +25,11 @@ import { parseCheckinRewardAmount } from '../../services/checkinRewardParser.js'
 import { estimateRewardWithTodayIncomeFallback } from '../../services/todayIncomeRewardService.js';
 import { getLocalDayRangeUtc } from '../../services/localTimeService.js';
 import {
+  normalizeEndpointOverridesInput,
+  parseEndpointOverrideValue,
+  serializeEndpointOverridesValue,
+} from '../../proxy-core/endpointOverrides.js';
+import {
   buildRuntimeHealthForAccount,
   setAccountRuntimeHealth,
   type RuntimeHealthState,
@@ -80,6 +85,7 @@ type CreateAccountBody = {
   refreshToken?: string;
   tokenExpiresAt?: number | string;
   skipModelFetch?: boolean;
+  endpointOverrides?: unknown;
 };
 
 type CreateManualAccountParams = {
@@ -260,6 +266,11 @@ function normalizeSortOrder(input: unknown): number | null {
   return Math.max(0, parsed);
 }
 
+function toResponseEndpointOverrides(value: unknown): string[] | null {
+  const parsed = parseEndpointOverrideValue(value);
+  return parsed.present ? parsed.endpoints : null;
+}
+
 function normalizeManagedRefreshToken(input: unknown): string | undefined {
   if (typeof input !== 'string') return undefined;
   const trimmed = input.trim();
@@ -381,6 +392,7 @@ async function createManualAccount({
       apiToken: apiToken || undefined,
       checkinEnabled: tokenType === 'session' ? (body.checkinEnabled ?? true) : false,
       extraConfig,
+      endpointOverrides: serializeEndpointOverridesValue(body.endpointOverrides),
       isPinned: false,
       sortOrder: await getNextAccountSortOrder(),
     },
@@ -695,7 +707,11 @@ export async function accountsRoutes(app: FastifyInstance) {
       const credentialMode = resolveStoredCredentialMode(r.accounts);
       return {
         ...r.accounts,
-        site: r.sites,
+        endpointOverrides: toResponseEndpointOverrides(r.accounts.endpointOverrides),
+        site: {
+          ...r.sites,
+          endpointOverrides: toResponseEndpointOverrides(r.sites.endpointOverrides),
+        },
         credentialMode,
         capabilities: buildCapabilitiesFromCredentialMode(
           credentialMode,
@@ -1267,6 +1283,10 @@ export async function accountsRoutes(app: FastifyInstance) {
   // Add an account (manual credential input)
   app.post<{ Body: CreateAccountBody }>('/api/accounts', async (request, reply) => {
     const body = request.body;
+    const normalizedEndpointOverrides = normalizeEndpointOverridesInput(body.endpointOverrides);
+    if (normalizedEndpointOverrides.error) {
+      return reply.code(400).send({ success: false, message: normalizedEndpointOverrides.error });
+    }
     const site = await db.select().from(schema.sites).where(eq(schema.sites.id, body.siteId)).get();
     if (!site) {
       return reply.code(400).send({ success: false, message: 'site not found' });
@@ -1355,6 +1375,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       });
       return {
         ...created.account,
+        endpointOverrides: toResponseEndpointOverrides(created.account.endpointOverrides),
         tokenType: created.tokenType,
         credentialMode: created.credentialMode,
         capabilities: created.capabilities,
@@ -1461,6 +1482,14 @@ export async function accountsRoutes(app: FastifyInstance) {
       });
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, 'endpointOverrides')) {
+      const normalizedEndpointOverrides = normalizeEndpointOverridesInput(body.endpointOverrides);
+      if (normalizedEndpointOverrides.error) {
+        return reply.code(400).send({ message: normalizedEndpointOverrides.error });
+      }
+      updates.endpointOverrides = serializeEndpointOverridesValue(normalizedEndpointOverrides.endpointOverrides);
+    }
+
     updates.updatedAt = new Date().toISOString();
     await db.update(schema.accounts).set(updates).where(eq(schema.accounts.id, id)).run();
 
@@ -1487,7 +1516,11 @@ export async function accountsRoutes(app: FastifyInstance) {
       continueOnError: true,
     });
 
-    return await db.select().from(schema.accounts).where(eq(schema.accounts.id, id)).get();
+    const updated = await db.select().from(schema.accounts).where(eq(schema.accounts.id, id)).get();
+    return {
+      ...updated,
+      endpointOverrides: toResponseEndpointOverrides(updated?.endpointOverrides),
+    };
   });
 
   // Delete an account

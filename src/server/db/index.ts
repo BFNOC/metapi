@@ -9,6 +9,8 @@ import {
   installPostgresJsonTextParsers,
   resetPostgresJsonTextParsersInstallStateForTests,
 } from './postgresJsonTextParsers.js';
+import { ensureAccountSchemaCompatibility } from './accountSchemaCompatibility.js';
+import { ensureAccountTokenSchemaCompatibility } from './accountTokenSchemaCompatibility.js';
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from './siteSchemaCompatibility.js';
 import { ensureRouteGroupingSchemaCompatibility } from './routeGroupingSchemaCompatibility.js';
 import { ensureProxyFileSchemaCompatibility } from './proxyFileSchemaCompatibility.js';
@@ -205,6 +207,12 @@ function ensureTokenManagementSchema() {
   }
   if (!tableColumnExists('account_tokens', 'model_mapping')) {
     execSqliteLegacyCompat('ALTER TABLE account_tokens ADD COLUMN model_mapping text;');
+  }
+  if (!tableColumnExists('accounts', 'endpoint_overrides')) {
+    execSqliteLegacyCompat('ALTER TABLE accounts ADD COLUMN endpoint_overrides text;');
+  }
+  if (!tableColumnExists('account_tokens', 'endpoint_overrides')) {
+    execSqliteLegacyCompat('ALTER TABLE account_tokens ADD COLUMN endpoint_overrides text;');
   }
 
   execSqliteStatement(`
@@ -504,6 +512,18 @@ export async function ensureSiteCompatibilityColumns(): Promise<void> {
   const inspector = createRuntimeSchemaInspector();
   if (!inspector) return;
   await ensureSiteSchemaCompatibility(inspector);
+}
+
+export async function ensureAccountCompatibilityColumns(): Promise<void> {
+  const inspector = createRuntimeSchemaInspector();
+  if (!inspector) return;
+  await ensureAccountSchemaCompatibility(inspector);
+}
+
+export async function ensureAccountTokenCompatibilityColumns(): Promise<void> {
+  const inspector = createRuntimeSchemaInspector();
+  if (!inspector) return;
+  await ensureAccountTokenSchemaCompatibility(inspector);
 }
 
 export async function ensureRouteGroupingCompatibilityColumns(): Promise<void> {

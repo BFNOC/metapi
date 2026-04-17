@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type BackupServiceModule = typeof import('./backupService.js');
@@ -20,6 +20,14 @@ describe('backupService', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     await dbModule.ensureSiteCompatibilityColumns();
+    const endpointOverrideColumns = await dbModule.db.all(sql`
+      SELECT name
+      FROM pragma_table_info('sites')
+      WHERE name = 'endpoint_overrides'
+    `);
+    if (!Array.isArray(endpointOverrideColumns) || endpointOverrideColumns.length === 0) {
+      await dbModule.db.run(sql`ALTER TABLE sites ADD COLUMN endpoint_overrides text`);
+    }
     const serviceModule = await import('./backupService.js');
 
     db = dbModule.db;
@@ -70,6 +78,11 @@ describe('backupService', () => {
       createdAt: now,
       updatedAt: now,
     }).returning().get();
+    await db.run(sql`
+      UPDATE sites
+      SET endpoint_overrides = ${JSON.stringify(['responses', 'chat'])}
+      WHERE id = ${site.id}
+    `);
 
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
@@ -201,6 +214,7 @@ describe('backupService', () => {
     expect(exported.accounts.siteDisabledModels).toEqual([
       { siteId: site.id, modelName: 'gpt-hidden' },
     ]);
+    expect(exported.accounts.sites[0]?.endpointOverrides).toEqual(['responses', 'chat']);
     expect(exported.accounts.manualModels).toEqual([
       { accountId: account.id, modelName: 'gpt-manual' },
     ]);
@@ -237,6 +251,11 @@ describe('backupService', () => {
     expect(result.warnings).toBeUndefined();
 
     const restoredSite = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
+    const restoredEndpointOverrideRows = await db.all(sql`
+      SELECT endpoint_overrides AS endpointOverrides
+      FROM sites
+      WHERE id = ${site.id}
+    `);
     const restoredAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     const restoredRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).get();
     const restoredChannel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.routeId, route.id)).get();
@@ -250,6 +269,12 @@ describe('backupService', () => {
     expect(restoredSite?.customHeaders).toBe('{"cf-access-client-id":"roundtrip-client"}');
     expect(restoredSite?.isPinned).toBe(true);
     expect(restoredSite?.sortOrder).toBe(9);
+    const restoredEndpointOverridesRaw = Array.isArray(restoredEndpointOverrideRows) && restoredEndpointOverrideRows.length > 0
+      ? (Array.isArray(restoredEndpointOverrideRows[0])
+        ? restoredEndpointOverrideRows[0][0]
+        : (restoredEndpointOverrideRows[0] as any)?.endpointOverrides ?? (restoredEndpointOverrideRows[0] as any)?.endpoint_overrides)
+      : null;
+    expect(JSON.parse(String(restoredEndpointOverridesRaw || 'null'))).toEqual(['responses', 'chat']);
 
     expect(restoredAccount?.isPinned).toBe(true);
     expect(restoredAccount?.sortOrder).toBe(7);

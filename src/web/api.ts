@@ -529,6 +529,84 @@ export type OAuthConnectionsResponse = {
   offset: number;
 };
 
+export type SiteEndpointOverrides = string[] | null;
+
+export type SiteRecord = {
+  id: number;
+  name: string;
+  url: string;
+  externalCheckinUrl?: string | null;
+  platform?: string;
+  status?: string;
+  proxyUrl?: string | null;
+  useSystemProxy?: boolean;
+  customHeaders?: string | null;
+  endpointOverrides?: SiteEndpointOverrides;
+  globalWeight?: number;
+  isPinned?: boolean;
+  sortOrder?: number;
+  totalBalance?: number;
+  probeDisabled?: boolean;
+  modelFilterMode?: string | null;
+  createdAt?: string;
+};
+
+export type SiteMutationPayload = {
+  name?: string;
+  url?: string;
+  externalCheckinUrl?: string;
+  platform?: string;
+  proxyUrl?: string;
+  useSystemProxy?: boolean;
+  customHeaders?: string;
+  endpointOverrides?: SiteEndpointOverrides;
+  globalWeight?: number;
+  probeDisabled?: boolean;
+  status?: string;
+  isPinned?: boolean;
+  sortOrder?: number;
+  modelFilterMode?: string;
+};
+
+export type AccountMutationPayload = {
+  siteId?: number;
+  username?: string;
+  accessToken?: string;
+  accessTokens?: string[];
+  apiToken?: string | null;
+  platformUserId?: number;
+  checkinEnabled?: boolean;
+  credentialMode?: 'auto' | 'session' | 'apikey';
+  refreshToken?: string | null;
+  tokenExpiresAt?: number | string | null;
+  skipModelFetch?: boolean;
+  status?: string;
+  unitCost?: number | null;
+  extraConfig?: string;
+  isPinned?: boolean;
+  sortOrder?: number;
+  proxyUrl?: string | null;
+  modelMapping?: Record<string, string> | null;
+  endpointOverrides?: string[] | null;
+};
+
+export type AccountTokenMutationPayload = {
+  accountId?: number;
+  name?: string;
+  token?: string;
+  enabled?: boolean;
+  isDefault?: boolean;
+  source?: string;
+  group?: string;
+  unlimitedQuota?: boolean | string;
+  remainQuota?: number | string;
+  expiredTime?: number | string;
+  allowIps?: string;
+  modelLimitsEnabled?: boolean | string;
+  modelLimits?: string;
+  endpointOverrides?: string[] | null;
+};
+
 export type SiteHealthState = 'active' | 'penalized' | 'quarantined' | 'recovering';
 export type SiteHealthFailureCategory =
   | 'auth'
@@ -661,8 +739,8 @@ export type RuntimeSettingsPayload = {
 export const api = {
   // Sites
   getSites: () => request('/api/sites'),
-  addSite: (data: any) => request('/api/sites', { method: 'POST', body: JSON.stringify(data) }),
-  updateSite: (id: number, data: any) => request(`/api/sites/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  addSite: (data: SiteMutationPayload) => request('/api/sites', { method: 'POST', body: JSON.stringify(data) }) as Promise<SiteRecord>,
+  updateSite: (id: number, data: SiteMutationPayload) => request(`/api/sites/${id}`, { method: 'PUT', body: JSON.stringify(data) }) as Promise<SiteRecord>,
   deleteSite: (id: number) => request(`/api/sites/${id}`, { method: 'DELETE' }),
   batchUpdateSites: (data: any) => request('/api/sites/batch', { method: 'POST', body: JSON.stringify(data) }),
   detectSite: (url: string) => request('/api/sites/detect', { method: 'POST', body: JSON.stringify({ url }) }),
@@ -694,12 +772,12 @@ export const api = {
 
   // Accounts
   getAccounts: () => request('/api/accounts'),
-  addAccount: (data: any) => request('/api/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  addAccount: (data: AccountMutationPayload) => request('/api/accounts', { method: 'POST', body: JSON.stringify(data) }),
   loginAccount: (data: { siteId: number; username: string; password: string }) => request('/api/accounts/login', { method: 'POST', body: JSON.stringify(data) }),
   verifyToken: (data: { siteId: number; accessToken: string; platformUserId?: number; credentialMode?: 'auto' | 'session' | 'apikey' }) => request('/api/accounts/verify-token', { method: 'POST', body: JSON.stringify(data) }),
   rebindAccountSession: (id: number, data: { accessToken: string; platformUserId?: number; refreshToken?: string; tokenExpiresAt?: number }) =>
     request(`/api/accounts/${id}/rebind-session`, { method: 'POST', body: JSON.stringify(data) }),
-  updateAccount: (id: number, data: any) => request(`/api/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  updateAccount: (id: number, data: AccountMutationPayload) => request(`/api/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteAccount: (id: number) => request(`/api/accounts/${id}`, { method: 'DELETE' }),
   batchUpdateAccounts: (data: any) => request('/api/accounts/batch', { method: 'POST', body: JSON.stringify(data) }),
   refreshBalance: (id: number) => request(`/api/accounts/${id}/balance`, { method: 'POST' }),
@@ -714,8 +792,8 @@ export const api = {
 
   // Account tokens
   getAccountTokens: (accountId?: number) => request(`/api/account-tokens${accountId ? `?accountId=${accountId}` : ''}`),
-  addAccountToken: (data: any) => request('/api/account-tokens', { method: 'POST', body: JSON.stringify(data) }),
-  updateAccountToken: (id: number, data: any) => request(`/api/account-tokens/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  addAccountToken: (data: AccountTokenMutationPayload) => request('/api/account-tokens', { method: 'POST', body: JSON.stringify(data) }),
+  updateAccountToken: (id: number, data: AccountTokenMutationPayload) => request(`/api/account-tokens/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteAccountToken: (id: number) => request(`/api/account-tokens/${id}`, { method: 'DELETE' }),
   batchUpdateAccountTokens: (data: any) => request('/api/account-tokens/batch', { method: 'POST', body: JSON.stringify(data) }),
   getAccountTokenGroups: (accountId: number) => request(`/api/account-tokens/groups/${accountId}`),

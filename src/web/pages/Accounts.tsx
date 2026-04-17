@@ -48,6 +48,19 @@ const ACCOUNT_SEGMENTS: Array<{
     { value: 'tokens', label: '账号令牌管理', tooltip: '从账号同步或手动维护，供路由实际调用', tooltipSide: 'bottom', tooltipAlign: 'end' },
   ];
 
+const ENDPOINT_OVERRIDE_OPTIONS = [
+  ['chat', '/v1/chat/completions'],
+  ['messages', '/v1/messages'],
+  ['responses', '/v1/responses'],
+] as const;
+
+function normalizeEndpointOverrides(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value
+    .map((item) => (typeof item === 'string' ? item.trim().toLowerCase() : ''))
+    .filter(Boolean)));
+}
+
 function createLoginForm() {
   return { siteId: 0, username: '', password: '' };
 }
@@ -116,6 +129,7 @@ export default function Accounts() {
     refreshToken: '',
     tokenExpiresAt: '',
     proxyUrl: '',
+    endpointOverrides: [] as string[],
   });
   const [savingEdit, setSavingEdit] = useState(false);
   const [rebindTarget, setRebindTarget] = useState<any | null>(null);
@@ -801,6 +815,7 @@ export default function Accounts() {
       refreshToken: managedAuth.refreshToken,
       tokenExpiresAt: managedAuth.tokenExpiresAt,
       proxyUrl,
+      endpointOverrides: normalizeEndpointOverrides(account?.endpointOverrides),
     });
   };
 
@@ -824,6 +839,7 @@ export default function Accounts() {
         refreshToken: editForm.refreshToken.trim() || null,
         tokenExpiresAt: editForm.tokenExpiresAt.trim() ? Number.parseInt(editForm.tokenExpiresAt.trim(), 10) : null,
         proxyUrl: editForm.proxyUrl.trim() || null,
+        endpointOverrides: editForm.endpointOverrides.length > 0 ? editForm.endpointOverrides : null,
       });
       toast.success('账号已更新');
       closeEditPanel();
@@ -1739,6 +1755,39 @@ export default function Accounts() {
                 />
                 <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: -4 }}>
                   覆盖站点和系统代理，留空则使用站点设置。支持 http/https/socks5 协议。
+                </div>
+                <div style={{ gridColumn: '1 / -1', padding: 12, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg-secondary)' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>端点协议限制</div>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6, marginBottom: 8 }}>
+                    设置账号默认的上游端点协议限制；全部不勾选时继承站点配置。
+                  </div>
+                  {editForm.endpointOverrides.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8 }}>
+                      继承站点配置
+                    </div>
+                  ) : null}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {ENDPOINT_OVERRIDE_OPTIONS.map(([endpoint, path]) => {
+                      const checked = editForm.endpointOverrides.includes(endpoint);
+                      return (
+                        <label key={endpoint} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => setEditForm((prev) => ({
+                              ...prev,
+                              endpointOverrides: e.target.checked
+                                ? Array.from(new Set([...prev.endpointOverrides, endpoint]))
+                                : prev.endpointOverrides.filter((item) => item !== endpoint),
+                            }))}
+                          />
+                          <span style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>
+                            {endpoint} ({path})
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
                 {((editingAccount?.site?.platform || '').toLowerCase() === 'sub2api') && (
                   <>

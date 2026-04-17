@@ -211,4 +211,43 @@ describe('claude count_tokens proxy route', () => {
     expect(options.headers['x-api-key']).toBe('sk-gateway');
     expect(options.headers['anthropic-version']).toBe('2023-06-01');
   });
+
+  it('returns a compatibility error when site override excludes Claude messages endpoints', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 23 },
+      site: {
+        name: 'gateway-site',
+        url: 'https://gateway.example.com',
+        platform: 'openai',
+        endpointOverrides: ['chat'],
+      },
+      account: { id: 34, username: 'gateway-user@example.com' },
+      tokenName: 'default',
+      tokenValue: 'sk-gateway',
+      actualModel: 'claude-sonnet-4-5-20250929',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages/count_tokens',
+      payload: {
+        model: 'claude-sonnet-4-5-20250929',
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'count through a compatible gateway' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(501);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.json()).toEqual({
+      error: {
+        message: 'Claude count_tokens compatibility is not implemented for this upstream',
+        type: 'invalid_request_error',
+      },
+    });
+  });
 });

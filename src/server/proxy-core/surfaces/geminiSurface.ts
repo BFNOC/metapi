@@ -37,6 +37,7 @@ import { dispatchRuntimeRequest } from '../../routes/proxy/runtimeExecutor.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
+import { buildEndpointCompatibilityUnavailableResponse } from '../endpointOverrides.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import {
   fetchWithObservedFirstByte,
@@ -767,14 +768,12 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         }
 
         if (isCountTokensAction) {
-          lastStatus = 501;
-          lastContentType = 'application/json';
-          lastText = JSON.stringify({
-            error: {
-              message: 'Gemini countTokens compatibility is not implemented for this upstream',
-              type: 'invalid_request_error',
-            },
-          });
+          const unavailable = buildEndpointCompatibilityUnavailableResponse(
+            'Gemini countTokens compatibility is not implemented for this upstream',
+          );
+          lastStatus = unavailable.statusCode;
+          lastContentType = unavailable.contentType;
+          lastText = unavailable.text;
           return reply.code(lastStatus).type(lastContentType).send(lastText);
         }
 
@@ -789,6 +788,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           {
             site: selected.site,
             account: selected.account,
+            token: selected.token,
           },
           actualModel,
           'openai',
@@ -798,6 +798,19 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             conversationFileSummary,
           },
         );
+        if (endpointCandidates.length === 0) {
+          const unavailable = buildEndpointCompatibilityUnavailableResponse(
+            'Gemini compatibility is not implemented for this upstream',
+          );
+          lastStatus = unavailable.statusCode;
+          lastContentType = unavailable.contentType;
+          lastText = unavailable.text;
+          if (canRetryProxyChannel(retryCount)) {
+            retryCount += 1;
+            continue;
+          }
+          return reply.code(lastStatus).type(lastContentType).send(lastText);
+        }
         const endpointRuntimeContext = {
           siteId: selected.site.id,
           modelName: actualModel,

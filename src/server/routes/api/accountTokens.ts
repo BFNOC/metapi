@@ -32,6 +32,11 @@ import {
   normalizeModelMappingInput,
   parseNormalizedModelMapping,
 } from '../../services/modelMappingRecord.js';
+import {
+  normalizeEndpointOverridesInput,
+  parseEndpointOverrideValue,
+  serializeEndpointOverridesValue,
+} from '../../proxy-core/endpointOverrides.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -609,8 +614,14 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     allowIps?: string;
     modelLimitsEnabled?: boolean | string;
     modelLimits?: string;
+    endpointOverrides?: unknown;
   } }>('/api/account-tokens', async (request, reply) => {
     const body = request.body;
+    const normalizedEndpointOverrides = normalizeEndpointOverridesInput(body.endpointOverrides);
+    if (normalizedEndpointOverrides.error) {
+      return reply.code(400).send({ success: false, message: normalizedEndpointOverrides.error });
+    }
+    const serializedEndpointOverrides = serializeEndpointOverridesValue(normalizedEndpointOverrides.endpointOverrides);
     const row = await db.select()
       .from(schema.accounts)
       .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
@@ -652,6 +663,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
           source: body.source || 'manual',
           enabled,
           isDefault,
+          endpointOverrides: serializedEndpointOverrides,
           createdAt: now,
           updatedAt: now,
         },
@@ -665,7 +677,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         await setDefaultToken(created.id);
       }
       const coverageRefresh = await refreshCoverageForAccounts([body.accountId]);
-      return { success: true, token: created, coverageRefresh };
+      const parsedOverrides = parseEndpointOverrideValue(created.endpointOverrides);
+      return { success: true, token: { ...created, endpointOverrides: parsedOverrides.present ? parsedOverrides.endpoints : null }, coverageRefresh };
     }
 
     const account = row.accounts;
@@ -749,13 +762,28 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
     const coverageRefresh = await refreshCoverageForAccounts([account.id]);
 
-    const preferred = await db.select().from(schema.accountTokens)
-      .where(and(eq(schema.accountTokens.accountId, account.id), eq(schema.accountTokens.isDefault, true)))
-      .get();
-    const token = preferred || (await db.select().from(schema.accountTokens)
+    const allTokens = await db.select().from(schema.accountTokens)
       .where(eq(schema.accountTokens.accountId, account.id))
-      .all())
-      .slice(-1)[0] || null;
+      .all();
+    const preferred = allTokens.find((t: any) => t.isDefault);
+    let token = preferred || allTokens.slice(-1)[0] || null;
+
+    // Apply endpointOverrides to the newest token (most likely the one just created upstream).
+    // We use the last token by ID since createApiToken returns boolean, not the created key.
+    if (token && Object.prototype.hasOwnProperty.call(body, 'endpointOverrides')) {
+      const newest = allTokens.reduce((latest: any, t: any) => (t.id > latest.id ? t : latest), allTokens[0]);
+      if (newest) {
+        await db.update(schema.accountTokens)
+          .set({
+            endpointOverrides: serializedEndpointOverrides,
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(schema.accountTokens.id, newest.id))
+          .run();
+        const latestToken = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, newest.id)).get();
+        token = latestToken || newest;
+      }
+    }
 
     return {
       success: true,
@@ -881,7 +909,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     };
   });
 
-  app.put<{ Params: { id: string }; Body: { name?: string; token?: string; group?: string; enabled?: boolean; isDefault?: boolean; source?: string } }>('/api/account-tokens/:id', async (request, reply) => {
+  app.put<{ Params: { id: string }; Body: { name?: string; token?: string; group?: string; enabled?: boolean; isDefault?: boolean; source?: string; endpointOverrides?: unknown } }>('/api/account-tokens/:id', async (request, reply) => {
     const tokenId = Number.parseInt(request.params.id, 10);
     if (Number.isNaN(tokenId)) {
       return reply.code(400).send({ success: false, message: '令牌 ID 无效' });
@@ -903,6 +931,13 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     const body = request.body;
     const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     let nextValueStatus = resolveAccountTokenValueStatus(existing);
+    if (Object.prototype.hasOwnProperty.call(body, 'endpointOverrides')) {
+      const normalizedEndpointOverrides = normalizeEndpointOverridesInput(body.endpointOverrides);
+      if (normalizedEndpointOverrides.error) {
+        return reply.code(400).send({ success: false, message: normalizedEndpointOverrides.error });
+      }
+      updates.endpointOverrides = serializeEndpointOverridesValue(normalizedEndpointOverrides.endpointOverrides);
+    }
 
     if (body.name !== undefined) {
       updates.name = (body.name || '').trim() || existing.name;
@@ -950,7 +985,8 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       repairDefaultToken(existing.accountId);
     }
 
-    return { success: true, token: latest };
+    const parsedOverrides = parseEndpointOverrideValue(latest.endpointOverrides);
+    return { success: true, token: { ...latest, endpointOverrides: parsedOverrides.present ? parsedOverrides.endpoints : null } };
   });
 
   app.post<{ Params: { id: string } }>('/api/account-tokens/:id/default', async (request, reply) => {

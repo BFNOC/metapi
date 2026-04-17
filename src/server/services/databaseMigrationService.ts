@@ -97,7 +97,57 @@ type SchemaContractShape = {
   }>;
 };
 type LogicalColumnTypeShape = string | null;
+type SiteCompatibilityColumnSpec = {
+  column: string;
+  addSql: Record<MigrationDialect, string>;
+  normalizeSql?: Record<MigrationDialect, string>;
+};
 const schemaContract = currentSchemaContract as SchemaContractShape;
+const SITE_COMPATIBILITY_COLUMN_SPECS: SiteCompatibilityColumnSpec[] = [
+  {
+    column: 'probe_disabled',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN probe_disabled integer DEFAULT 0;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `probe_disabled` BOOLEAN DEFAULT FALSE',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "probe_disabled" BOOLEAN DEFAULT FALSE',
+    },
+    normalizeSql: {
+      sqlite: 'UPDATE sites SET probe_disabled = 0 WHERE probe_disabled IS NULL;',
+      mysql: 'UPDATE `sites` SET `probe_disabled` = FALSE WHERE `probe_disabled` IS NULL',
+      postgres: 'UPDATE "sites" SET "probe_disabled" = FALSE WHERE "probe_disabled" IS NULL',
+    },
+  },
+  {
+    column: 'endpoint_overrides',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN endpoint_overrides text;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `endpoint_overrides` TEXT NULL',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "endpoint_overrides" TEXT',
+    },
+  },
+];
+
+const ACCOUNT_COMPATIBILITY_COLUMN_SPECS: SiteCompatibilityColumnSpec[] = [
+  {
+    column: 'endpoint_overrides',
+    addSql: {
+      sqlite: 'ALTER TABLE accounts ADD COLUMN endpoint_overrides text;',
+      mysql: 'ALTER TABLE `accounts` ADD COLUMN `endpoint_overrides` TEXT NULL',
+      postgres: 'ALTER TABLE "accounts" ADD COLUMN "endpoint_overrides" TEXT',
+    },
+  },
+];
+
+const ACCOUNT_TOKEN_COMPATIBILITY_COLUMN_SPECS: SiteCompatibilityColumnSpec[] = [
+  {
+    column: 'endpoint_overrides',
+    addSql: {
+      sqlite: 'ALTER TABLE account_tokens ADD COLUMN endpoint_overrides text;',
+      mysql: 'ALTER TABLE `account_tokens` ADD COLUMN `endpoint_overrides` TEXT NULL',
+      postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "endpoint_overrides" TEXT',
+    },
+  },
+];
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -123,6 +173,13 @@ function asNumber(value: unknown, fallback: number | null = null): number | null
 function asNullableString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   return String(value);
+}
+
+function validateSqlIdentifier(identifier: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(identifier)) {
+    throw new Error(`Invalid SQL identifier: ${identifier}`);
+  }
+  return identifier;
 }
 
 function getColumnLogicalType(
@@ -153,6 +210,95 @@ function serializeColumnValue(
 
 function toJsonString(value: unknown): string {
   return JSON.stringify(value ?? null);
+}
+
+async function targetTableExists(client: SqlClient, table: string): Promise<boolean> {
+  const normalizedTable = validateSqlIdentifier(table);
+  if (client.dialect === 'sqlite') {
+    return (await client.queryScalar(
+      `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '${normalizedTable}'`,
+    )) > 0;
+  }
+  if (client.dialect === 'mysql') {
+    return (await client.queryScalar(
+      'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?',
+      [normalizedTable],
+    )) > 0;
+  }
+  return (await client.queryScalar(
+    'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1',
+    [normalizedTable],
+  )) > 0;
+}
+
+async function targetColumnExists(client: SqlClient, table: string, column: string): Promise<boolean> {
+  const normalizedTable = validateSqlIdentifier(table);
+  const normalizedColumn = validateSqlIdentifier(column);
+  if (client.dialect === 'sqlite') {
+    return (await client.queryScalar(
+      `SELECT COUNT(*) FROM pragma_table_info('${normalizedTable}') WHERE name = '${normalizedColumn}'`,
+    )) > 0;
+  }
+  if (client.dialect === 'mysql') {
+    return (await client.queryScalar(
+      'SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?',
+      [normalizedTable, normalizedColumn],
+    )) > 0;
+  }
+  return (await client.queryScalar(
+    'SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2',
+    [normalizedTable, normalizedColumn],
+  )) > 0;
+}
+
+async function ensureMigrationSiteCompatibilityColumns(client: SqlClient): Promise<void> {
+  if (!(await targetTableExists(client, 'sites'))) {
+    return;
+  }
+
+  for (const spec of SITE_COMPATIBILITY_COLUMN_SPECS) {
+    if (!(await targetColumnExists(client, 'sites', spec.column))) {
+      await client.execute(spec.addSql[client.dialect]);
+    }
+    const normalizeSqlText = spec.normalizeSql?.[client.dialect];
+    if (normalizeSqlText) {
+      await client.execute(normalizeSqlText);
+    }
+  }
+}
+
+async function ensureMigrationAccountCompatibilityColumns(client: SqlClient): Promise<void> {
+  if (!(await targetTableExists(client, 'accounts'))) {
+    return;
+  }
+
+  for (const spec of ACCOUNT_COMPATIBILITY_COLUMN_SPECS) {
+    if (!(await targetColumnExists(client, 'accounts', spec.column))) {
+      await client.execute(spec.addSql[client.dialect]);
+    }
+  }
+}
+
+async function ensureMigrationAccountTokenCompatibilityColumns(client: SqlClient): Promise<void> {
+  if (!(await targetTableExists(client, 'account_tokens'))) {
+    return;
+  }
+
+  for (const spec of ACCOUNT_TOKEN_COMPATIBILITY_COLUMN_SPECS) {
+    if (!(await targetColumnExists(client, 'account_tokens', spec.column))) {
+      await client.execute(spec.addSql[client.dialect]);
+    }
+  }
+}
+
+async function ensureMigrationSchema(
+  client: SqlClient,
+  options?: Parameters<typeof ensureRuntimeDatabaseSchema>[1],
+): Promise<void> {
+  await ensureRuntimeDatabaseSchema(client, options);
+  await ensureMigrationSiteCompatibilityColumns(client);
+  await ensureMigrationAccountCompatibilityColumns(client);
+  await ensureMigrationAccountTokenCompatibilityColumns(client);
 }
 
 function assertDialectUrl(dialect: MigrationDialect, connectionString: string): void {
@@ -323,7 +469,7 @@ function buildStatements(
   for (const row of snapshot.accounts.sites) {
     statements.push({
       table: 'sites',
-      columns: ['id', 'name', 'url', 'external_checkin_url', 'platform', 'proxy_url', 'use_system_proxy', 'custom_headers', 'status', 'is_pinned', 'sort_order', 'global_weight', 'api_key', 'model_filter_mode', 'created_at', 'updated_at'],
+      columns: ['id', 'name', 'url', 'external_checkin_url', 'platform', 'proxy_url', 'use_system_proxy', 'custom_headers', 'status', 'is_pinned', 'sort_order', 'global_weight', 'api_key', 'model_filter_mode', 'probe_disabled', 'endpoint_overrides', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNullableString(row.name),
@@ -339,6 +485,8 @@ function buildStatements(
         asNumber(row.globalWeight, 1),
         asNullableString(row.apiKey),
         asNullableString(row.modelFilterMode) ?? 'deny-list',
+        asBoolean((row as { probeDisabled?: unknown }).probeDisabled, false),
+        serializeJsonColumnValue((row as { endpointOverrides?: unknown }).endpointOverrides),
         asNullableString(row.createdAt),
         asNullableString(row.updatedAt),
       ],
@@ -418,7 +566,7 @@ function buildStatements(
   for (const row of snapshot.accounts.accounts) {
     statements.push({
       table: 'accounts',
-      columns: ['id', 'site_id', 'username', 'access_token', 'api_token', 'balance', 'balance_used', 'quota', 'unit_cost', 'value_score', 'status', 'is_pinned', 'sort_order', 'checkin_enabled', 'last_checkin_at', 'last_balance_refresh', 'extra_config', 'created_at', 'updated_at'],
+      columns: ['id', 'site_id', 'username', 'access_token', 'api_token', 'balance', 'balance_used', 'quota', 'unit_cost', 'value_score', 'status', 'is_pinned', 'sort_order', 'checkin_enabled', 'last_checkin_at', 'last_balance_refresh', 'extra_config', 'endpoint_overrides', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.siteId, 0),
@@ -437,6 +585,7 @@ function buildStatements(
         asNullableString(row.lastCheckinAt),
         asNullableString(row.lastBalanceRefresh),
         serializeColumnValue('accounts', 'extra_config', row.extraConfig, contract),
+        serializeJsonColumnValue((row as { endpointOverrides?: unknown }).endpointOverrides),
         asNullableString(row.createdAt),
         asNullableString(row.updatedAt),
       ],
@@ -459,6 +608,7 @@ function buildStatements(
         'model_filter_mode',
         'filtered_models',
         'model_mapping',
+        'endpoint_overrides',
         'created_at',
         'updated_at',
       ],
@@ -475,6 +625,7 @@ function buildStatements(
         asNullableString((row as { modelFilterMode?: unknown }).modelFilterMode) ?? 'none',
         asNullableString((row as { filteredModels?: unknown }).filteredModels),
         serializeColumnValue('account_tokens', 'model_mapping', (row as { modelMapping?: unknown }).modelMapping, contract),
+        serializeJsonColumnValue((row as { endpointOverrides?: unknown }).endpointOverrides),
         asNullableString(row.createdAt),
         asNullableString(row.updatedAt),
       ],
@@ -775,7 +926,7 @@ export async function bootstrapRuntimeDatabaseSchema(input: Pick<NormalizedDatab
     ssl: input.ssl,
   });
   try {
-    await ensureRuntimeDatabaseSchema(client);
+    await ensureMigrationSchema(client);
   } finally {
     await client.close();
   }
@@ -787,7 +938,7 @@ export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Pro
   const client = await createClient(normalized);
 
   try {
-    await ensureRuntimeDatabaseSchema(client);
+    await ensureMigrationSchema(client);
     await ensureTargetState(client, normalized.overwrite);
 
     await client.begin();
@@ -851,7 +1002,7 @@ export async function testDatabaseConnection(input: DatabaseMigrationInput): Pro
 }
 
 export const __databaseMigrationServiceTestUtils = {
-  ensureSchema: ensureRuntimeDatabaseSchema,
+  ensureSchema: ensureMigrationSchema,
   buildStatements,
   serializeColumnValue,
 };

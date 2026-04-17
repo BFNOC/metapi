@@ -360,4 +360,79 @@ describe('handleOpenAiResponsesSurfaceRequest', () => {
     expect(recordSurfaceSuccessMock).toHaveBeenCalledTimes(1);
     expect(reply.send).toHaveBeenCalledWith({ id: 'downstream_resp_1' });
   });
+
+  it('returns a compatibility error when override filtering removes every responses candidate', async () => {
+    transformRequestMock.mockReturnValue({
+      value: {
+        model: 'gpt-5.4',
+        stream: false,
+        parsed: {
+          normalizedBody: {
+            input: 'hello',
+          },
+        },
+      },
+    });
+    ensureModelAllowedForDownstreamKeyMock.mockResolvedValue(true);
+    getDownstreamRoutingPolicyMock.mockReturnValue({});
+    getProxyAuthContextMock.mockReturnValue(null);
+    getProxyResourceOwnerMock.mockReturnValue(null);
+    detectDownstreamClientContextMock.mockReturnValue({
+      clientKind: 'generic',
+    });
+    getProxyMaxChannelRetriesMock.mockReturnValue(0);
+    buildSurfaceStickySessionKeyMock.mockReturnValue('sticky-responses');
+    summarizeConversationFileInputsInOpenAiBodyMock.mockReturnValue({
+      hasImage: false,
+      hasAudio: false,
+      hasDocument: false,
+      hasRemoteDocumentUrl: false,
+    });
+    summarizeConversationFileInputsInResponsesBodyMock.mockReturnValue({
+      hasImage: false,
+      hasAudio: false,
+      hasDocument: false,
+      hasRemoteDocumentUrl: false,
+    });
+    resolveUpstreamEndpointCandidatesMock.mockResolvedValue([]);
+    selectSurfaceChannelForAttemptMock.mockResolvedValue({
+      channel: { id: 11, routeId: 22 },
+      account: { id: 33, extraConfig: null },
+      site: { id: 44, url: 'https://upstream.example.com', platform: 'openai' },
+      tokenValue: 'token-demo',
+      actualModel: 'upstream-model',
+    });
+    buildOauthProviderHeadersMock.mockReturnValue({});
+    getOauthInfoFromAccountMock.mockReturnValue(null);
+    isCodexResponsesSurfaceMock.mockReturnValue(false);
+
+    const { handleOpenAiResponsesSurfaceRequest } = await import('./openAiResponsesSurface.js');
+
+    const request = {
+      body: { model: 'gpt-5.4', input: 'hello' },
+      headers: {},
+    } as any;
+    const reply = {
+      code: vi.fn().mockReturnThis(),
+      send: vi.fn(),
+      hijack: vi.fn(),
+      raw: {
+        statusCode: 200,
+        setHeader: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+      },
+    } as any;
+
+    await handleOpenAiResponsesSurfaceRequest(request, reply, '/v1/responses');
+
+    expect(executeEndpointFlowMock).not.toHaveBeenCalled();
+    expect(reply.code).toHaveBeenCalledWith(501);
+    expect(reply.send).toHaveBeenCalledWith({
+      error: {
+        message: 'Responses compatibility is not implemented for this upstream',
+        type: 'invalid_request_error',
+      },
+    });
+  });
 });

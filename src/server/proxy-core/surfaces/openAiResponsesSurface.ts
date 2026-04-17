@@ -4,6 +4,7 @@ import { config } from '../../config.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
 import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
+import { buildEndpointCompatibilityUnavailableResponse } from '../endpointOverrides.js';
 import {
   extractResponsesTerminalResponseId,
   isResponsesPreviousResponseNotFoundError,
@@ -17,7 +18,6 @@ import {
   recordUpstreamEndpointFailure,
   recordUpstreamEndpointSuccess,
   resolveUpstreamEndpointCandidates,
-  type UpstreamEndpoint,
 } from '../../routes/proxy/upstreamEndpoint.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../routes/proxy/downstreamPolicy.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
@@ -77,6 +77,7 @@ import {
   selectSurfaceChannelForAttempt,
   trySurfaceOauthRefreshRecovery,
 } from './sharedSurface.js';
+import type { UpstreamEndpoint } from '../upstreamEndpointTypes.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -278,6 +279,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	    });
 	    const excludeChannelIds: number[] = [];
 	    let retryCount = 0;
+    let lastCompatibilityUnavailable: ReturnType<typeof buildEndpointCompatibilityUnavailableResponse> | null = null;
 
     while (retryCount <= maxRetries) {
 	      const selected = await selectSurfaceChannelForAttempt({
@@ -289,6 +291,9 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	      });
 
       if (!selected) {
+        if (lastCompatibilityUnavailable) {
+          return reply.code(lastCompatibilityUnavailable.statusCode).send(lastCompatibilityUnavailable.payload);
+        }
         await reportProxyAllFailed({
           model: requestedModel,
           reason: 'No available channels after retries',
@@ -348,24 +353,33 @@ export async function handleOpenAiResponsesSurfaceRequest(
       const responsesConversationFileSummary = summarizeConversationFileInputsInResponsesBody(normalizedResponsesBody);
       const requiresNativeResponsesFileUrl = responsesConversationFileSummary.hasRemoteDocumentUrl
         || carriesResponsesFileUrlInput(normalizedResponsesBody.input);
-      const endpointCandidates: UpstreamEndpoint[] = isCompactRequest
-        ? ['responses']
-        : await resolveUpstreamEndpointCandidates(
-          {
-            site: selected.site,
-            account: selected.account,
-          },
-          modelName,
-          'responses',
-          requestedModel,
-          {
-            hasNonImageFileInput,
-            conversationFileSummary,
-            wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
-          },
+      const endpointCandidates = await resolveUpstreamEndpointCandidates(
+        {
+          site: selected.site,
+          account: selected.account,
+          token: selected.token,
+        },
+        modelName,
+        'responses',
+        requestedModel,
+        {
+          hasNonImageFileInput,
+          conversationFileSummary,
+          wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
+        },
+        isCompactRequest ? ['responses'] : undefined,
+      );
+      if (endpointCandidates.length === 0) {
+        lastCompatibilityUnavailable = buildEndpointCompatibilityUnavailableResponse(
+          isCompactRequest
+            ? 'Responses compact compatibility is not implemented for this upstream'
+            : 'Responses compatibility is not implemented for this upstream',
         );
-      if (!isCompactRequest && endpointCandidates.length === 0) {
-        endpointCandidates.push('responses', 'chat', 'messages');
+        if (retryCount < maxRetries) {
+          retryCount += 1;
+          continue;
+        }
+        return reply.code(lastCompatibilityUnavailable.statusCode).send(lastCompatibilityUnavailable.payload);
       }
       const endpointRuntimeContext = {
         siteId: selected.site.id,
@@ -1053,22 +1067,22 @@ export async function handleOpenAiResponsesSurfaceRequest(
               errorLabel: '[responses] post-response bookkeeping failed:',
             },
           });
-	        } catch (error) {
-	          console.error('[responses] post-response success logging failed:', error);
-	        }
-	        bindSurfaceStickyChannel({
-	          stickySessionKey,
-	          selected,
-	        });
-	        return reply.send(downstreamData);
-	      } catch (err: any) {
-	        clearSurfaceStickyChannel({
-	          stickySessionKey,
-	          selected,
-	        });
-	        const failureOutcome = await failureToolkit.handleExecutionError({
-	          selected,
-	          requestedModel,
+        } catch (error) {
+          console.error('[responses] post-response success logging failed:', error);
+        }
+        bindSurfaceStickyChannel({
+          stickySessionKey,
+          selected,
+        });
+        return reply.send(downstreamData);
+      } catch (err: any) {
+        clearSurfaceStickyChannel({
+          stickySessionKey,
+          selected,
+        });
+        const failureOutcome = await failureToolkit.handleExecutionError({
+          selected,
+          requestedModel,
           modelName,
           errorMessage: err?.message || 'network failure',
           isStream,

@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyReply } from 'fastify';
-import { db, schema } from '../../db/index.js';
+import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { insertAndGetById } from '../../db/insertHelpers.js';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
 import { invalidateSiteProxyCache, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
@@ -9,6 +9,11 @@ import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
 import { getSub2ApiSubscriptionFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { probeModels, type ProbeResult } from '../../services/modelProbeService.js';
+import {
+  normalizeEndpointOverridesInput,
+  parseEndpointOverrideValue,
+  serializeEndpointOverridesValue,
+} from '../../proxy-core/endpointOverrides.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { resolveProbePrompt } from '../../../shared/probePrompts.js';
 
@@ -88,6 +93,45 @@ function normalizeOptionalExternalCheckinUrl(input: unknown): {
   return { valid: true, present: true, url: parsed.toString().replace(/\/+$/, '') };
 }
 
+function parseSiteEndpointOverridesValue(value: unknown): string[] | null {
+  const parsed = parseEndpointOverrideValue(value);
+  return parsed.present ? parsed.endpoints : null;
+}
+
+function normalizeSiteEndpointOverridesInput(input: unknown): {
+  valid: boolean;
+  present: boolean;
+  endpointOverrides: string[] | null;
+  storageValue: string | null;
+  error?: string;
+} {
+  if (input === undefined) {
+    return {
+      valid: true,
+      present: false,
+      endpointOverrides: null,
+      storageValue: null,
+    };
+  }
+  const normalized = normalizeEndpointOverridesInput(input);
+  if (normalized.error) {
+    return {
+      valid: false,
+      present: true,
+      endpointOverrides: null,
+      storageValue: null,
+      error: normalized.error,
+    };
+  }
+
+  return {
+    valid: true,
+    present: true,
+    endpointOverrides: normalized.endpointOverrides,
+    storageValue: serializeEndpointOverridesValue(normalized.endpointOverrides),
+  };
+}
+
 type ErrorLike = {
   message?: string;
   code?: string | number;
@@ -96,6 +140,107 @@ type ErrorLike = {
 
 function normalizeSiteUrl(url: string): string {
   return url.replace(/\/+$/, '');
+}
+
+async function hasSiteEndpointOverridesColumn(): Promise<boolean> {
+  const readCount = (rows: unknown): number => {
+    if (!Array.isArray(rows) || rows.length === 0) return 0;
+    const first = rows[0] as unknown;
+    if (Array.isArray(first)) {
+      return Number(first[0] || 0);
+    }
+    if (first && typeof first === 'object') {
+      return Number((first as any).count || (first as any).COUNT || (first as any)['COUNT(*)'] || 0);
+    }
+    return Number(first || 0);
+  };
+
+  if (runtimeDbDialect === 'sqlite') {
+    const rows = await db.all(sql<{ count: number }>`
+      SELECT COUNT(*) AS count
+      FROM pragma_table_info('sites')
+      WHERE name = 'endpoint_overrides'
+    `);
+    return readCount(rows) > 0;
+  }
+
+  if (runtimeDbDialect === 'mysql') {
+    const rows = await db.all(sql<{ count: number }>`
+      SELECT COUNT(*) AS count
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name = 'sites'
+        AND column_name = 'endpoint_overrides'
+    `);
+    return readCount(rows) > 0;
+  }
+
+  const rows = await db.all(sql<{ count: number }>`
+    SELECT COUNT(*) AS count
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'sites'
+      AND column_name = 'endpoint_overrides'
+  `);
+  return readCount(rows) > 0;
+}
+
+async function loadAllSiteEndpointOverrides(): Promise<Map<number, string[] | null>> {
+  const bySiteId = new Map<number, string[] | null>();
+  if (!(await hasSiteEndpointOverridesColumn())) {
+    return bySiteId;
+  }
+
+  const rows = await db.all(sql<{ id: number; endpointOverrides: string | null }>`
+    SELECT id, endpoint_overrides AS endpointOverrides
+    FROM sites
+    ORDER BY id ASC
+  `);
+  for (const row of rows as unknown[]) {
+    if (Array.isArray(row)) {
+      const siteId = Number(row[0] || 0);
+      if (siteId > 0) {
+        bySiteId.set(siteId, parseSiteEndpointOverridesValue(row[1]));
+      }
+      continue;
+    }
+
+    if (row && typeof row === 'object') {
+      const siteId = Number((row as any).id || 0);
+      if (siteId > 0) {
+        bySiteId.set(
+          siteId,
+          parseSiteEndpointOverridesValue((row as any).endpointOverrides ?? (row as any).endpoint_overrides),
+        );
+      }
+    }
+  }
+  return bySiteId;
+}
+
+async function attachSiteEndpointOverrides<T extends { id: number }>(siteRows: T[]): Promise<Array<T & {
+  endpointOverrides: string[] | null;
+}>> {
+  const endpointOverridesBySiteId = await loadAllSiteEndpointOverrides();
+  return siteRows.map((row) => ({
+    ...row,
+    endpointOverrides: endpointOverridesBySiteId.get(row.id) ?? null,
+  }));
+}
+
+async function writeSiteEndpointOverrides(
+  executor: Pick<typeof db, 'run'>,
+  siteId: number,
+  storageValue: string | null,
+): Promise<void> {
+  if (!(await hasSiteEndpointOverridesColumn())) {
+    return;
+  }
+  await executor.run(sql`
+    UPDATE sites
+    SET endpoint_overrides = ${storageValue}
+    WHERE id = ${siteId}
+  `);
 }
 
 function getErrorChain(error: unknown): ErrorLike[] {
@@ -310,6 +455,7 @@ export async function sitesRoutes(app: FastifyInstance) {
   // List all sites
   app.get('/api/sites', async () => {
     const siteRows = await db.select().from(schema.sites).all();
+    const siteRowsWithEndpointOverrides = await attachSiteEndpointOverrides(siteRows);
     const accountRows = await db.select({
       siteId: schema.accounts.siteId,
       balance: schema.accounts.balance,
@@ -323,7 +469,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       subscriptionBySiteId[row.siteId] = aggregateSiteSubscription(subscriptionBySiteId[row.siteId], row.extraConfig);
     }
 
-    return siteRows.map((site: any) => ({
+    return siteRowsWithEndpointOverrides.map((site: any) => ({
       ...site,
       totalBalance: Math.round((totalBalanceBySiteId[site.id] || 0) * 1_000_000) / 1_000_000,
       subscriptionSummary: subscriptionBySiteId[site.id] || null,
@@ -343,8 +489,9 @@ export async function sitesRoutes(app: FastifyInstance) {
     isPinned?: boolean;
     sortOrder?: number;
     globalWeight?: number;
+    endpointOverrides?: unknown;
   } }>('/api/sites', async (request, reply) => {
-    const { name, url, platform, proxyUrl, useSystemProxy, customHeaders, externalCheckinUrl, status, isPinned, sortOrder, globalWeight } = request.body;
+    const { name, url, platform, proxyUrl, useSystemProxy, customHeaders, externalCheckinUrl, status, isPinned, sortOrder, globalWeight, endpointOverrides } = request.body;
     const normalizedStatus = normalizeSiteStatus(status);
     if (status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });
@@ -376,6 +523,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     const normalizedCustomHeaders = parseSiteCustomHeadersInput(customHeaders);
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
+    }
+    const normalizedEndpointOverrides = normalizeSiteEndpointOverridesInput(endpointOverrides);
+    if (!normalizedEndpointOverrides.valid) {
+      return reply.code(400).send({ error: normalizedEndpointOverrides.error || 'Invalid endpointOverrides.' });
     }
 
     const existingSites = await db.select().from(schema.sites).all();
@@ -423,8 +574,16 @@ export async function sitesRoutes(app: FastifyInstance) {
       }
       throw error;
     }
+    if (normalizedEndpointOverrides.present) {
+      await writeSiteEndpointOverrides(db, inserted.id, normalizedEndpointOverrides.storageValue);
+      inserted = await db.select().from(schema.sites).where(eq(schema.sites.id, inserted.id)).get();
+      if (!inserted) {
+        return reply.code(500).send({ error: 'Create site failed' });
+      }
+    }
     invalidateSiteCaches();
-    return inserted;
+    const [hydrated] = await attachSiteEndpointOverrides([inserted]);
+    return hydrated;
   });
 
   // Update a site
@@ -442,6 +601,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     globalWeight?: number;
     modelFilterMode?: string;
     probeDisabled?: boolean;
+    endpointOverrides?: unknown;
   } }>('/api/sites/:id', async (request, reply) => {
     const id = parseInt(request.params.id);
     if (Number.isNaN(id)) {
@@ -487,6 +647,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
     }
+    const normalizedEndpointOverrides = normalizeSiteEndpointOverridesInput(body.endpointOverrides);
+    if (!normalizedEndpointOverrides.valid) {
+      return reply.code(400).send({ error: normalizedEndpointOverrides.error || 'Invalid endpointOverrides.' });
+    }
     const normalizedModelFilterMode = normalizeModelFilterMode(body.modelFilterMode);
     if (body.modelFilterMode !== undefined && !normalizedModelFilterMode) {
       return reply.code(400).send({ error: 'Invalid modelFilterMode. Expected deny-list or allow-list.' });
@@ -523,7 +687,12 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.probeDisabled !== undefined) updates.probeDisabled = !!body.probeDisabled;
     updates.updatedAt = new Date().toISOString();
     try {
-      await db.update(schema.sites).set(updates).where(eq(schema.sites.id, id)).run();
+      await db.transaction(async (tx: any) => {
+        await tx.update(schema.sites).set(updates).where(eq(schema.sites.id, id)).run();
+        if (normalizedEndpointOverrides.present) {
+          await writeSiteEndpointOverrides(tx, id, normalizedEndpointOverrides.storageValue);
+        }
+      });
     } catch (error) {
       if (isSitesPlatformUrlConflict(error)) {
         const conflictingSite = await loadConflictingSiteBinding(nextPlatform, nextUrl, id);
@@ -547,7 +716,12 @@ export async function sitesRoutes(app: FastifyInstance) {
       await routeRefreshWorkflow.rebuildRoutesBestEffort();
     }
 
-    return await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    const updated = await db.select().from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!updated) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+    const [hydrated] = await attachSiteEndpointOverrides([updated]);
+    return hydrated;
   });
 
   // Delete a site

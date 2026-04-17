@@ -85,6 +85,12 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "endpoint_overrides": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -217,6 +223,12 @@
           "primaryKey": false
         },
         "oauth_project_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "endpoint_overrides": {
           "logicalType": "text",
           "notNull": false,
           "defaultValue": null,
@@ -1224,6 +1236,12 @@
           "logicalType": "text",
           "notNull": false,
           "defaultValue": "'deny-list'",
+          "primaryKey": false
+        },
+        "endpoint_overrides": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
           "primaryKey": false
         }
       }

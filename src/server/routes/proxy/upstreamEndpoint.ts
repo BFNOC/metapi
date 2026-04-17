@@ -14,7 +14,6 @@ import {
 } from '../../services/endpointAffinityRuntime.js';
 import { fetchModelPricingCatalog } from '../../services/modelPricingService.js';
 import { applyPayloadRules } from '../../services/payloadRules.js';
-import type { DownstreamFormat } from '../../transformers/shared/normalized.js';
 import {
   convertOpenAiBodyToResponsesBody as convertOpenAiBodyToResponsesBodyViaTransformer,
   sanitizeResponsesBodyForProxy as sanitizeResponsesBodyForProxyViaTransformer,
@@ -27,6 +26,14 @@ import {
 import {
   buildGeminiGenerateContentRequestFromOpenAi,
 } from './geminiCliCompat.js';
+import {
+  resolveEndpointCandidatesWithOverrides,
+} from '../../proxy-core/endpointOverrides.js';
+import {
+  normalizeUpstreamEndpointTypes,
+  type EndpointPreference,
+  type UpstreamEndpoint,
+} from '../../proxy-core/upstreamEndpointTypes.js';
 import {
   buildMinimalJsonHeadersForCompatibility,
   isEndpointDispatchDeniedError,
@@ -48,9 +55,7 @@ export {
   promoteResponsesCandidateAfterLegacyChatError,
   shouldPreferResponsesAfterLegacyChatError,
 };
-
-export type UpstreamEndpoint = 'chat' | 'messages' | 'responses';
-export type EndpointPreference = DownstreamFormat | 'responses';
+export type { EndpointPreference, UpstreamEndpoint } from '../../proxy-core/upstreamEndpointTypes.js';
 
 type EndpointCapabilityProfile = {
   modelKey: string;
@@ -64,17 +69,18 @@ type EndpointCapabilityProfile = {
 };
 
 type ChannelContext = {
-  site: {
+  site: Record<string, unknown> & {
     id: number;
     url: string;
     platform: string;
     apiKey?: string | null;
   };
-  account: {
+  account: Record<string, unknown> & {
     id: number;
     accessToken?: string | null;
     apiToken?: string | null;
   };
+  token?: Record<string, unknown> | null;
 };
 
 export const MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH = 64;
@@ -480,50 +486,6 @@ function toFiniteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-
-function normalizeEndpointTypes(value: unknown): UpstreamEndpoint[] {
-  const raw = asTrimmedString(value).toLowerCase();
-  if (!raw) return [];
-
-  const normalized = new Set<UpstreamEndpoint>();
-
-  if (
-    raw.includes('/v1/messages')
-    || raw === 'messages'
-    || raw.includes('anthropic')
-    || raw.includes('claude')
-  ) {
-    normalized.add('messages');
-  }
-
-  if (
-    raw.includes('/v1/responses')
-    || raw === 'responses'
-    || raw.includes('response')
-  ) {
-    normalized.add('responses');
-  }
-
-  if (
-    raw.includes('/v1/chat/completions')
-    || raw.includes('chat/completions')
-    || raw === 'chat'
-    || raw === 'chat_completions'
-    || raw === 'completions'
-    || raw.includes('chat')
-  ) {
-    normalized.add('chat');
-  }
-
-  // Some upstreams return protocol families instead of concrete endpoint paths.
-  if (raw === 'openai' || raw.includes('openai')) {
-    normalized.add('chat');
-    normalized.add('responses');
-  }
-
-  return Array.from(normalized);
-}
-
 function buildEndpointCapabilityProfile(input?: {
   modelName?: string;
   requestedModelHint?: string;
@@ -744,6 +706,7 @@ export async function resolveUpstreamEndpointCandidates(
     wantsNativeResponsesReasoning?: boolean;
     wantsContinuationAwareResponses?: boolean;
   },
+  endpointOverride?: unknown,
 ): Promise<UpstreamEndpoint[]> {
   const sitePlatform = normalizePlatformName(context.site.platform);
   const capabilityProfile = buildEndpointCapabilityProfile({
@@ -760,14 +723,21 @@ export async function resolveUpstreamEndpointCandidates(
     downstreamFormat,
     capabilityProfile,
   });
-  const applyRuntimePreference = (candidates: UpstreamEndpoint[]) => (
-    shouldUseEndpointRuntimeMemory(capabilityProfile)
+  const applyCandidatePolicies = (candidates: UpstreamEndpoint[]) => {
+    const runtimePreferred = shouldUseEndpointRuntimeMemory(capabilityProfile)
       ? applyEndpointAffinityRuntimePreference(
         candidates as EndpointAffinityRuntimeEndpoint[],
         runtimeStateKey,
       ) as UpstreamEndpoint[]
-      : candidates
-  );
+      : candidates;
+    return resolveEndpointCandidatesWithOverrides({
+      candidates: runtimePreferred,
+      site: context.site,
+      account: context.account,
+      token: context.token,
+      override: endpointOverride,
+    });
+  };
   const conversationFileSummary = requestCapabilities?.conversationFileSummary ?? {
     hasImage: false,
     hasAudio: false,
@@ -777,14 +747,14 @@ export async function resolveUpstreamEndpointCandidates(
   if (sitePlatform === 'anyrouter') {
     // anyrouter deployments are effectively anthropic-protocol first.
     if (hasNonImageFileInput) {
-      return applyRuntimePreference(downstreamFormat === 'responses'
+      return applyCandidatePolicies(downstreamFormat === 'responses'
         ? ['responses', 'messages', 'chat']
         : ['messages', 'responses', 'chat']);
     }
     if (downstreamFormat === 'responses') {
-      return applyRuntimePreference(['responses', 'messages', 'chat']);
+      return applyCandidatePolicies(['responses', 'messages', 'chat']);
     }
-    return applyRuntimePreference(['messages', 'chat', 'responses']);
+    return applyCandidatePolicies(['messages', 'chat', 'responses']);
   }
 
   const preferred = preferredEndpointOrder(
@@ -845,20 +815,20 @@ export async function resolveUpstreamEndpointCandidates(
     });
 
     if (!catalog || !Array.isArray(catalog.models) || catalog.models.length === 0) {
-      return applyRuntimePreference(prioritizedPreferredEndpoints);
+      return applyCandidatePolicies(prioritizedPreferredEndpoints);
     }
 
     const matched = catalog.models.find((item) =>
       asTrimmedString(item?.modelName).toLowerCase() === modelName.toLowerCase(),
     );
-    if (!matched) return applyRuntimePreference(prioritizedPreferredEndpoints);
+    if (!matched) return applyCandidatePolicies(prioritizedPreferredEndpoints);
 
     const shouldIgnoreCatalogOrderingForClaudeMessages = (
       preferMessagesForClaudeModel
       && (downstreamFormat !== 'responses' || sitePlatform !== 'openai')
     );
     if (shouldIgnoreCatalogOrderingForClaudeMessages) {
-      return applyRuntimePreference(prioritizedPreferredEndpoints);
+      return applyCandidatePolicies(prioritizedPreferredEndpoints);
     }
 
     const supportedRaw = Array.isArray(matched.supportedEndpointTypes) ? matched.supportedEndpointTypes : [];
@@ -878,30 +848,30 @@ export async function resolveUpstreamEndpointCandidates(
     if (forceMessagesFirstForClaudeModel && !hasConcreteEndpointHint) {
       // Generic labels like openai/anthropic are too coarse for Claude models;
       // keep messages-first order in this case.
-      return applyRuntimePreference(prioritizedPreferredEndpoints);
+      return applyCandidatePolicies(prioritizedPreferredEndpoints);
     }
 
     const supported = new Set<UpstreamEndpoint>();
     for (const endpoint of supportedRaw) {
-      const normalizedList = normalizeEndpointTypes(endpoint);
+      const normalizedList = normalizeUpstreamEndpointTypes(endpoint);
       for (const normalized of normalizedList) {
         supported.add(normalized);
       }
     }
 
-    if (supported.size === 0) return applyRuntimePreference(prioritizedPreferredEndpoints);
+    if (supported.size === 0) return applyCandidatePolicies(prioritizedPreferredEndpoints);
 
     const firstSupported = prioritizedPreferredEndpoints.find((endpoint) => supported.has(endpoint));
-    if (!firstSupported) return applyRuntimePreference(prioritizedPreferredEndpoints);
+    if (!firstSupported) return applyCandidatePolicies(prioritizedPreferredEndpoints);
 
     // Catalog metadata can be incomplete/inaccurate, so only use it to pick
     // the first attempt. Keep downstream-driven fallback order unchanged.
-    return applyRuntimePreference([
+    return applyCandidatePolicies([
       firstSupported,
       ...prioritizedPreferredEndpoints.filter((endpoint) => endpoint !== firstSupported),
     ]);
   } catch {
-    return applyRuntimePreference(prioritizedPreferredEndpoints);
+    return applyCandidatePolicies(prioritizedPreferredEndpoints);
   }
 }
 

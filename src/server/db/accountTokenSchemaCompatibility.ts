@@ -59,6 +59,15 @@ export const ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS: AccountTokenColumnCompati
       postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "model_mapping" TEXT',
     },
   },
+  {
+    table: 'account_tokens',
+    column: 'endpoint_overrides',
+    addSql: {
+      sqlite: 'ALTER TABLE account_tokens ADD COLUMN endpoint_overrides text;',
+      mysql: 'ALTER TABLE `account_tokens` ADD COLUMN `endpoint_overrides` TEXT NULL',
+      postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "endpoint_overrides" TEXT',
+    },
+  },
 ];
 
 function normalizeSchemaErrorMessage(error: unknown): string {

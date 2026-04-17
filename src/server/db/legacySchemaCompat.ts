@@ -1,4 +1,9 @@
 import {
+  ACCOUNT_COLUMN_COMPATIBILITY_SPECS,
+  ensureAccountSchemaCompatibility,
+  type AccountSchemaInspector,
+} from './accountSchemaCompatibility.js';
+import {
   ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS,
   ensureAccountTokenSchemaCompatibility,
   type AccountTokenSchemaInspector,
@@ -32,6 +37,7 @@ export type LegacySchemaCompatClassification = 'legacy' | 'forbidden';
 
 export interface LegacySchemaCompatInspector extends
   SiteSchemaInspector,
+  AccountSchemaInspector,
   RouteGroupingSchemaInspector,
   ProxyFileSchemaInspector,
   AccountTokenSchemaInspector,
@@ -96,6 +102,7 @@ const LEGACY_COMPAT_TABLES = new Set([
 
 const LEGACY_COMPAT_COLUMNS = new Set([
   ...SITE_COLUMN_COMPATIBILITY_SPECS.map((spec) => `sites.${spec.column}`),
+  ...ACCOUNT_COLUMN_COMPATIBILITY_SPECS.map((spec) => `${spec.table}.${spec.column}`),
   ...ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS.map((spec) => `${spec.table}.${spec.column}`),
   ...ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS.map((spec) => `${spec.table}.${spec.column}`),
   ...PROXY_FILE_COLUMN_COMPATIBILITY_SPECS.map((spec) => `${spec.table}.${spec.column}`),
@@ -186,6 +193,7 @@ function wrapLegacyCompatInspector(inspector: LegacySchemaCompatInspector): Lega
 export async function ensureLegacySchemaCompatibility(inspector: LegacySchemaCompatInspector): Promise<void> {
   const wrappedInspector = wrapLegacyCompatInspector(inspector);
   await ensureSiteSchemaCompatibility(wrappedInspector);
+  await ensureAccountSchemaCompatibility(wrappedInspector);
   await ensureRouteGroupingSchemaCompatibility(wrappedInspector);
   await ensureProxyFileSchemaCompatibility(wrappedInspector);
   await ensureAccountTokenSchemaCompatibility(wrappedInspector);

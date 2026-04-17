@@ -5,6 +5,7 @@ import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
 import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { type DownstreamFormat } from '../../transformers/shared/normalized.js';
+import { buildEndpointCompatibilityUnavailableResponse } from '../endpointOverrides.js';
 import {
   buildClaudeCountTokensUpstreamRequest,
   buildUpstreamEndpointRequest,
@@ -188,6 +189,7 @@ export async function handleChatSurfaceRequest(
 
   const excludeChannelIds: number[] = [];
   let retryCount = 0;
+  let lastCompatibilityUnavailable: ReturnType<typeof buildEndpointCompatibilityUnavailableResponse> | null = null;
   const firstByteTimeoutMs = resolveProxyFirstByteTimeoutMs(config.proxyFirstByteTimeoutSec);
 
   while (retryCount <= maxRetries) {
@@ -200,6 +202,9 @@ export async function handleChatSurfaceRequest(
     });
 
     if (!selected) {
+      if (lastCompatibilityUnavailable) {
+        return reply.code(lastCompatibilityUnavailable.statusCode).send(lastCompatibilityUnavailable.payload);
+      }
       await reportProxyAllFailed({
         model: requestedModel,
         reason: 'No available channels after retries',
@@ -219,6 +224,7 @@ export async function handleChatSurfaceRequest(
         {
           site: selected.site,
           account: selected.account,
+          token: selected.token,
         },
         modelName,
         downstreamFormat,
@@ -232,6 +238,18 @@ export async function handleChatSurfaceRequest(
     ];
     if (oauth?.provider === 'codex' && downstreamFormat === 'openai') {
       endpointCandidates = prioritizeEndpointCandidate(endpointCandidates, 'responses');
+    }
+    if (endpointCandidates.length === 0) {
+      lastCompatibilityUnavailable = buildEndpointCompatibilityUnavailableResponse(
+        downstreamFormat === 'claude'
+          ? 'Claude messages compatibility is not implemented for this upstream'
+          : 'Chat compatibility is not implemented for this upstream',
+      );
+      if (canRetryProxyChannel(retryCount)) {
+        retryCount += 1;
+        continue;
+      }
+      return reply.code(lastCompatibilityUnavailable.statusCode).send(lastCompatibilityUnavailable.payload);
     }
     const endpointRuntimeContext = {
       siteId: selected.site.id,
@@ -849,6 +867,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
   });
   const excludeChannelIds: number[] = [];
   let retryCount = 0;
+  let lastCompatibilityUnavailable: ReturnType<typeof buildEndpointCompatibilityUnavailableResponse> | null = null;
   const firstByteTimeoutMs = resolveProxyFirstByteTimeoutMs(config.proxyFirstByteTimeoutSec);
 
   while (retryCount <= maxRetries) {
@@ -861,6 +880,9 @@ export async function handleClaudeCountTokensSurfaceRequest(
     });
 
     if (!selected) {
+      if (lastCompatibilityUnavailable) {
+        return reply.code(lastCompatibilityUnavailable.statusCode).send(lastCompatibilityUnavailable.payload);
+      }
       await reportProxyAllFailed({
         model: requestedModel,
         reason: 'No available channels after retries',
@@ -876,22 +898,21 @@ export async function handleClaudeCountTokensSurfaceRequest(
       {
         site: selected.site,
         account: selected.account,
+        token: selected.token,
       },
       modelName,
       'claude',
       requestedModel,
     );
     if (!endpointCandidates.includes('messages')) {
+      lastCompatibilityUnavailable = buildEndpointCompatibilityUnavailableResponse(
+        'Claude count_tokens compatibility is not implemented for this upstream',
+      );
       if (canRetryProxyChannel(retryCount)) {
         retryCount += 1;
         continue;
       }
-      return reply.code(501).send({
-        error: {
-          message: 'Claude count_tokens compatibility is not implemented for this upstream',
-          type: 'invalid_request_error',
-        },
-      });
+      return reply.code(lastCompatibilityUnavailable.statusCode).send(lastCompatibilityUnavailable.payload);
     }
     const oauth = getOauthInfoFromAccount(selected.account);
     const startTime = Date.now();

@@ -10,6 +10,7 @@ export const sites = sqliteTable('sites', {
   proxyUrl: text('proxy_url'),
   useSystemProxy: integer('use_system_proxy', { mode: 'boolean' }).default(false),
   customHeaders: text('custom_headers'),
+  endpointOverrides: text('endpoint_overrides'), // JSON
   status: text('status').notNull().default('active'), // 'active' | 'disabled'
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
   sortOrder: integer('sort_order').default(0),
@@ -65,6 +66,7 @@ export const accounts = sqliteTable('accounts', {
   oauthAccountKey: text('oauth_account_key'),
   oauthProjectId: text('oauth_project_id'),
   extraConfig: text('extra_config'), // JSON string
+  endpointOverrides: text('endpoint_overrides'), // JSON array<string>
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
@@ -88,6 +90,7 @@ export const accountTokens = sqliteTable('account_tokens', {
   modelFilterMode: text('model_filter_mode').default('none'), // 'none' | 'allow-list' | 'deny-list'
   filteredModels: text('filtered_models'), // JSON array<string>
   modelMapping: text('model_mapping'), // JSON
+  endpointOverrides: text('endpoint_overrides'), // JSON array<string>
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({

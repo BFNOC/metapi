@@ -4,12 +4,14 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { SchemaContract } from './schemaContract.js';
 import { SHARED_INDEX_COMPATIBILITY_SPECS } from './sharedIndexSchemaCompatibility.js';
+import { SITE_COLUMN_COMPATIBILITY_SPECS } from './siteSchemaCompatibility.js';
 
 const dbDir = dirname(fileURLToPath(import.meta.url));
 const generatedDir = resolve(dbDir, 'generated');
 const supportPaths = [
   resolve(dbDir, 'runtimeSchemaBootstrap.ts'),
   resolve(dbDir, 'siteSchemaCompatibility.ts'),
+  resolve(dbDir, 'accountSchemaCompatibility.ts'),
   resolve(dbDir, 'routeGroupingSchemaCompatibility.ts'),
   resolve(dbDir, 'proxyFileSchemaCompatibility.ts'),
   resolve(dbDir, 'accountTokenSchemaCompatibility.ts'),
@@ -19,6 +21,14 @@ const schemaContractPath = resolve(generatedDir, 'schemaContract.json');
 
 function extractAllMatches(content: string, pattern: RegExp): string[] {
   return Array.from(content.matchAll(pattern), (match) => match[1]);
+}
+
+function extractSqliteTableColumns(content: string, exportName: string, tableName: string): string[] {
+  const tableMatch = content.match(
+    new RegExp(`export const ${exportName} = sqliteTable\\('${tableName}', \\{([\\s\\S]*?)\\n\\}, \\(table\\) => \\(\\{`),
+  );
+  expect(tableMatch, `${tableName} table declaration`).not.toBeNull();
+  return extractAllMatches(tableMatch![1], /:\s+(?:text|integer|real)\('([a-z_][a-z0-9_]*)'/g);
 }
 
 describe('database schema parity', () => {
@@ -77,6 +87,26 @@ describe('database schema parity', () => {
       .filter((indexName) => contractIndexNames.has(indexName));
 
     expect(duplicatedSpecs).toEqual([]);
+  });
+
+  it('keeps site compatibility columns aligned with the drizzle schema, including endpoint overrides', () => {
+    const schemaSource = readFileSync(resolve(dbDir, 'schema.ts'), 'utf8');
+    const siteSchemaColumns = new Set(extractSqliteTableColumns(schemaSource, 'sites', 'sites'));
+    const compatibilityColumns = SITE_COLUMN_COMPATIBILITY_SPECS.map((spec) => spec.column);
+    const missingSchemaColumns = compatibilityColumns.filter((column) => !siteSchemaColumns.has(column));
+
+    expect(compatibilityColumns).toContain('endpoint_overrides');
+    expect(siteSchemaColumns.has('endpoint_overrides')).toBe(true);
+    expect(missingSchemaColumns).toEqual([]);
+  });
+
+  it('keeps account and account token endpoint override compatibility columns aligned with the drizzle schema', () => {
+    const schemaSource = readFileSync(resolve(dbDir, 'schema.ts'), 'utf8');
+    const accountSchemaColumns = new Set(extractSqliteTableColumns(schemaSource, 'accounts', 'accounts'));
+    const accountTokenSchemaColumns = new Set(extractSqliteTableColumns(schemaSource, 'accountTokens', 'account_tokens'));
+
+    expect(accountSchemaColumns.has('endpoint_overrides')).toBe(true);
+    expect(accountTokenSchemaColumns.has('endpoint_overrides')).toBe(true);
   });
 
   it('keeps proxy_logs downstream api key schema in the generated contract artifacts', () => {

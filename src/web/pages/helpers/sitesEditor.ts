@@ -11,6 +11,7 @@ export type SiteForm = {
   proxyUrl: string;
   useSystemProxy: boolean;
   customHeaders: SiteCustomHeaderField[];
+  endpointOverrides: string[];
   globalWeight: string;
   probeDisabled: boolean;
 };
@@ -27,6 +28,7 @@ export type SiteSavePayload = {
   proxyUrl: string;
   useSystemProxy: boolean;
   customHeaders: string;
+  endpointOverrides: string[] | null;
   globalWeight: number;
   probeDisabled: boolean;
 };
@@ -52,6 +54,7 @@ export function emptySiteForm(): SiteForm {
     proxyUrl: '',
     useSystemProxy: false,
     customHeaders: [emptySiteCustomHeader()],
+    endpointOverrides: [],
     globalWeight: '1',
     probeDisabled: false,
   };
@@ -82,11 +85,34 @@ function parseCustomHeadersForEditor(raw: unknown): SiteCustomHeaderField[] {
   }
 }
 
-export function siteFormFromSite(site: Partial<Omit<SiteForm, 'customHeaders' | 'globalWeight' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy'>> & {
+function parseEndpointOverridesForEditor(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return Array.from(new Set(raw
+      .map((item) => (typeof item === 'string' ? item.trim().toLowerCase() : ''))
+      .filter(Boolean)));
+  }
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) return [];
+      return Array.from(new Set(parsed
+        .map((item) => (typeof item === 'string' ? item.trim().toLowerCase() : ''))
+        .filter(Boolean)));
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+export function siteFormFromSite(site: Partial<Omit<SiteForm, 'customHeaders' | 'endpointOverrides' | 'globalWeight' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy'>> & {
   externalCheckinUrl?: string | null;
   proxyUrl?: string | null;
   useSystemProxy?: boolean | null;
   customHeaders?: string | null;
+  endpointOverrides?: string[] | string | null;
   globalWeight?: number | string | null;
   probeDisabled?: boolean | null;
 }): SiteForm {
@@ -100,6 +126,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'customHeaders' | 
     proxyUrl: site.proxyUrl ?? '',
     useSystemProxy: !!site.useSystemProxy,
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
+    endpointOverrides: parseEndpointOverridesForEditor(site.endpointOverrides),
     globalWeight,
     probeDisabled: !!site.probeDisabled,
   };
@@ -132,6 +159,35 @@ export function serializeSiteCustomHeaders(fields: SiteCustomHeaderField[]): {
   return {
     valid: true,
     customHeaders: Object.keys(headers).length > 0 ? JSON.stringify(headers) : '',
+  };
+}
+
+export function serializeSiteEndpointOverrides(values: string[]): {
+  valid: boolean;
+  endpointOverrides: string[] | null;
+  error?: string;
+} {
+  const normalized = Array.from(new Set(values
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)));
+  if (normalized.length === 0) {
+    return {
+      valid: true,
+      endpointOverrides: null,
+    };
+  }
+  const allowed = new Set(['chat', 'messages', 'responses']);
+  const invalid = normalized.filter((value) => !allowed.has(value));
+  if (invalid.length > 0) {
+    return {
+      valid: false,
+      endpointOverrides: null,
+      error: 'Endpoint override 仅支持 chat / messages / responses',
+    };
+  }
+  return {
+    valid: true,
+    endpointOverrides: normalized,
   };
 }
 

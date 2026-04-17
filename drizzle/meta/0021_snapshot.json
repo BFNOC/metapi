@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "af1dfbca-46f0-473c-9cf3-01ae3141c71e",
-  "prevId": "557e1007-0f06-4765-bc05-ce64f205102b",
+  "id": "1de817f0-d4f6-431c-b0ee-a4983a591146",
+  "prevId": "af1dfbca-46f0-473c-9cf3-01ae3141c71e",
   "tables": {
     "account_tokens": {
       "name": "account_tokens",
@@ -91,6 +91,13 @@
         },
         "model_mapping": {
           "name": "model_mapping",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "endpoint_overrides": {
+          "name": "endpoint_overrides",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -302,6 +309,13 @@
         },
         "extra_config": {
           "name": "extra_config",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "endpoint_overrides": {
+          "name": "endpoint_overrides",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

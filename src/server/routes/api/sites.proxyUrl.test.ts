@@ -3,6 +3,7 @@ import { describe, expect, it, beforeAll, beforeEach, afterAll } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
+import { sql } from 'drizzle-orm';
 
 type DbModule = typeof import('../../db/index.js');
 type SiteConflictResponse = {
@@ -30,6 +31,14 @@ describe('sites proxy settings', () => {
     const routesModule = await import('./sites.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    const endpointOverrideColumns = await db.all(sql`
+      SELECT name
+      FROM pragma_table_info('sites')
+      WHERE name = 'endpoint_overrides'
+    `);
+    if (!Array.isArray(endpointOverrideColumns) || endpointOverrideColumns.length === 0) {
+      await db.run(sql`ALTER TABLE sites ADD COLUMN endpoint_overrides text`);
+    }
 
     app = Fastify();
     await app.register(routesModule.sitesRoutes);
@@ -61,6 +70,7 @@ describe('sites proxy settings', () => {
         }),
         externalCheckinUrl: 'https://checkin.example.com/welfare',
         globalWeight: 1.5,
+        endpointOverrides: ['responses', 'chat'],
       },
     });
 
@@ -71,12 +81,14 @@ describe('sites proxy settings', () => {
       customHeaders?: string | null;
       externalCheckinUrl?: string | null;
       globalWeight?: number;
+      endpointOverrides?: string[] | null;
     };
     expect(payload.proxyUrl).toBe('socks5://127.0.0.1:1080');
     expect(payload.useSystemProxy).toBe(true);
     expect(payload.customHeaders).toBe('{"cf-access-client-id":"site-client-id","x-site-scope":"internal"}');
     expect(payload.externalCheckinUrl).toBe('https://checkin.example.com/welfare');
     expect(payload.globalWeight).toBe(1.5);
+    expect(payload.endpointOverrides).toEqual(['responses', 'chat']);
   });
 
   it('returns a conflict response when the same platform and url already exist', async () => {
@@ -199,13 +211,19 @@ describe('sites proxy settings', () => {
       payload: {
         proxyUrl: 'http://127.0.0.1:8080',
         useSystemProxy: true,
+        endpointOverrides: ['responses'],
       },
     });
 
     expect(response.statusCode).toBe(200);
-    const payload = response.json() as { proxyUrl?: string | null; useSystemProxy?: boolean };
+    const payload = response.json() as {
+      proxyUrl?: string | null;
+      useSystemProxy?: boolean;
+      endpointOverrides?: string[] | null;
+    };
     expect(payload.proxyUrl).toBe('http://127.0.0.1:8080');
     expect(payload.useSystemProxy).toBe(true);
+    expect(payload.endpointOverrides).toEqual(['responses']);
   });
 
   it('clears optional editor fields when updating a site with empty strings', async () => {
@@ -222,6 +240,7 @@ describe('sites proxy settings', () => {
           'x-site-scope': 'internal',
         }),
         externalCheckinUrl: 'https://checkin.example.com/welfare',
+        endpointOverrides: ['messages'],
       },
     });
     expect(created.statusCode).toBe(200);
@@ -235,6 +254,7 @@ describe('sites proxy settings', () => {
         useSystemProxy: false,
         customHeaders: '',
         externalCheckinUrl: '',
+        endpointOverrides: '',
       },
     });
 
@@ -244,11 +264,13 @@ describe('sites proxy settings', () => {
       useSystemProxy?: boolean;
       customHeaders?: string | null;
       externalCheckinUrl?: string | null;
+      endpointOverrides?: string[] | null;
     };
     expect(payload.proxyUrl).toBeNull();
     expect(payload.useSystemProxy).toBe(false);
     expect(payload.customHeaders).toBeNull();
     expect(payload.externalCheckinUrl).toBeNull();
+    expect(payload.endpointOverrides).toBeNull();
   });
 
   it('returns a conflict response when updating a site to an existing platform and url', async () => {
@@ -329,5 +351,21 @@ describe('sites proxy settings', () => {
 
     expect(response.statusCode).toBe(400);
     expect((response.json() as { error?: string }).error).toContain('must use a string value');
+  });
+
+  it('rejects invalid endpointOverrides payloads', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'endpoint-override-site',
+        url: 'https://endpoint-override.example.com',
+        platform: 'new-api',
+        endpointOverrides: ['openai'],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid endpointOverrides');
   });
 });

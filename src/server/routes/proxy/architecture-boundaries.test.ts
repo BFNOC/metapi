@@ -172,6 +172,27 @@ describe('proxy route architecture boundaries', () => {
     expect(responsesSurfaceSource).not.toContain('resolveProxyLogBilling(');
   });
 
+  it('keeps endpoint override contracts in proxy-core helpers instead of route-local copies', () => {
+    const upstreamEndpointSource = readSource('./upstreamEndpoint.ts');
+    const chatSurfaceSource = readSource('../../proxy-core/surfaces/chatSurface.ts');
+    const responsesSurfaceSource = readSource('../../proxy-core/surfaces/openAiResponsesSurface.ts');
+    const geminiSurfaceSource = readSource('../../proxy-core/surfaces/geminiSurface.ts');
+
+    expect(upstreamEndpointSource).toContain("from '../../proxy-core/upstreamEndpointTypes.js'");
+    expect(upstreamEndpointSource).toContain("from '../../proxy-core/endpointOverrides.js'");
+    expect(upstreamEndpointSource).not.toContain('function normalizeEndpointTypes(');
+
+    expect(chatSurfaceSource).toContain("from '../endpointOverrides.js'");
+    expect(chatSurfaceSource).toContain('buildEndpointCompatibilityUnavailableResponse(');
+
+    expect(responsesSurfaceSource).toContain("from '../endpointOverrides.js'");
+    expect(responsesSurfaceSource).toContain('buildEndpointCompatibilityUnavailableResponse(');
+    expect(responsesSurfaceSource).not.toContain("endpointCandidates.push('responses', 'chat', 'messages')");
+
+    expect(geminiSurfaceSource).toContain("from '../endpointOverrides.js'");
+    expect(geminiSurfaceSource).toContain('buildEndpointCompatibilityUnavailableResponse(');
+  });
+
   it('keeps canonical transformer contracts imported from the transformer boundary only', () => {
     const chatSource = readSource('./chat.ts');
     const responsesSource = readSource('./responses.ts');

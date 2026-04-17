@@ -24,6 +24,7 @@ import {
   emptySiteForm,
   parseBulkCustomHeaders,
   serializeSiteCustomHeaders,
+  serializeSiteEndpointOverrides,
   siteFormFromSite,
   type SiteEditorState,
   type SiteForm,
@@ -49,6 +50,7 @@ type SiteRow = {
   proxyUrl?: string | null;
   useSystemProxy?: boolean;
   customHeaders?: string | null;
+  endpointOverrides?: string[] | null;
   globalWeight?: number;
   isPinned?: boolean;
   sortOrder?: number;
@@ -468,6 +470,11 @@ export default function Sites() {
       toast.error(serializedCustomHeaders.error || '自定义请求头格式不正确');
       return;
     }
+    const serializedEndpointOverrides = serializeSiteEndpointOverrides(form.endpointOverrides);
+    if (!serializedEndpointOverrides.valid) {
+      toast.error(serializedEndpointOverrides.error || 'Endpoint override 格式不正确');
+      return;
+    }
 
     const payload = {
       name: form.name.trim(),
@@ -477,6 +484,7 @@ export default function Sites() {
       proxyUrl: form.proxyUrl.trim(),
       useSystemProxy: !!form.useSystemProxy,
       customHeaders: serializedCustomHeaders.customHeaders,
+      endpointOverrides: serializedEndpointOverrides.endpointOverrides,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
       probeDisabled: !!form.probeDisabled,
     };
@@ -1079,6 +1087,36 @@ export default function Sites() {
             ))}
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
               按 key/value 逐条填写，或点击「批量导入」粘贴多条。整行留空会自动忽略；同名请求头会被覆盖。
+            </div>
+            <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>端点协议限制</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+                设置站点默认的上游端点协议限制（子级令牌可独立覆盖）
+              </div>
+              {([
+                ['chat', '/v1/chat/completions'],
+                ['messages', '/v1/messages'],
+                ['responses', '/v1/responses'],
+              ] as const).map(([endpoint, path]) => {
+                const checked = form.endpointOverrides.includes(endpoint);
+                return (
+                  <label key={endpoint} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => setForm((prev) => ({
+                        ...prev,
+                        endpointOverrides: e.target.checked
+                          ? Array.from(new Set([...prev.endpointOverrides, endpoint]))
+                          : prev.endpointOverrides.filter((item) => item !== endpoint),
+                      }))}
+                    />
+                    <span style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>
+                      {endpoint} ({path})
+                    </span>
+                  </label>
+                );
+              })}
             </div>
             {isEditing && (
               <div style={{ marginTop: 16, padding: '14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>

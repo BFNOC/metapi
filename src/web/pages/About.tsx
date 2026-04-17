@@ -4,7 +4,7 @@ import { SITE_DOCS_URL } from '../docsLink.js';
 declare const __BUILD_COMMIT__: string;
 declare const __BUILD_TIME__: string;
 
-const VERSION = '1.3.0-fork.3';
+const VERSION = '1.3.0-fork.7';
 const BUILD_COMMIT = typeof __BUILD_COMMIT__ !== 'undefined' ? __BUILD_COMMIT__ : 'dev';
 const BUILD_TIME = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : '';
 

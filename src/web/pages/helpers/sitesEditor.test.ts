@@ -3,6 +3,7 @@ import {
   buildSiteSaveAction,
   emptySiteCustomHeader,
   emptySiteForm,
+  serializeSiteEndpointOverrides,
   serializeSiteCustomHeaders,
   siteFormFromSite,
 } from './sitesEditor.js';
@@ -19,6 +20,7 @@ describe('buildSiteSaveAction', () => {
         proxyUrl: 'socks5://127.0.0.1:1080',
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
+        endpointOverrides: ['responses'],
         globalWeight: 1.2,
         probeDisabled: false,
       },
@@ -34,6 +36,7 @@ describe('buildSiteSaveAction', () => {
         proxyUrl: 'socks5://127.0.0.1:1080',
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
+        endpointOverrides: ['responses'],
         globalWeight: 1.2,
         probeDisabled: false,
       },
@@ -51,6 +54,7 @@ describe('buildSiteSaveAction', () => {
         proxyUrl: '',
         useSystemProxy: true,
         customHeaders: '',
+        endpointOverrides: null,
         globalWeight: 0.8,
         probeDisabled: false,
       },
@@ -67,6 +71,7 @@ describe('buildSiteSaveAction', () => {
         proxyUrl: '',
         useSystemProxy: true,
         customHeaders: '',
+        endpointOverrides: null,
         globalWeight: 0.8,
         probeDisabled: false,
       },
@@ -85,6 +90,7 @@ describe('buildSiteSaveAction', () => {
           proxyUrl: '',
           useSystemProxy: false,
           customHeaders: '',
+          endpointOverrides: null,
           globalWeight: 1,
           probeDisabled: false,
         },
@@ -100,6 +106,7 @@ describe('buildSiteSaveAction', () => {
       platform: 'new-api',
       proxyUrl: 'http://127.0.0.1:8080',
       customHeaders: '{"x-site-token":"alpha"}',
+      endpointOverrides: '["responses","chat"]',
       globalWeight: 1,
       apiKey: 'sk-legacy-site-key',
     } as unknown as Parameters<typeof siteFormFromSite>[0];
@@ -111,6 +118,9 @@ describe('buildSiteSaveAction', () => {
     expect(siteFormFromSite({
       proxyUrl: 'http://127.0.0.1:8080',
     }).proxyUrl).toBe('http://127.0.0.1:8080');
+    expect(siteFormFromSite({
+      endpointOverrides: '["responses","chat"]',
+    }).endpointOverrides).toEqual(['responses', 'chat']);
   });
 
   it('parses custom headers json into key value rows', () => {
@@ -142,6 +152,21 @@ describe('buildSiteSaveAction', () => {
       valid: false,
       customHeaders: '',
       error: '请求头 "authorization" 重复了',
+    });
+  });
+
+  it('serializes endpoint override arrays into payload', () => {
+    expect(serializeSiteEndpointOverrides(['responses', 'chat', 'responses'])).toEqual({
+      valid: true,
+      endpointOverrides: ['responses', 'chat'],
+    });
+  });
+
+  it('rejects invalid endpoint override values', () => {
+    expect(serializeSiteEndpointOverrides(['responses', 'bogus'])).toEqual({
+      valid: false,
+      endpointOverrides: null,
+      error: 'Endpoint override 仅支持 chat / messages / responses',
     });
   });
 });

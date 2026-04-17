@@ -2,6 +2,7 @@
 import { db, schema } from '../db/index.js';
 import { getInsertedRowId } from '../db/insertHelpers.js';
 import { getCredentialModeFromExtraConfig } from './accountExtraConfig.js';
+import { parseEndpointOverrideValue } from '../proxy-core/endpointOverrides.js';
 
 type UpstreamApiToken = {
   name?: string | null;
@@ -169,6 +170,11 @@ function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boole
   const explicit = getCredentialModeFromExtraConfig(account.extraConfig);
   if (explicit && explicit !== 'auto') return explicit === 'apikey';
   return normalizeTokenValue(account.accessToken) === null;
+}
+
+function toResponseEndpointOverrides(value: unknown): string[] | null {
+  const parsed = parseEndpointOverrideValue(value);
+  return parsed.present ? parsed.endpoints : null;
 }
 
 export async function getPreferredAccountToken(accountId: number) {
@@ -488,22 +494,25 @@ export async function listTokensWithRelations(accountId?: number) {
   return rows
     .filter((row: any) => !isApiKeyConnection(row.accounts))
     .map((row: any) => {
-    const { token, ...tokenMeta } = row.account_tokens;
-    return {
-      ...tokenMeta,
-      valueStatus: resolveAccountTokenValueStatus(row.account_tokens),
-      tokenMasked: maskToken(token, row.sites.platform),
-      account: {
-        id: row.accounts.id,
-        username: row.accounts.username,
-        status: row.accounts.status,
-      },
-      site: {
-        id: row.sites.id,
-        name: row.sites.name,
-        url: row.sites.url,
-        platform: row.sites.platform,
-      },
-    };
+      const { token, endpointOverrides: _endpointOverrides, ...tokenMeta } = row.account_tokens;
+      return {
+        ...tokenMeta,
+        endpointOverrides: toResponseEndpointOverrides(row.account_tokens.endpointOverrides),
+        valueStatus: resolveAccountTokenValueStatus(row.account_tokens),
+        tokenMasked: maskToken(token, row.sites.platform),
+        account: {
+          id: row.accounts.id,
+          username: row.accounts.username,
+          status: row.accounts.status,
+          endpointOverrides: toResponseEndpointOverrides(row.accounts.endpointOverrides),
+        },
+        site: {
+          id: row.sites.id,
+          name: row.sites.name,
+          url: row.sites.url,
+          platform: row.sites.platform,
+          endpointOverrides: toResponseEndpointOverrides(row.sites.endpointOverrides),
+        },
+      };
     });
 }

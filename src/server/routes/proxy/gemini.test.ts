@@ -1035,6 +1035,48 @@ describe('gemini native proxy routes', () => {
     expect(targetUrl).toBe('https://api.openai.com/v1/responses');
   });
 
+  it('returns a compatibility error when site override removes every Gemini compatibility endpoint', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 42, routeId: 22 },
+      site: {
+        id: 78,
+        name: 'claude-site',
+        url: 'https://api.anthropic.com',
+        platform: 'claude',
+        endpointOverrides: ['chat'],
+      },
+      account: { id: 38, username: 'openai-user@example.com' },
+      tokenName: 'default',
+      tokenValue: 'openai-access-token',
+      actualModel: 'claude-sonnet-4-5-20250929',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: {
+        authorization: 'Bearer sk-managed-gemini',
+      },
+      payload: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(501);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.json()).toEqual({
+      error: {
+        message: 'Gemini compatibility is not implemented for this upstream',
+        type: 'invalid_request_error',
+      },
+    });
+  });
+
   it('routes Gemini native generateContent requests to antigravity special models through the internal stream endpoint and aggregates back to Gemini JSON', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 43, routeId: 22 },

@@ -26,9 +26,13 @@ const dbInsertMock = vi.fn((_arg?: any) => ({
   }),
 }));
 
-vi.mock('undici', () => ({
-  fetch: (...args: unknown[]) => fetchMock(...args),
-}));
+vi.mock('undici', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('undici')>();
+  return {
+    ...actual,
+    fetch: (...args: unknown[]) => fetchMock(...args),
+  };
+});
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
@@ -70,6 +74,7 @@ vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
   },
+  hasProxyLogStreamTimingColumns: async () => false,
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
@@ -2435,7 +2440,7 @@ describe('chat proxy stream behavior', () => {
     expect(targetUrl).toContain('/v1/messages');
   });
 
-  it('does not stick generic /v1/responses traffic to /v1/messages after a fallback success', async () => {
+  it('sticks generic /v1/responses traffic to /v1/messages after a fallback success', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
       site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
@@ -2513,7 +2518,7 @@ describe('chat proxy stream behavior', () => {
     expect(firstUrl).toContain('/v1/responses');
     expect(secondUrl).toContain('/v1/chat/completions');
     expect(thirdUrl).toContain('/v1/messages');
-    expect(fourthUrl).toContain('/v1/responses');
+    expect(fourthUrl).toContain('/v1/messages');
   });
 
   it('prefers native /v1/responses for claude-family /v1/responses requests that explicitly ask for encrypted reasoning', async () => {

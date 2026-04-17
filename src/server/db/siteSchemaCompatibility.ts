@@ -50,6 +50,14 @@ export const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
     },
   },
   {
+    column: 'endpoint_overrides',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN endpoint_overrides text;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `endpoint_overrides` TEXT NULL',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "endpoint_overrides" TEXT',
+    },
+  },
+  {
     column: 'external_checkin_url',
     addSql: {
       sqlite: 'ALTER TABLE sites ADD COLUMN external_checkin_url text;',

@@ -64,6 +64,18 @@ type SyncableAccount = {
 };
 
 const ACCOUNT_SELECT_SEARCH_PLACEHOLDER = '筛选账号（名称 / 站点）';
+const ENDPOINT_OVERRIDE_OPTIONS = [
+  ['chat', '/v1/chat/completions'],
+  ['messages', '/v1/messages'],
+  ['responses', '/v1/responses'],
+] as const;
+
+function normalizeEndpointOverrides(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value
+    .map((item) => (typeof item === 'string' ? item.trim().toLowerCase() : ''))
+    .filter(Boolean)));
+}
 
 const isAccountSyncable = (account: any) =>
   resolveAccountCredentialMode(account) === 'session'
@@ -169,6 +181,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     group: 'default',
     enabled: true,
     isDefault: false,
+    endpointOverrides: [] as string[],
   });
   const [groupOptions, setGroupOptions] = useState<string[]>(['default']);
   const [groupLoading, setGroupLoading] = useState(false);
@@ -536,6 +549,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       group: (token?.tokenGroup || '').trim() || 'default',
       enabled: isMaskedPendingToken(token) ? true : token?.enabled !== false,
       isDefault: !!token?.isDefault,
+      endpointOverrides: normalizeEndpointOverrides(token?.endpointOverrides),
     });
 
     if (isMaskedPendingToken(token)) {
@@ -575,6 +589,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       group: 'default',
       enabled: true,
       isDefault: false,
+      endpointOverrides: [],
     });
   }, []);
 
@@ -592,6 +607,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         group: editForm.group || 'default',
         enabled: editForm.enabled,
         isDefault: editForm.isDefault,
+        endpointOverrides: editForm.endpointOverrides.length > 0 ? editForm.endpointOverrides : null,
       });
       toast.success('令牌已更新');
       closeEditPanel();
@@ -1071,6 +1087,41 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                   </div>
                 </label>
               </ResponsiveFormGrid>
+            </div>
+            <div style={sectionCardStyle}>
+              <div style={sectionLabelStyle}>端点协议限制</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6, marginBottom: 8 }}>
+                设置令牌独立的上游端点协议限制；全部不勾选时继承上级配置。
+              </div>
+              {editForm.endpointOverrides.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8 }}>
+                  {normalizeEndpointOverrides(editingToken?.account?.endpointOverrides).length > 0
+                    ? '继承账号配置'
+                    : '继承站点配置'}
+                </div>
+              ) : null}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {ENDPOINT_OVERRIDE_OPTIONS.map(([endpoint, path]) => {
+                  const checked = editForm.endpointOverrides.includes(endpoint);
+                  return (
+                    <label key={endpoint} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => setEditForm((prev) => ({
+                          ...prev,
+                          endpointOverrides: e.target.checked
+                            ? Array.from(new Set([...prev.endpointOverrides, endpoint]))
+                            : prev.endpointOverrides.filter((item) => item !== endpoint),
+                        }))}
+                      />
+                      <span style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>
+                        {endpoint} ({path})
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           </>
         ) : null}

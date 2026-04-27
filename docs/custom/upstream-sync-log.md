@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-**上游已审阅到**：`a2c2ae6`（`upstream/main` HEAD，2026-04-10）
+**上游已审阅到**：`262651a`（`upstream/main` HEAD，2026-04-27 审阅，#494 merge，实际合入 2026-04-17）
 
 ## 归档
 
@@ -22,18 +22,46 @@
 
 - **OAuth 线**：#296, #298, #307, #311, #316, #369, #421, #433, #440, #443, #445, #450 — 本地无 OAuth 使用场景
 - **Proxy Debug Tracing 线**：#299, #309, #312, #313, #325, #327, #331, #442 — 不需要代理调试追踪
-- **K3s / Update Center**：#314, #317, #318, #326, #333, #344, #349, #361 — K3s 基础设施
+- **K3s / Update Center**：#314, #317, #318, #326, #333, #344, #349, #361, #494(UpdateCenter 部分) — K3s 基础设施
 - **路由优先级 UI 系列**：#350, #371, #375, #376, #467 — 本地 TokenRoutes 已走不同架构
 - **Snapshot-first 架构**：#457 (+21732 行) + #471 — 单租户收益不足，估计 3-5 人天
 - **expired recovery**：#393, #421 — 单租户场景不适用
 - **Codex/CodingPlan 初始化**：#351, #357, #363 — 不需要
 - **发版 / 打包 / 文档**：RPM, Docker ARM, release tests, readme, docs — 不影响功能
+- **Transformer Bridge 重构**：#494 内含，~9000 行纯架构拆分（requestBridge/responseBridge/streamBridge），无新用户功能
+- **upstreamEndpoint → services 拆分**：#494 内含，owner 迁移重构，本地 protocol affinity 等定制冲突面大
 
 ---
 
 ## 待定 / 可选
 
-（当前无待定项）
+- **Codex 兼容层改进**（#494 内含）：codexClientFamily 检测、session continuation、compact responses 增强 — 按实际 Codex 使用痛点需要再 selective port
+
+---
+
+## 实施记录
+
+### #494 — dev snapshot 发布到 main（2026-04-27 审阅）
+
+**PR 规模**：141 文件，+12979/-5798 行，2026-04-17 合入
+
+**分诊结论**：
+
+| 分类 | 判断 | 说明 |
+|------|------|------|
+| `6cca74b` LobeHub brand detection 扩展 | ✅ 已有等价覆盖 | 之前合入 #464 时已完整移植 `modelBrand.ts` + `brandMatcher.ts` + `brandRegistry.ts`，对比上游完全一致 |
+| `544324e` payload-rule protocol list 恢复 | ✅ 已有等价覆盖 + 补齐回归测试 | Settings.tsx 共享导入在合入 #473/#474 时已完成；本次仅补全上游新增的 protocol option set 回归测试用例 |
+| Transformer Bridge 重构（~9000 行） | ⚪ 暂缓 | 纯架构拆分，无用户可见功能，加入长期跳过 |
+| upstreamEndpoint → services 拆分（~2400 行） | ⚪ 暂缓 | owner 迁移，本地定制冲突面大，加入长期跳过 |
+| Codex 兼容层改进 | 🟡 可选 | codexClientFamily/session continuation/compact，加入待定 |
+| UpdateCenter / CI / Docker / Scripts / OAuth | ❌ 跳过 | 长期跳过策略继续适用 |
+
+**本次实际代码变更**：补全 `settings.payload-rules.test.tsx` 一个回归测试用例
+
+**验证**：
+- `settings.payload-rules` 7/7 通过
+- `brandMatcher` + `BrandIcon` 14/14 通过
+- `repo:drift-check` 无新增 violation
 
 ---
 

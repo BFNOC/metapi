@@ -28,8 +28,20 @@
 - **expired recovery**：#393, #421 — 单租户场景不适用
 - **Codex/CodingPlan 初始化**：#351, #357, #363 — 不需要
 - **发版 / 打包 / 文档**：RPM, Docker ARM, release tests, readme, docs — 不影响功能
-- **Transformer Bridge 重构**：#494 内含，~9000 行纯架构拆分（requestBridge/responseBridge/streamBridge），无新用户功能
-- **upstreamEndpoint → services 拆分**：#494 内含，owner 迁移重构，本地 protocol affinity 等定制冲突面大
+
+---
+
+## 延期至上游 v1.3.1
+
+以下两项架构重构来自 #494 dev snapshot，上游拆分后架构更优（职责分离、可测试性提升），但当前无功能缺口。**暂缓至上游发布 v1.3.1 后统一移植**，避免跟随中间态。
+
+- **Transformer Bridge 重构**（~9000 行）：outbound/stream → requestBridge/responseBridge/streamBridge 三层拆分，每个协议（anthropic/gemini/openai-chat/openai-responses/canonical）各一套。拆分后旧文件变为薄壳，新 bridge 文件 own 实际逻辑。
+- **upstreamEndpoint → services 拆分**（~2400 行）：`upstreamEndpoint.ts`(1293行) 拆为 `upstreamRequestBuilder.ts`(837) + `upstreamEndpointDerivation.ts`(322) + `proxyBilling.ts`/`proxyFailureJudge.ts`/`proxyLogMessage.ts` 迁入 services 层。本地有 protocol affinity override 等定制，需手工移植。
+
+**触发重新评估条件**：
+1. 上游 v1.3.1 发布
+2. 上游在 bridge 层新增了本 fork 需要的功能（如新协议支持）
+3. 本地修改某个大文件时发现旧结构碍事
 
 ---
 

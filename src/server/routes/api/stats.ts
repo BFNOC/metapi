@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { db, schema } from '../../db/index.js';
 import { and, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import { refreshModelsForAccount } from '../../services/modelService.js';
+import { cleanupStaleAllowListEntries } from '../../services/modelFilterCleanupService.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { buildModelAnalysis } from '../../services/modelAnalysisService.js';
 import { fallbackTokenCost, fetchModelPricingCatalog } from '../../services/modelPricingService.js';
@@ -1562,6 +1563,14 @@ export async function statsRoutes(app: FastifyInstance) {
     }
 
     const refresh = await refreshModelsForAccount(accountId, { ignoreProbeDisabled: true });
+
+    // Cleanup stale allow-list entries before rebuild when refresh succeeded
+    if (refresh.status === 'success' && refresh.refreshed) {
+      try {
+        await cleanupStaleAllowListEntries([accountId]);
+      } catch { /* best-effort */ }
+    }
+
     const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();
     return { success: true, refresh, rebuild };
   });

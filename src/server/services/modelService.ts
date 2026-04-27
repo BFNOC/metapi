@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { cleanupStaleAllowListEntries } from './modelFilterCleanupService.js';
 import { db, schema } from '../db/index.js';
 import { getInsertedRowId } from '../db/insertHelpers.js';
 import { getAdapter } from './platforms/index.js';
@@ -1301,6 +1302,25 @@ export async function rebuildTokenRoutesFromAvailability() {
 
 async function runRefreshModelsAndRebuildRoutes() {
   const refresh = await refreshModelsForAllActiveAccounts();
+
+  // Cleanup stale allow-list entries BEFORE rebuild so that phantom models
+  // do not produce dead route channels.  Only process sites/tokens whose
+  // accounts succeeded in this refresh pass.
+  let cleanup: { siteAllowedModelsRemoved: number; tokenFilterModelsUpdated: number } | null = null;
+  try {
+    const successfulAccountIds = refresh
+      .filter((r) => r.status === 'success' && r.refreshed)
+      .map((r) => r.accountId);
+    cleanup = await cleanupStaleAllowListEntries(successfulAccountIds);
+    if (cleanup.siteAllowedModelsRemoved > 0 || cleanup.tokenFilterModelsUpdated > 0) {
+      console.info(
+        `[model-filter-cleanup] allowed=${cleanup.siteAllowedModelsRemoved} tokens=${cleanup.tokenFilterModelsUpdated}`,
+      );
+    }
+  } catch (error) {
+    console.warn('[model-filter-cleanup] cleanup failed', error);
+  }
+
   const rebuild = await rebuildTokenRoutesFromAvailability();
   return { refresh, rebuild };
 }

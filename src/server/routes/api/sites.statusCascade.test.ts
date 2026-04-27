@@ -28,6 +28,7 @@ describe('sites status cascade', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
   });
@@ -70,5 +71,49 @@ describe('sites status cascade', () => {
 
     const enabledAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     expect(enabledAccount?.status).toBe('active');
+  });
+
+  it('cascades site status to account tokens', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'token-cascade-site',
+      url: 'https://token-cascade.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'token-cascade-user',
+      accessToken: 'access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'test-token',
+      token: 'token-value',
+      enabled: true,
+    }).returning().get();
+
+    // Disable site → token should be disabled
+    const disableResp = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: { status: 'disabled' },
+    });
+    expect(disableResp.statusCode).toBe(200);
+
+    const disabledToken = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, token.id)).get();
+    expect(disabledToken?.enabled).toBe(false);
+
+    // Re-enable site → token should be re-enabled
+    const enableResp = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: { status: 'active' },
+    });
+    expect(enableResp.statusCode).toBe(200);
+
+    const enabledToken = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, token.id)).get();
+    expect(enabledToken?.enabled).toBe(true);
   });
 });

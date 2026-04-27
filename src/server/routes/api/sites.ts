@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyReply } from 'fastify';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { insertAndGetById } from '../../db/insertHelpers.js';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
 import { invalidateSiteProxyCache, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
@@ -411,12 +411,21 @@ export async function sitesRoutes(app: FastifyInstance) {
         .where(eq(schema.accounts.siteId, siteId))
         .run();
 
+      // 级联禁用该站点所有账号下的令牌
+      const siteAccountIds = db.select({ id: schema.accounts.id })
+        .from(schema.accounts)
+        .where(eq(schema.accounts.siteId, siteId));
+      await db.update(schema.accountTokens)
+        .set({ enabled: false, updatedAt: now })
+        .where(inArray(schema.accountTokens.accountId, siteAccountIds))
+        .run();
+
       try {
         const createdAt = formatUtcSqlDateTime(new Date());
         await db.insert(schema.events).values({
           type: 'status',
           title: '站点已禁用',
-          message: `${existingSiteName} 已禁用，关联账号已全部置为禁用`,
+          message: `${existingSiteName} 已禁用，关联账号和令牌已全部置为禁用`,
           level: 'warning',
           relatedId: siteId,
           relatedType: 'site',
@@ -431,12 +440,21 @@ export async function sitesRoutes(app: FastifyInstance) {
       .where(and(eq(schema.accounts.siteId, siteId), eq(schema.accounts.status, 'disabled')))
       .run();
 
+    // 级联启用该站点所有账号下的令牌
+    const siteAccountIds = db.select({ id: schema.accounts.id })
+      .from(schema.accounts)
+      .where(eq(schema.accounts.siteId, siteId));
+    await db.update(schema.accountTokens)
+      .set({ enabled: true, updatedAt: now })
+      .where(inArray(schema.accountTokens.accountId, siteAccountIds))
+      .run();
+
     try {
       const createdAt = formatUtcSqlDateTime(new Date());
       await db.insert(schema.events).values({
         type: 'status',
         title: '站点已启用',
-        message: `${existingSiteName} 已启用，关联禁用账号已恢复为活跃`,
+        message: `${existingSiteName} 已启用，关联账号和令牌已全部恢复为活跃`,
         level: 'info',
         relatedId: siteId,
         relatedType: 'site',

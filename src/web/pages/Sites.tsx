@@ -743,35 +743,46 @@ export default function Sites() {
     setBulkImportOpen(false);
   };
 
-  const handleSiteCreatedChoice = (choice: 'session' | 'apikey' | 'later') => {
-    if (!createdSiteForChoice) return;
+  const openSiteConnectionFlow = (input: {
+    siteId: number;
+    platform?: string | null;
+    choice: 'session' | 'apikey';
+  }) => {
+    const platform = input.platform?.toLowerCase().trim();
+    const params = new URLSearchParams({ create: '1', siteId: String(input.siteId) });
 
-    const siteId = createdSiteForChoice.id;
-    const platform = createdSiteForChoice.platform?.toLowerCase().trim();
-    const params = new URLSearchParams({
-      create: '1',
-      siteId: String(siteId),
-    });
-
-    if (choice === 'session') {
-      // codex平台使用OAuth流程
+    if (input.choice === 'session') {
       if (platform === 'codex') {
         params.set('provider', 'codex');
         navigate(`/oauth?${params.toString()}`);
-      } else {
-        // 其他平台跳转到账号创建页面（session模式）
-        navigate(`/accounts?${params.toString()}`);
+        return;
       }
-    } else if (choice === 'apikey') {
-      // 跳转到账号创建页面（apikey模式）
-      params.set('segment', 'apikey');
       navigate(`/accounts?${params.toString()}`);
+      return;
     }
-    // choice === 'later': 不跳转，留在当前页面
+
+    params.set('segment', 'apikey');
+    navigate(`/accounts?${params.toString()}`);
+  };
+
+  const handleSiteCreatedChoice = (choice: 'session' | 'apikey' | 'later') => {
+    if (!createdSiteForChoice) return;
+
+    if (choice === 'session' || choice === 'apikey') {
+      openSiteConnectionFlow({
+        siteId: createdSiteForChoice.id,
+        platform: createdSiteForChoice.platform,
+        choice,
+      });
+    }
 
     setCreatedSiteForChoice(null);
     closeEditor();
     load();
+  };
+
+  const handleOpenSiteApiKey = (site: SiteRow) => {
+    openSiteConnectionFlow({ siteId: site.id, platform: site.platform, choice: 'apikey' });
   };
 
   const handleDetect = async () => {
@@ -1583,6 +1594,12 @@ export default function Sites() {
                           {isExpanded ? '收起' : '详情'}
                         </button>
                         <button
+                          onClick={() => handleOpenSiteApiKey(site)}
+                          className="btn btn-link btn-link-primary"
+                        >
+                          添加 Key
+                        </button>
+                        <button
                           onClick={() => openEdit(site)}
                           className="btn btn-link btn-link-primary"
                         >
@@ -1886,6 +1903,12 @@ export default function Sites() {
                             </button>
                           </>
                         )}
+                        <button
+                          onClick={() => handleOpenSiteApiKey(site)}
+                          className="btn btn-link btn-link-primary"
+                        >
+                          添加 Key
+                        </button>
                         <button
                           onClick={() => openEdit(site)}
                           className="btn btn-link btn-link-primary"

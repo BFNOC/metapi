@@ -172,9 +172,12 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.proxyEmptyContentFailEnabled = proxyEmptyContentFailEnabled;
   }
 
-  const globalBlockedBrands = parseSettingFromMap<string[]>(settingsMap, 'global_blocked_brands');
+  let globalBlockedBrands = parseSettingFromMap<unknown>(settingsMap, 'global_blocked_brands');
+  if (typeof globalBlockedBrands === 'string') {
+    try { globalBlockedBrands = JSON.parse(globalBlockedBrands); } catch {}
+  }
   if (Array.isArray(globalBlockedBrands)) {
-    config.globalBlockedBrands = globalBlockedBrands.filter((b): b is string => typeof b === 'string').map((b) => b.trim()).filter(Boolean);
+    config.globalBlockedBrands = (globalBlockedBrands as unknown[]).filter((b): b is string => typeof b === 'string').map((b) => b.trim()).filter(Boolean);
   }
 
   const codexHeaderDefaults = parseSettingFromMap<unknown>(settingsMap, 'codex_header_defaults');

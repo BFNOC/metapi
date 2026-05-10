@@ -51,6 +51,8 @@ import {
 } from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { detectDownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
+import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
+import { maybeHandleWebSearchOnlySimulation } from '../webSearchSimulation.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import {
   acquireSurfaceChannelLease,

@@ -16,6 +16,10 @@ export const sites = sqliteTable('sites', {
   sortOrder: integer('sort_order').default(0),
   globalWeight: real('global_weight').default(1),
   apiKey: text('api_key'),
+  postRefreshProbeEnabled: integer('post_refresh_probe_enabled', { mode: 'boolean' }).default(false),
+  postRefreshProbeModel: text('post_refresh_probe_model').default(''),
+  postRefreshProbeScope: text('post_refresh_probe_scope').default('single'),
+  postRefreshProbeLatencyThresholdMs: integer('post_refresh_probe_latency_threshold_ms').default(0),
   modelFilterMode: text('model_filter_mode').default('deny-list'), // 'deny-list' | 'allow-list'
   probeDisabled: integer('probe_disabled', { mode: 'boolean' }).default(false),
   createdAt: text('created_at').default(sql`(datetime('now'))`),

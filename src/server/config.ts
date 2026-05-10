@@ -141,6 +141,7 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     modelAvailabilitySchedulerIntervalMs: Math.max(60_000, Math.trunc(parseNumber(env.MODEL_AVAILABILITY_SCHEDULER_INTERVAL_MS, 15 * 60 * 1000))),
     modelAvailabilitySchedulerMaxTokensPerSweep: Math.max(1, Math.trunc(parseNumber(env.MODEL_AVAILABILITY_SCHEDULER_MAX_TOKENS_PER_SWEEP, 2))),
     modelAvailabilitySchedulerMaxModelsPerToken: Math.max(1, Math.trunc(parseNumber(env.MODEL_AVAILABILITY_SCHEDULER_MAX_MODELS_PER_TOKEN, 6))),
+    modelAvailabilityProbeTimeoutMs: Math.max(3_000, Math.trunc(parseNumber(env.MODEL_AVAILABILITY_PROBE_TIMEOUT_MS, 15_000))),
     codexUpstreamWebsocketEnabled: parseBoolean(env.CODEX_UPSTREAM_WEBSOCKET_ENABLED, false),
     responsesCompactFallbackToResponsesEnabled: parseBoolean(env.RESPONSES_COMPACT_FALLBACK_TO_RESPONSES_ENABLED, false),
     proxyLogRetentionDays: Math.max(0, Math.trunc(parseNumber(env.PROXY_LOG_RETENTION_DAYS, 30))),

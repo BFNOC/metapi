@@ -207,7 +207,9 @@ function normalizeDefaultValueForColumn(
   if (rawDefaultValue == null) return null;
 
   let normalized = String(rawDefaultValue).trim();
-  if (!normalized) return null;
+  if (!normalized) {
+    return (logicalType === 'text' || logicalType === 'json') ? "''" : null;
+  }
 
   normalized = normalized.replace(/^default\s+/i, '').trim();
   normalized = unwrapSurroundingParentheses(normalized);

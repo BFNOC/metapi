@@ -566,6 +566,10 @@ export type SiteMutationPayload = {
   isPinned?: boolean;
   sortOrder?: number;
   modelFilterMode?: string;
+  postRefreshProbeEnabled?: boolean;
+  postRefreshProbeModel?: string;
+  postRefreshProbeScope?: 'single' | 'all';
+  postRefreshProbeLatencyThresholdMs?: number;
 };
 
 export type AccountMutationPayload = {
@@ -758,6 +762,12 @@ export const api = {
     request(`/api/sites/${siteId}/probe-models`, { method: 'POST', body: JSON.stringify(data), timeoutMs: 120_000 }),
   probeModelsStream: (siteId: number, data: Record<string, unknown>, onResult: (r: unknown) => void, signal?: AbortSignal) =>
     streamProbeResults(`/api/sites/${siteId}/probe-models`, data, onResult, signal),
+  probeSiteNow: (siteId: number, options?: { scope?: 'single' | 'all'; modelName?: string; latencyThresholdMs?: number }) =>
+    request(`/api/sites/${siteId}/probe-now`, {
+      method: 'POST',
+      body: JSON.stringify(options || {}),
+      timeoutMs: options?.scope === 'all' ? 120_000 : 30_000,
+    }),
   getSiteAllowedModels: (siteId: number) => request(`/api/sites/${siteId}/allowed-models`),
   updateSiteAllowedModels: (siteId: number, models: string[], modelFilterMode?: string) =>
     request(`/api/sites/${siteId}/allowed-models`, {

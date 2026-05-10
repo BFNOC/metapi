@@ -30,6 +30,10 @@ export type SiteSavePayload = {
   customHeaders: string;
   endpointOverrides: string[] | null;
   globalWeight: number;
+  postRefreshProbeEnabled?: boolean;
+  postRefreshProbeModel?: string;
+  postRefreshProbeScope?: 'single' | 'all';
+  postRefreshProbeLatencyThresholdMs?: number;
   probeDisabled: boolean;
 };
 

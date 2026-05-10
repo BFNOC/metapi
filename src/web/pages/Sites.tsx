@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
+import { getAuthToken } from '../authSession.js';
 import { getBrand } from '../components/BrandIcon.js';
 import CenteredModal from '../components/CenteredModal.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
@@ -58,6 +59,10 @@ type SiteRow = {
   subscriptionSummary?: SiteSubscriptionSummary | null;
   probeDisabled?: boolean;
   modelFilterMode?: string | null;
+  postRefreshProbeEnabled?: boolean;
+  postRefreshProbeModel?: string | null;
+  postRefreshProbeScope?: string | null;
+  postRefreshProbeLatencyThresholdMs?: number | null;
   createdAt?: string;
 };
 
@@ -253,6 +258,17 @@ export default function Sites() {
   const [disabledModelInput, setDisabledModelInput] = useState('');
   const [disabledModelsLoading, setDisabledModelsLoading] = useState(false);
   const [disabledModelsSaving, setDisabledModelsSaving] = useState(false);
+  const [probeEnabled, setProbeEnabled] = useState(false);
+  const [probeModel, setProbeModel] = useState('');
+  const [probeScope, setProbeScope] = useState<'single' | 'all'>('single');
+  const [probeSaving, setProbeSaving] = useState(false);
+  const [probeLatencyThreshold, setProbeLatencyThreshold] = useState('0');
+  const [probing, setProbing] = useState(false);
+  type ProbeLogEntry = { time: string; text: string; color?: string };
+  const [probeLog, setProbeLog] = useState<ProbeLogEntry[]>([]);
+  const [probeCompleted, setProbeCompleted] = useState(false);
+  const probeAbortRef = useRef<AbortController | null>(null);
+  const probeLogEndRef = useRef<HTMLDivElement | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [disabledModelSearch, setDisabledModelSearch] = useState('');
 
@@ -399,6 +415,14 @@ export default function Sites() {
     setDisabledModelInput('');
     setAvailableModels([]);
     setDisabledModelSearch('');
+    setProbeEnabled(!!site.postRefreshProbeEnabled);
+    setProbeModel(typeof site.postRefreshProbeModel === 'string' ? site.postRefreshProbeModel : '');
+    setProbeScope(site.postRefreshProbeScope === 'all' ? 'all' : 'single');
+    setProbeLatencyThreshold(String(site.postRefreshProbeLatencyThresholdMs ?? 0));
+    setProbeLog([]);
+    setProbeCompleted(false);
+    probeAbortRef.current?.abort();
+    probeAbortRef.current = null;
     let pendingLoads = 2;
     const markLoadFinished = () => {
       pendingLoads -= 1;
@@ -458,6 +482,130 @@ export default function Sites() {
     }
   };
 
+  const handleSaveProbeSettings = async () => {
+    if (!editor || editor.mode !== 'edit') return;
+    setProbeSaving(true);
+    try {
+      await api.updateSite(editor.editingSiteId, {
+        postRefreshProbeEnabled: probeEnabled,
+        postRefreshProbeModel: probeModel.trim(),
+        postRefreshProbeScope: probeScope,
+        postRefreshProbeLatencyThresholdMs: Math.max(0, parseInt(probeLatencyThreshold, 10) || 0),
+      });
+      setSites((prev) => prev.map((s) => s.id === editor.editingSiteId
+        ? { ...s, postRefreshProbeEnabled: probeEnabled, postRefreshProbeModel: probeModel.trim(), postRefreshProbeScope: probeScope, postRefreshProbeLatencyThresholdMs: Math.max(0, parseInt(probeLatencyThreshold, 10) || 0) }
+        : s,
+      ));
+      toast.success('刷新后探测设置已保存');
+    } catch (e: any) {
+      toast.error(e.message || '保存失败');
+    } finally {
+      setProbeSaving(false);
+    }
+  };
+
+  const handleProbeNow = async () => {
+    if (!editor || editor.mode !== 'edit') return;
+    const siteId = editor.editingSiteId;
+    const now = () => new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    const addLog = (text: string, color?: string) =>
+      setProbeLog((prev) => [...prev, { time: now(), text, color }]);
+
+    probeAbortRef.current?.abort();
+    const controller = new AbortController();
+    probeAbortRef.current = controller;
+    setProbing(true);
+    setProbeLog([]);
+    setProbeCompleted(false);
+
+    try {
+      const token = getAuthToken(localStorage);
+      const params = new URLSearchParams({ scope: probeScope });
+      if (probeScope === 'single' && probeModel.trim()) params.set('modelName', probeModel.trim());
+      const threshold = parseInt(probeLatencyThreshold, 10);
+      if (Number.isFinite(threshold) && threshold > 0) params.set('latencyThresholdMs', String(threshold));
+
+      const res = await fetch(`/api/sites/${siteId}/probe-stream?${params}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        let errMsg = `连接失败 (HTTP ${res.status})`;
+        try { const j = await res.json() as any; errMsg = j?.error || j?.message || errMsg; } catch { /* ignore */ }
+        addLog(errMsg, 'var(--color-error, #ef4444)');
+        toast.error(errMsg);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      const handleSseEvent = (type: string, rawData: string) => {
+        try {
+          const d = JSON.parse(rawData);
+          if (type === 'start') {
+            addLog(`开始探测，范围：${d.scope === 'all' ? '全部模型' : '指定模型'}，共 ${d.modelsCount} 个`);
+          } else if (type === 'model') {
+            const s = d.status === 'supported' ? '✓ 可用'
+              : d.status === 'unsupported' ? (d.latencyExceeded ? `✗ 延迟超限 (${d.latencyMs}ms)` : '✗ 不可用')
+              : d.status === 'skipped' ? '— 已跳过' : '✗ 不可用';
+            const lat = d.latencyMs != null && d.status !== 'skipped' ? ` (${d.latencyMs}ms)` : '';
+            const c = d.status === 'supported' ? 'var(--color-success, #22c55e)'
+              : d.status === 'skipped' ? 'var(--color-text-muted)' : 'var(--color-error, #ef4444)';
+            const reasonText = d.reason && d.status !== 'supported' && d.status !== 'skipped'
+              ? (d.reason.length > 60 ? d.reason.slice(0, 57) + '…' : d.reason) : '';
+            addLog(`${s}${lat}  ${d.modelName}${reasonText ? `  —  ${reasonText}` : ''}`, c);
+            setTimeout(() => probeLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 30);
+          } else if (type === 'action') {
+            if (d.action === 'disabled') addLog(`  ↳ 已加入站点禁用列表: ${d.modelName}`, 'var(--color-text-muted)');
+          } else if (type === 'complete') {
+            if (d.unsupported > 0) {
+              addLog(`完成：${d.probed} 个模型已探测，${d.unsupported} 个不可用已自动加入禁用列表`, 'var(--color-error, #ef4444)');
+            } else {
+              addLog(`完成：${d.probed} 个模型均可用`, 'var(--color-success, #22c55e)');
+            }
+            Promise.all([
+              api.getSiteAvailableModels(siteId).then((res: any) => { setAvailableModels(Array.isArray(res?.models) ? res.models : []); }),
+              api.getSiteDisabledModels(siteId).then((res: any) => { setDisabledModels(Array.isArray(res?.models) ? res.models : []); }),
+            ]).catch(() => {}).finally(() => setProbeCompleted(true));
+          } else if (type === 'error') {
+            addLog(d.message || '探测失败', 'var(--color-error, #ef4444)');
+            toast.error(d.message || '探测失败');
+            setProbeCompleted(true);
+          }
+        } catch { /* ignore parse errors */ }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop() ?? '';
+        for (const part of parts) {
+          let eventType = 'message';
+          let data = '';
+          for (const line of part.split('\n')) {
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+            else if (line.startsWith('data: ')) data = line.slice(6).trim();
+          }
+          if (data) handleSseEvent(eventType, data);
+        }
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        setProbeLog((prev) => [...prev, { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), text: '已手动停止', color: 'var(--color-text-muted)' }]);
+        return;
+      }
+      toast.error(e?.message || '探测失败');
+    } finally {
+      setProbing(false);
+      probeAbortRef.current = null;
+    }
+  };
+
   const handleSave = async () => {
     if (!editor) return;
     const parsedGlobalWeight = Number(form.globalWeight);
@@ -487,6 +635,10 @@ export default function Sites() {
       endpointOverrides: serializedEndpointOverrides.endpointOverrides,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
       probeDisabled: !!form.probeDisabled,
+      postRefreshProbeEnabled: probeEnabled,
+      postRefreshProbeModel: probeModel.trim(),
+      postRefreshProbeScope: probeScope,
+      postRefreshProbeLatencyThresholdMs: Math.max(0, parseInt(probeLatencyThreshold, 10) || 0),
     };
     if (!payload.name || !payload.url) {
       toast.error('请填写站点名称和 URL');
@@ -1283,6 +1435,60 @@ export default function Sites() {
               </div>
             )}
           </div>
+
+          {isEditing && (
+            <div style={{ marginTop: 16, padding: '14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>刷新后自动测试请求</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
+                开启后，每次自动获取模型列表成功后，会对指定模型发送一次真实测试请求。若判定不可用，自动加入站点禁用列表并重建路由。
+              </div>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, cursor: 'pointer' }}>
+                <input type="checkbox" checked={probeEnabled} onChange={(e) => setProbeEnabled(e.target.checked)} style={{ width: 15, height: 15, marginTop: 2, flexShrink: 0 }} />
+                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>开启刷新后自动探测</span>
+              </label>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', opacity: probeEnabled ? 1 : 0.5 }}>
+                {([['single', '指定模型'], ['all', '全部模型']] as const).map(([val, label]) => (
+                  <label key={val} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: probeEnabled ? 'pointer' : 'default', padding: '5px 12px', borderRadius: 'var(--radius-sm)', fontSize: 12, border: `1px solid ${probeScope === val ? 'var(--color-primary)' : 'var(--color-border-light)'}`, background: probeScope === val ? 'color-mix(in srgb, var(--color-primary) 8%, transparent)' : 'transparent', userSelect: 'none' }}>
+                    <input type="radio" name="siteProbeScope" value={val} checked={probeScope === val} onChange={() => setProbeScope(val)} disabled={!probeEnabled} style={{ accentColor: 'var(--color-primary)', width: 13, height: 13 }} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              {probeScope === 'single' && (
+                <input type="text" placeholder="探测模型名（留空则自动取第一个发现的模型）" value={probeModel} onChange={(e) => setProbeModel(e.target.value)} disabled={!probeEnabled} style={{ width: '100%', padding: '6px 10px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', fontSize: 12, outline: 'none', background: 'var(--color-bg)', color: 'var(--color-text-primary)', marginBottom: 10, opacity: probeEnabled ? 1 : 0.5, fontFamily: 'var(--font-mono)' }} />
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>延迟阈值</span>
+                <input type="number" min="0" step="500" placeholder="0" value={probeLatencyThreshold} onChange={(e) => setProbeLatencyThreshold(e.target.value)} style={{ width: 90, padding: '5px 8px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', fontSize: 12, outline: 'none', background: 'var(--color-bg)', color: 'var(--color-text-primary)' }} />
+                <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>ms（响应超过该时间则自动禁用，0=不限）</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <button onClick={() => void handleSaveProbeSettings()} disabled={probeSaving || probing} className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 16px', border: '1px solid var(--color-border)' }}>
+                  {probeSaving ? '保存中...' : '保存探测设置'}
+                </button>
+                <button onClick={() => void handleProbeNow()} disabled={probing || probeSaving} className="btn btn-primary" style={{ fontSize: 12, padding: '6px 16px' }}>
+                  {probing ? '探测中...' : '立即探测'}
+                </button>
+                {probing && (
+                  <button onClick={() => { probeAbortRef.current?.abort(); }} className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 16px', border: '1px solid var(--color-error, #ef4444)', color: 'var(--color-error, #ef4444)' }}>
+                    停止
+                  </button>
+                )}
+              </div>
+              {probeLog.length > 0 && (
+                <div style={{ marginTop: 10, padding: '8px 10px', background: 'var(--color-bg)', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', fontSize: 11, fontFamily: 'var(--font-mono)', maxHeight: 200, overflowY: 'auto', lineHeight: 1.8 }}>
+                  {probeLog.map((entry, i) => (
+                    <div key={i} style={{ color: entry.color || 'var(--color-text-secondary)' }}>
+                      <span style={{ color: 'var(--color-text-muted)', marginRight: 8 }}>{entry.time}</span>
+                      {entry.text}
+                    </div>
+                  ))}
+                  <div ref={probeLogEndRef} />
+                </div>
+              )}
+            </div>
+          )}
+
           <ResponsiveFormGrid columns={1}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <input

@@ -9,6 +9,7 @@ import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
 import { getSub2ApiSubscriptionFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { probeModels, type ProbeResult } from '../../services/modelProbeService.js';
+import { probeSiteModels } from '../../services/modelService.js';
 import {
   normalizeEndpointOverridesInput,
   parseEndpointOverrideValue,
@@ -16,6 +17,10 @@ import {
 } from '../../proxy-core/endpointOverrides.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { resolveProbePrompt } from '../../../shared/probePrompts.js';
+
+function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
+  try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
+}
 
 function normalizeSiteStatus(input: unknown): 'active' | 'disabled' | null {
   if (input === undefined || input === null) return null;
@@ -703,6 +708,14 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.globalWeight !== undefined) updates.globalWeight = normalizedGlobalWeight;
     if (body.modelFilterMode !== undefined) updates.modelFilterMode = normalizedModelFilterMode;
     if (body.probeDisabled !== undefined) updates.probeDisabled = !!body.probeDisabled;
+    const anyBody = body as Record<string, unknown>;
+    if (anyBody.postRefreshProbeEnabled !== undefined) updates.postRefreshProbeEnabled = anyBody.postRefreshProbeEnabled === true || anyBody.postRefreshProbeEnabled === 1;
+    if (anyBody.postRefreshProbeModel !== undefined) updates.postRefreshProbeModel = String(anyBody.postRefreshProbeModel || '').trim();
+    if (anyBody.postRefreshProbeScope !== undefined) updates.postRefreshProbeScope = anyBody.postRefreshProbeScope === 'all' ? 'all' : 'single';
+    if (anyBody.postRefreshProbeLatencyThresholdMs !== undefined) {
+      const ms = Number(anyBody.postRefreshProbeLatencyThresholdMs);
+      updates.postRefreshProbeLatencyThresholdMs = Number.isFinite(ms) && ms >= 0 ? Math.trunc(ms) : 0;
+    }
     updates.updatedAt = new Date().toISOString();
     try {
       await db.transaction(async (tx: any) => {
@@ -1171,6 +1184,59 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     return { siteId: id, results };
   });
+
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/sites/:id/probe-now', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) return reply.code(400).send({ error: 'Invalid site id' });
+    const body = request.body as Record<string, unknown> | null;
+    const scope = body?.scope === 'all' ? 'all' : body?.scope === 'single' ? 'single' : undefined;
+    const modelName = typeof body?.modelName === 'string' ? body.modelName.trim() : undefined;
+    const parsedThreshold = Number(body?.latencyThresholdMs ?? 0);
+    const latencyThresholdMs = Number.isFinite(parsedThreshold) && parsedThreshold > 0 ? Math.trunc(parsedThreshold) : undefined;
+    const result = await probeSiteModels(id, { scope, modelName, latencyThresholdMs });
+    if (!result.success) return reply.code(422).send({ error: result.error });
+    return result;
+  });
+
+  app.get<{ Params: { id: string }; Querystring: { scope?: string; modelName?: string; latencyThresholdMs?: string } }>(
+    '/api/sites/:id/probe-stream',
+    async (request, reply) => {
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+
+      const id = parseInt(request.params.id);
+      if (Number.isNaN(id)) {
+        sseWrite(reply.raw, 'error', { message: 'Invalid site id' });
+        reply.raw.end();
+        return;
+      }
+
+      const q = request.query;
+      const scope = q.scope === 'all' ? 'all' : q.scope === 'single' ? 'single' : undefined;
+      const modelName = q.modelName?.trim() || undefined;
+      const parsedThreshold = parseInt(q.latencyThresholdMs ?? '', 10);
+      const latencyThresholdMs = Number.isFinite(parsedThreshold) && parsedThreshold > 0 ? parsedThreshold : undefined;
+
+      const probeAbort = new AbortController();
+      reply.raw.on('close', () => probeAbort.abort());
+
+      try {
+        const result = await probeSiteModels(id, { scope, modelName, latencyThresholdMs, signal: probeAbort.signal }, (ev) => {
+          sseWrite(reply.raw, ev.type, ev);
+        });
+        if (!probeAbort.signal.aborted) {
+          sseWrite(reply.raw, 'complete', result);
+        }
+      } catch (err: any) {
+        sseWrite(reply.raw, 'error', { message: err?.message || '探测失败' });
+      }
+      reply.raw.end();
+    },
+  );
 
   // Detect platform for a URL
   app.post<{ Body: { url: string } }>('/api/sites/detect', async (request) => {
